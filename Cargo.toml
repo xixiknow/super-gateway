@@ -35,7 +35,7 @@ dotenvy = "0.15.7"
 flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
 futures-core = "0.3.31"
 getrandom = "0.3.4"
-hmac = "0.12.1"
+hmac = "0.13.0"
 http = "1.5.0"
 http-body-util = "0.1.5"
 httparse = "1.10.1"

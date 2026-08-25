@@ -1,0 +1,310 @@
+name: gateway-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  SOURCE_DATE_EPOCH: "1787500800"
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Generate contracts
+        run: python -B tools/generate_contracts.py
+      - name: Reject generated drift
+        run: git diff --exit-code -- contracts
+      - name: Validate contracts
+        run: python -B tools/validate_contracts.py
+      - name: Validate workspace boundaries
+        run: python -B tools/validate_workspace.py
+      - name: Fail-closed R10 verifier negative suite
+        run: python -B tools/test_verify_release_evidence.py
+      - name: Fail-closed migration compatibility policy suite
+        run: python -B tools/test_verify_migration_compatibility.py
+      - name: Verify packaged systemd and upgrade policy
+        run: python -B tools/verify_systemd_units.py
+
+  rust-quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+
+  edge-policy-r3:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Lossless parser, Capability and RuleSet corpus
+        run: cargo test --locked -p gateway-policy -- --nocapture
+      - name: Auth-first HTTP and identity leak gates
+        run: cargo test --locked -p gateway-api -- --nocapture
+
+  admin-console-r8:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web/admin-console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/admin-console/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Component and API adapter tests
+        run: npm test
+      - name: TypeScript and production asset build
+        run: npm run build
+      - name: Reject embedded admin asset drift
+        working-directory: .
+        run: git diff --exit-code -- web/admin-console/dist
+
+  postgres-r2:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_DB: gateway_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: gateway-ci-fixture
+          POSTGRES_INITDB_ARGS: --data-checksums
+          TZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gateway_ci"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:gateway-ci-fixture@127.0.0.1:5432/gateway_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
+      - name: PostgreSQL R2 contract
+        run: cargo test --locked -p gateway-storage --test postgres_r2 -- --nocapture
+      - name: Business key rotation and resumable DEK rewrap
+        shell: bash
+        run: |
+          createdb --maintenance-db "$TEST_DATABASE_ADMIN_URL" gateway_ci_rotation
+          TEST_ROTATION_DATABASE_ADMIN_URL="postgres://postgres:gateway-ci-fixture@127.0.0.1:5432/gateway_ci_rotation" \
+            cargo test --locked -p gateway-services --test security_rotation_pg -- --nocapture
+      - name: R5 Credential lifecycle, CAS, dedupe and PLAN contract
+        shell: bash
+        run: |
+          createdb --maintenance-db "$TEST_DATABASE_ADMIN_URL" gateway_ci_r5
+          TEST_DATABASE_ADMIN_URL="postgres://postgres:gateway-ci-fixture@127.0.0.1:5432/gateway_ci_r5" \
+            cargo test --locked -p gateway-storage --test credential_r5_pg -- --nocapture
+      - name: R5 Existing OAuth enrollment vertical contract
+        shell: bash
+        run: |
+          createdb --maintenance-db "$TEST_DATABASE_ADMIN_URL" gateway_ci_r5_enrollment
+          TEST_R5_ENROLLMENT_DATABASE_ADMIN_URL="postgres://postgres:gateway-ci-fixture@127.0.0.1:5432/gateway_ci_r5_enrollment" \
+            cargo test --locked -p gateway-services --test credential_enrollment_pg -- --nocapture
+      - name: R7 response, commit, usage and cost persistence
+        shell: bash
+        run: |
+          createdb --maintenance-db "$TEST_DATABASE_ADMIN_URL" gateway_ci_r7
+          TEST_R7_DATABASE_ADMIN_URL="postgres://postgres:gateway-ci-fixture@127.0.0.1:5432/gateway_ci_r7" \
+            cargo test --locked -p gateway-storage --test telemetry_r7_pg -- --nocapture
+      - name: R8 management auth, encrypted key reveal and runtime projection
+        shell: bash
+        run: |
+          createdb --maintenance-db "$TEST_DATABASE_ADMIN_URL" gateway_ci_r8
+          TEST_R8_DATABASE_ADMIN_URL="postgres://postgres:gateway-ci-fixture@127.0.0.1:5432/gateway_ci_r8" \
+            cargo test --locked -p super-gatewayd r8_postgres_auth_key_reveal_and_runtime_projection -- --nocapture
+      - name: Isolated encrypted backup restore
+        shell: bash
+        run: |
+          openssl rand -hex 32 > "$RUNNER_TEMP/r2-backup-key"
+          chmod 600 "$RUNNER_TEMP/r2-backup-key"
+          python -B tools/r2_backup_restore.py \
+            --database-url "$TEST_DATABASE_ADMIN_URL" \
+            --key-file "$RUNNER_TEMP/r2-backup-key" \
+            --output-dir evidence/postgres-r2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postgres-r2-evidence
+          path: evidence/postgres-r2
+          if-no-files-found: error
+          retention-days: 90
+
+  windows-compatibility:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Windows workspace check
+        run: cargo check --workspace --all-targets --locked
+
+  transport-linux-native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native BoringSSL toolchain
+        run: sudo apt-get update && sudo apt-get install --yes clang cmake ninja-build nasm
+      - name: Native transport tests
+        run: cargo test --locked -p gateway-transport --all-features -- --nocapture
+      - name: Native transport Clippy
+        run: cargo clippy --locked -p gateway-transport --all-targets --all-features -- -D warnings
+
+  linux-release:
+    needs: [contracts, rust-quality, postgres-r2, edge-policy-r3, admin-console-r8, transport-linux-native, windows-compatibility]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            linker: gcc
+            package: gcc
+          - target: aarch64-unknown-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+            package: gcc-aarch64-linux-gnu
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install target linker
+        run: sudo apt-get update && sudo apt-get install --yes ${{ matrix.package }}
+      - name: Configure target linker
+        shell: bash
+        run: |
+          target_key=$(echo '${{ matrix.target }}' | tr '[:lower:]-' '[:upper:]_')
+          echo "CARGO_TARGET_${target_key}_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
+      - name: Build release
+        env:
+          CARGO_TARGET_DIR: target-primary
+        run: cargo build --release --locked --target ${{ matrix.target }} -p super-gatewayd
+      - name: Reproducibility comparison
+        shell: bash
+        run: |
+          cp 'target-primary/${{ matrix.target }}/release/super-gatewayd' first-build
+          CARGO_TARGET_DIR=target-repro cargo build --release --locked --target '${{ matrix.target }}' -p super-gatewayd
+          cmp first-build 'target-repro/${{ matrix.target }}/release/super-gatewayd'
+      - uses: actions/download-artifact@v4
+        with:
+          name: postgres-r2-evidence
+          path: evidence/postgres-r2
+      - name: Plaintext secret-canary scan of packaged inputs
+        shell: bash
+        run: |
+          canary="SGW_CANARY_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${{ matrix.target }}"
+          python -B tools/r9_secret_canary.py \
+            --canary "$canary" \
+            --path "target-primary/${{ matrix.target }}/release/super-gatewayd" \
+            --path contracts \
+            --path web/admin-console/dist \
+            --path evidence/postgres-r2 \
+            --json-out evidence/postgres-r2/secret-canary-${{ matrix.target }}.json
+      - name: Build release evidence
+        run: >-
+          python -B tools/build_release_evidence.py
+          --binary target-primary/${{ matrix.target }}/release/super-gatewayd
+          --target ${{ matrix.target }}
+          --output-dir evidence/${{ matrix.target }}
+          --source-revision ${{ github.sha }}
+          --builder github-actions/gateway-ci
+          --profile r10-local
+          --restore-evidence-dir evidence/postgres-r2
+          --critical-findings 0
+          --gate format=passed
+          --gate clippy=passed
+          --gate tests=passed
+          --gate contracts=passed
+          --gate workspace=passed
+          --gate edge_policy=passed
+          --gate postgres=passed
+          --gate backup_restore_fixture=passed
+          --gate admin_console=passed
+          --gate windows_compatibility=passed
+          --gate secret_canary=passed
+          --gate transport_linux_native=passed
+          --gate reproducible_build=passed
+      - name: Verify release evidence
+        run: >-
+          python -B tools/verify_release_evidence.py evidence/${{ matrix.target }}
+          --profile r10-local
+          --expected-revision ${{ github.sha }}
+          --expected-target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: super-gatewayd-${{ matrix.target }}
+          path: evidence/${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 90
+
+  r10-local-gate:
+    needs: [linux-release]
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: super-gatewayd-${{ matrix.target }}
+          path: evidence/${{ matrix.target }}
+      - name: Verify uploaded immutable R10 evidence
+        run: >-
+          python -B tools/verify_release_evidence.py evidence/${{ matrix.target }}
+          --profile r10-local
+          --expected-revision ${{ github.sha }}
+          --expected-target ${{ matrix.target }}

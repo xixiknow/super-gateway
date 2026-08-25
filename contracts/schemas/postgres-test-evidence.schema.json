@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/postgres-test-evidence.schema.json",
+  "title": "R2 PostgreSQL Test Evidence",
+  "$defs": {
+    "PostgresTestEvidence": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "postgres_major": {
+          "type": "integer",
+          "minimum": 16
+        },
+        "schema_version_value": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "migration_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "required_table_count": {
+          "type": "integer",
+          "const": 116
+        },
+        "partition_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fixture_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "automation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_run",
+            "passed",
+            "failed"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "postgres_major",
+        "schema_version_value",
+        "migration_manifest_sha256",
+        "required_table_count",
+        "partition_count",
+        "fixture_id",
+        "automation",
+        "status"
+      ]
+    }
+  },
+  "$ref": "#/$defs/PostgresTestEvidence"
+}

@@ -1,0 +1,366 @@
+[
+  {
+    "fixture_id": "FIX-R5-C01",
+    "scenario": "credential_lifecycle_01",
+    "sources": [
+      "crates/gateway-services/src/security.rs",
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-services/src/security.rs": "cedb610a9c73ac4f972ce7204c30ac770a0b7159704ce377713bd094a61153ae",
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C02",
+    "scenario": "credential_lifecycle_02",
+    "sources": [
+      "crates/gateway-domain/src/credential.rs",
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e",
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C03",
+    "scenario": "credential_lifecycle_03",
+    "sources": [
+      "crates/gateway-domain/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C04",
+    "scenario": "credential_lifecycle_04",
+    "sources": [
+      "crates/gateway-domain/src/credential.rs",
+      "crates/gateway-storage/migrations/20260824000600_r5_contract_alignment.sql"
+    ],
+    "source_sha256": {
+      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e",
+      "crates/gateway-storage/migrations/20260824000600_r5_contract_alignment.sql": "36d18ca95350686897ced431a735a2ca446cc641174faaf159c36996eace7cfa"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C05",
+    "scenario": "credential_lifecycle_05",
+    "sources": [
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C06",
+    "scenario": "credential_lifecycle_06",
+    "sources": [
+      "crates/gateway-storage/src/credential.rs",
+      "crates/gateway-storage/tests/credential_r5_pg.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b",
+      "crates/gateway-storage/tests/credential_r5_pg.rs": "1c08f59fbc0886310dad83f502b37a86751c371e0d9ad77f8534fc5d756a509c"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C07",
+    "scenario": "credential_lifecycle_07",
+    "sources": [
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C08",
+    "scenario": "credential_lifecycle_08",
+    "sources": [
+      "crates/gateway-domain/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C09",
+    "scenario": "credential_lifecycle_09",
+    "sources": [
+      "crates/gateway-services/src/credential.rs",
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-services/src/credential.rs": "00edbf3c6e9b94c059cd9d3b8b5d8beab34de0301db482f98812b11fa170c534",
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C10",
+    "scenario": "credential_lifecycle_10",
+    "sources": [
+      "crates/gateway-services/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-services/src/credential.rs": "00edbf3c6e9b94c059cd9d3b8b5d8beab34de0301db482f98812b11fa170c534"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C11",
+    "scenario": "credential_lifecycle_11",
+    "sources": [
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C12",
+    "scenario": "credential_lifecycle_12",
+    "sources": [
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C13",
+    "scenario": "credential_lifecycle_13",
+    "sources": [
+      "crates/gateway-services/src/credential.rs",
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-services/src/credential.rs": "00edbf3c6e9b94c059cd9d3b8b5d8beab34de0301db482f98812b11fa170c534",
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C14",
+    "scenario": "credential_lifecycle_14",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs",
+      "crates/gateway-services/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e",
+      "crates/gateway-services/src/credential.rs": "00edbf3c6e9b94c059cd9d3b8b5d8beab34de0301db482f98812b11fa170c534"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C15",
+    "scenario": "credential_lifecycle_15",
+    "sources": [
+      "crates/gateway-domain/src/credential.rs",
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e",
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C16",
+    "scenario": "credential_lifecycle_16",
+    "sources": [
+      "crates/gateway-domain/src/credential.rs",
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e",
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C17",
+    "scenario": "credential_lifecycle_17",
+    "sources": [
+      "crates/gateway-services/src/operations.rs",
+      "crates/gateway-storage/src/postgres.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-services/src/operations.rs": "46fd56e611c04cf1bcd1fb017b6d1b317a01675afca49559a7780f032fe1eddd",
+      "crates/gateway-storage/src/postgres.rs": "213e5916a9e909b20946d19ab26e46b6312cdc589fcb5ee45d9907d6450008f7"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  },
+  {
+    "fixture_id": "FIX-R5-C18",
+    "scenario": "credential_lifecycle_18",
+    "sources": [
+      "crates/gateway-services/src/security.rs",
+      "crates/gateway-storage/src/credential.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-services/src/security.rs": "cedb610a9c73ac4f972ce7204c30ac770a0b7159704ce377713bd094a61153ae",
+      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-refresh-token",
+      "synthetic-browser-cookie",
+      "synthetic-pkce-verifier",
+      "synthetic-session-hmac"
+    ],
+    "privacy_scan": "builtin-r5:passed",
+    "external_adapter_activation": "evidence_pending"
+  }
+]

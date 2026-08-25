@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/database-schema-manifest.schema.json",
+  "title": "R2 PostgreSQL Physical Contract",
+  "$defs": {
+    "DatabaseSchemaManifest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "postgres_minimum_major": {
+          "type": "integer",
+          "const": 16
+        },
+        "logical_schemas": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "uniqueItems": true
+        },
+        "required_tables": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z_]+\\.[a-z0-9_]+$"
+          },
+          "minItems": 116,
+          "maxItems": 116,
+          "uniqueItems": true
+        },
+        "database_roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "uuid_generation": {
+          "type": "string",
+          "const": "application_uuid_v7"
+        },
+        "enum_storage": {
+          "type": "string",
+          "const": "text_check_fail_closed"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "postgres_minimum_major",
+        "logical_schemas",
+        "required_tables",
+        "database_roles",
+        "uuid_generation",
+        "enum_storage"
+      ]
+    }
+  },
+  "$ref": "#/$defs/DatabaseSchemaManifest"
+}

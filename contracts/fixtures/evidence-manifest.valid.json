@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0.0",
+  "release_manifest": {
+    "name": "release-manifest.json",
+    "path": "release-manifest.json",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "size_bytes": 1
+  },
+  "provenance": {
+    "name": "provenance.json",
+    "path": "provenance.json",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "size_bytes": 1
+  },
+  "sbom": {
+    "name": "sbom.cdx.json",
+    "path": "sbom.cdx.json",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "size_bytes": 1
+  },
+  "verification": {
+    "format": "passed",
+    "clippy": "passed",
+    "tests": "passed",
+    "contracts": "passed"
+  }
+}

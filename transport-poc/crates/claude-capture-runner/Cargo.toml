@@ -1,0 +1,36 @@
+[package]
+name = "claude-capture-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+boring-backend = ["controlled-h2-capture/boring-backend"]
+
+[[bin]]
+name = "claude-capture-runner"
+path = "src/main.rs"
+required-features = ["boring-backend"]
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+capture-schema = { path = "../capture-schema" }
+clap.workspace = true
+controlled-h2-capture = { path = "../controlled-h2-capture" }
+hex.workspace = true
+percent-encoding.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tls-tap = { path = "../tls-tap" }
+tokio.workspace = true
+uuid.workspace = true
+wire-normalizer = { path = "../wire-normalizer" }
+
+[lints]
+workspace = true

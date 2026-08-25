@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/common.schema.json",
+  "title": "Common Contract Types",
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_:-]{2,127}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "Epoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "RequestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "SecretReference": {
+      "type": "string",
+      "pattern": "^secret:[a-zA-Z0-9_./:-]+$"
+    },
+    "ErrorDetail": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "field": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "details": {
+          "type": "array",
+          "items": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "field",
+        "details"
+      ]
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorDetail"
+        },
+        "request_id": {
+          "$ref": "#/$defs/RequestId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "error",
+        "request_id"
+      ]
+    },
+    "Meta": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/RequestId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "request_id"
+      ]
+    },
+    "Page": {
+      "type": "object",
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "size",
+        "has_more",
+        "next_cursor"
+      ]
+    },
+    "AdminResource": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "id"
+      ]
+    },
+    "SingleEnvelope": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/AdminResource"
+        },
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "meta"
+      ]
+    },
+    "ListEnvelope": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminResource"
+          }
+        },
+        "page": {
+          "$ref": "#/$defs/Page"
+        },
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "page",
+        "meta"
+      ]
+    },
+    "ActionCommand": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "approval_case_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ArtifactCandidate": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "schema_version",
+        "payload"
+      ]
+    },
+    "JobStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "succeeded",
+        "partially_succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "x-enum-registry": "job_status"
+    },
+    "Job": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/JobStatus"
+        },
+        "progress": {
+          "type": "object",
+          "properties": {
+            "completed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "completed",
+            "total"
+          ]
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "status",
+        "progress",
+        "created_at",
+        "expires_at"
+      ]
+    },
+    "JobEnvelope": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Job"
+        },
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "meta"
+      ]
+    },
+    "PublicReadiness": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "not_ready"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ]
+    },
+    "PublicProbeRateLimited": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "rate_limited"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ]
+    },
+    "ReadinessReport": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "not_ready"
+          ]
+        },
+        "schema_ready": {
+          "type": "boolean"
+        },
+        "bootstrap_ready": {
+          "type": "boolean"
+        },
+        "audit_chain_ready": {
+          "type": "boolean"
+        },
+        "active_groups": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "schema_ready",
+        "bootstrap_ready",
+        "audit_chain_ready",
+        "active_groups",
+        "blockers"
+      ]
+    }
+  }
+}

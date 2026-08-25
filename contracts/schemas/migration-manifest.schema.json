@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/migration-manifest.schema.json",
+  "title": "R2 Forward-only Migration Manifest",
+  "$defs": {
+    "Migration": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[0-9]{14}_[a-z0-9_]+\\.sql$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "direction": {
+          "type": "string",
+          "const": "forward_only"
+        },
+        "transactional": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "name",
+        "sha256",
+        "direction",
+        "transactional"
+      ]
+    },
+    "MigrationManifest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "postgres_minimum_major": {
+          "type": "integer",
+          "const": 16
+        },
+        "minimum_compatible_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "current_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "migrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Migration"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "postgres_minimum_major",
+        "minimum_compatible_version",
+        "current_version",
+        "migrations"
+      ]
+    }
+  },
+  "$ref": "#/$defs/MigrationManifest"
+}

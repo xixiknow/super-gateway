@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/r10-release-evidence.schema.json",
+  "title": "R10 Local Promotion Evidence",
+  "$defs": {
+    "DigestArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path", "sha256", "size_bytes"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "RequiredGateResults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format", "clippy", "tests", "contracts", "workspace", "edge_policy",
+        "postgres", "backup_restore_fixture", "admin_console", "windows_compatibility", "secret_canary",
+        "transport_linux_native", "reproducible_build"
+      ],
+      "properties": {
+        "format": {"$ref": "#/$defs/GateState"},
+        "clippy": {"$ref": "#/$defs/GateState"},
+        "tests": {"$ref": "#/$defs/GateState"},
+        "contracts": {"$ref": "#/$defs/GateState"},
+        "workspace": {"$ref": "#/$defs/GateState"},
+        "edge_policy": {"$ref": "#/$defs/GateState"},
+        "postgres": {"$ref": "#/$defs/GateState"},
+        "backup_restore_fixture": {"$ref": "#/$defs/GateState"},
+        "secret_canary": {"$ref": "#/$defs/GateState"},
+        "admin_console": {"$ref": "#/$defs/GateState"},
+        "windows_compatibility": {"$ref": "#/$defs/GateState"},
+        "transport_linux_native": {"$ref": "#/$defs/GateState"},
+        "reproducible_build": {"$ref": "#/$defs/GateState"}
+      }
+    },
+    "GateState": {"type": "string", "enum": ["passed", "failed", "not_run"]},
+    "R10EvidenceManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "profile", "release_manifest", "provenance", "sbom",
+        "requirement_ledger", "backup_restore_manifest", "restore_drill",
+        "verification", "functional_modules", "critical_findings"
+      ],
+      "properties": {
+        "schema_version": {"const": "2.0.0"},
+        "profile": {"const": "r10-local"},
+        "release_manifest": {"$ref": "#/$defs/DigestArtifact"},
+        "provenance": {"$ref": "#/$defs/DigestArtifact"},
+        "sbom": {"$ref": "#/$defs/DigestArtifact"},
+        "requirement_ledger": {"$ref": "#/$defs/DigestArtifact"},
+        "backup_restore_manifest": {"$ref": "#/$defs/DigestArtifact"},
+        "restore_drill": {"$ref": "#/$defs/DigestArtifact"},
+        "verification": {"$ref": "#/$defs/RequiredGateResults"},
+        "functional_modules": {
+          "type": "array",
+          "minItems": 18,
+          "maxItems": 18,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^REQ-F(0[1-9]|1[0-8])$"}
+        },
+        "critical_findings": {"type": "integer", "const": 0}
+      }
+    }
+  },
+  "$ref": "#/$defs/R10EvidenceManifest"
+}

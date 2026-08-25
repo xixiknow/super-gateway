@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/bundle-trust-store.schema.json",
+  "title": "Transport Bundle TrustStore",
+  "$defs": {
+    "TrustKey": {
+      "type": "object",
+      "properties": {
+        "key_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "current",
+            "historical",
+            "revoked"
+          ]
+        },
+        "public_key_base64": {
+          "type": "string",
+          "minLength": 40
+        },
+        "valid_from_unix_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "valid_until_unix_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "status",
+        "public_key_base64",
+        "valid_from_unix_seconds",
+        "valid_until_unix_seconds"
+      ]
+    },
+    "BundleTrustStore": {
+      "type": "object",
+      "properties": {
+        "format_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "domain": {
+          "type": "string",
+          "const": "transport_bundle_v1"
+        },
+        "keys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrustKey"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format_version",
+        "domain",
+        "keys"
+      ]
+    }
+  },
+  "$ref": "#/$defs/BundleTrustStore"
+}

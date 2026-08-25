@@ -1,0 +1,23 @@
+[Unit]
+Description=Super Gateway forward-only database migration
+Wants=network-online.target
+After=network-online.target
+Before=super-gateway.service
+
+[Service]
+Type=oneshot
+User=super-gateway-migrate
+Group=super-gateway-migrate
+EnvironmentFile=/etc/super-gateway/migrate.env
+ExecStart=/opt/super-gateway/current/super-gatewayd migrate
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/super-gateway
+LimitNOFILE=262144
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

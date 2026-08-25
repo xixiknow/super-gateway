@@ -1,0 +1,87 @@
+name: super-gateway
+
+services:
+  migrate:
+    image: ${SUPER_GATEWAY_IMAGE:-ghcr.io/xixiknow/super-gateway:latest}
+    command: ["migrate"]
+    environment:
+      GATEWAY_MIGRATOR_DATABASE_URL_FILE: /run/secrets/migrator_database_url
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: "0"
+    secrets:
+      - migrator_database_url
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  gateway:
+    image: ${SUPER_GATEWAY_IMAGE:-ghcr.io/xixiknow/super-gateway:latest}
+    command: ["serve"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      GATEWAY_DATA_BIND: 0.0.0.0:8080
+      GATEWAY_ADMIN_BIND: 0.0.0.0:8081
+      GATEWAY_DATABASE_URL_FILE: /run/secrets/runtime_database_url
+      GATEWAY_BUSINESS_KEY_PROVIDER: database
+      GATEWAY_DIGEST_KEY_FILE: /run/secrets/digest_key
+      GATEWAY_AUDIT_INTEGRITY_KEY_FILE: /run/secrets/audit_integrity_key
+      GATEWAY_BUNDLE_TRUST_STORE: /etc/super-gateway/bundle-trust-store.json
+      GATEWAY_BUNDLE_DIR: /var/lib/super-gateway/bundles
+      GATEWAY_RESPONSE_TMP_DIR: /var/lib/super-gateway/response-tmp
+      GATEWAY_DRAIN_DEADLINE: ${GATEWAY_DRAIN_DEADLINE:-300s}
+      GATEWAY_BOOTSTRAP_ADMIN_USERNAME: ${GATEWAY_BOOTSTRAP_ADMIN_USERNAME:-}
+      GATEWAY_BOOTSTRAP_ADMIN_PASSWORD: ${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD:-}
+      GATEWAY_BOOTSTRAP_ADMIN_EMAIL: ${GATEWAY_BOOTSTRAP_ADMIN_EMAIL:-}
+      GATEWAY_BOOTSTRAP_ADMIN_DISPLAY_NAME: ${GATEWAY_BOOTSTRAP_ADMIN_DISPLAY_NAME:-}
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: "0"
+    secrets:
+      - runtime_database_url
+      - digest_key
+      - audit_integrity_key
+    volumes:
+      - type: bind
+        source: ./deploy/container/config/bundle-trust-store.json
+        target: /etc/super-gateway/bundle-trust-store.json
+        read_only: true
+      - type: bind
+        source: ./deploy/container/bundles
+        target: /var/lib/super-gateway/bundles
+      - response_tmp:/var/lib/super-gateway/response-tmp
+    ports:
+      - ${GATEWAY_DATA_BIND_HOST:-0.0.0.0}:${GATEWAY_DATA_PORT:-8080}:8080
+      - ${GATEWAY_ADMIN_BIND_HOST:-127.0.0.1}:${GATEWAY_ADMIN_PORT:-8081}:8081
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    stop_grace_period: 330s
+    restart: unless-stopped
+
+volumes:
+  response_tmp:
+
+secrets:
+  migrator_database_url:
+    file: ./deploy/container/secrets/migrator-database-url
+  runtime_database_url:
+    file: ./deploy/container/secrets/runtime-database-url
+  digest_key:
+    file: ./deploy/container/secrets/digest-key
+  audit_integrity_key:
+    file: ./deploy/container/secrets/audit-integrity-key

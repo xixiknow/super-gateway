@@ -1,0 +1,302 @@
+[
+  {
+    "fixture_id": "FIX-R6-T01",
+    "source": "synthetic",
+    "scenario": "transport_production_01",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "ddb0d8e38453c430f27640039a3ae9301591357e7bf06d8bee864616fcab769a",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T02",
+    "source": "synthetic",
+    "scenario": "transport_production_02",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "b4a66e9c782b4bf23cdc5712b114351747f9729e11c1c8dea2ce9656582a1fe6",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T03",
+    "source": "synthetic",
+    "scenario": "transport_production_03",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "3791becdc064bbf6e5e57fc4209c226cfc5fd361662a3fc9dd172916ee9944c6",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T04",
+    "source": "synthetic",
+    "scenario": "transport_production_04",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "d8a92e5f85f3e82d5f4d239c3082765a23e391fcdca421e0a2665a30f9e5e8f9",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T05",
+    "source": "synthetic",
+    "scenario": "transport_production_05",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "c9cba619d8223927478d51c2c0cfefeefffaf98288fc72b127a32c4519fc80cc",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T06",
+    "source": "synthetic",
+    "scenario": "transport_production_06",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "72f6556bf0f9424e1c458850652cb83d544073e29a9b4a07463f0a17117dc5e2",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T07",
+    "source": "synthetic",
+    "scenario": "transport_production_07",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "bf01afb4df67b9d07de698fd6eefdaef67d77a1c2f204c7d8c9dfeca0e423a25",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T08",
+    "source": "synthetic",
+    "scenario": "transport_production_08",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "1cd7bec71c5d53dceafc0ecc7b54b7c117487f7e8bf49be953758146b1ec80cd",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T09",
+    "source": "synthetic",
+    "scenario": "transport_production_09",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "4195c5705384f13b952bbf4a1aa181b85ef034f43ab8c17d88c9a56484a5ed56",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T10",
+    "source": "synthetic",
+    "scenario": "transport_production_10",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "06b769b35233d4ce2a5d20bf609f05a2f7c00cdf11aaa9cc520ce9f9fc3472b7",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T11",
+    "source": "synthetic",
+    "scenario": "transport_production_11",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "565fa450fca356349d300c55bd96b0c3cacad6e936b0cdb25ca503ca591642be",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T12",
+    "source": "synthetic",
+    "scenario": "transport_production_12",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "4da8e9c10eb5af2a827415c5d8bad522e301efe87210c2b62cc5e3f2473cb25d",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T13",
+    "source": "synthetic",
+    "scenario": "transport_production_13",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "8491668422a55db8d589c4315b1d390da8f00286ac8b07f6f6a767a4f252debe",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T14",
+    "source": "synthetic",
+    "scenario": "transport_production_14",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "af114d27a3bea0721118a4bd6e960e391f1c764f6609e11749d990ae971430ec",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R6-T15",
+    "source": "synthetic",
+    "scenario": "transport_production_15",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-transport-r6-v1",
+    "content_sha256": "e6a717c7f8bea6e513b5c40bfcb05f37a0464b279715b235b706e642f4dfe0c3",
+    "privacy_scan": "builtin-r6:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r6-v1",
+      "transport-bundle-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  }
+]

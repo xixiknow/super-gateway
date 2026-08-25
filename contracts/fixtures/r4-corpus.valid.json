@@ -1,0 +1,304 @@
+[
+  {
+    "fixture_id": "FIX-R4-S01",
+    "scenario": "scheduler_scenario_01",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S02",
+    "scenario": "scheduler_scenario_02",
+    "sources": [
+      "crates/gateway-api/src/edge.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-api/src/edge.rs": "a6d3a7b1a732ed1b1bb84eebaaaf644eb1104dfb93c4e409772a533975b002be"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S03",
+    "scenario": "scheduler_scenario_03",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S04",
+    "scenario": "scheduler_scenario_04",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S05",
+    "scenario": "scheduler_scenario_05",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S06",
+    "scenario": "scheduler_scenario_06",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S07",
+    "scenario": "scheduler_scenario_07",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S08",
+    "scenario": "scheduler_scenario_08",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S09",
+    "scenario": "scheduler_scenario_09",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S10",
+    "scenario": "scheduler_scenario_10",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S11",
+    "scenario": "scheduler_scenario_11",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S12",
+    "scenario": "scheduler_scenario_12",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S13",
+    "scenario": "scheduler_scenario_13",
+    "sources": [
+      "crates/gateway-scheduler/src/retry.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/retry.rs": "e9a487aed39910b8ab907cfc62c215c8b0ecd520aa72f080c26d9705a42c7abc"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S14",
+    "scenario": "scheduler_scenario_14",
+    "sources": [
+      "crates/gateway-scheduler/src/attempt.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/attempt.rs": "291175f9e469b59b96fdb95d5f0764195f9ca927162a20f0a31b2d9820c2fb04"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S15",
+    "scenario": "scheduler_scenario_15",
+    "sources": [
+      "crates/gateway-scheduler/src/actor.rs",
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/actor.rs": "a9481f0751f9f8f974f0101984f527af6f1a3f57262b96683e74a3e40ce2451b",
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S16",
+    "scenario": "scheduler_scenario_16",
+    "sources": [
+      "crates/gateway-scheduler/src/attempt.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/attempt.rs": "291175f9e469b59b96fdb95d5f0764195f9ca927162a20f0a31b2d9820c2fb04"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S17",
+    "scenario": "scheduler_scenario_17",
+    "sources": [
+      "crates/gateway-scheduler/src/attempt.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/attempt.rs": "291175f9e469b59b96fdb95d5f0764195f9ca927162a20f0a31b2d9820c2fb04"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S18",
+    "scenario": "scheduler_scenario_18",
+    "sources": [
+      "crates/gateway-scheduler/src/attempt.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/attempt.rs": "291175f9e469b59b96fdb95d5f0764195f9ca927162a20f0a31b2d9820c2fb04"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S19",
+    "scenario": "scheduler_scenario_19",
+    "sources": [
+      "crates/gateway-scheduler/src/attempt.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/attempt.rs": "291175f9e469b59b96fdb95d5f0764195f9ca927162a20f0a31b2d9820c2fb04"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  },
+  {
+    "fixture_id": "FIX-R4-S20",
+    "scenario": "scheduler_scenario_20",
+    "sources": [
+      "crates/gateway-scheduler/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-credential-token"
+    ],
+    "privacy_scan": "builtin-r4:passed"
+  }
+]

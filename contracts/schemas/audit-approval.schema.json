@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/audit-approval.schema.json",
+  "title": "Approval and Content Audit Contracts",
+  "$defs": {
+    "StepUpPurpose": {
+      "type": "string",
+      "enum": [
+        "key_secret_reveal",
+        "irreversible_lifecycle",
+        "content_audit_access",
+        "approval_decision",
+        "key_provider_change",
+        "backup_restore_security",
+        "bundle_activation",
+        "device_rebuild"
+      ],
+      "x-enum-registry": "step_up_purpose"
+    },
+    "ApprovalKind": {
+      "type": "string",
+      "enum": [
+        "key_full_audit",
+        "group_audit_policy",
+        "content_read",
+        "content_export",
+        "device_rebuild",
+        "key_provider_change",
+        "legal_hold",
+        "manual_delete",
+        "background_catalog_activate",
+        "background_catalog_risk_acceptance",
+        "enforcement_activate"
+      ],
+      "x-enum-registry": "approval_kind"
+    },
+    "ApprovalState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "expired",
+        "revoked"
+      ],
+      "x-enum-registry": "approval_state"
+    },
+    "ContentAuditRequestedMode": {
+      "type": "string",
+      "enum": [
+        "metadata_only",
+        "full_encrypted"
+      ],
+      "x-enum-registry": "content_audit_requested_mode"
+    },
+    "ContentAuditGroupPolicy": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "require",
+        "forbid"
+      ],
+      "x-enum-registry": "content_audit_group_policy"
+    },
+    "ContentAuditEffectiveMode": {
+      "type": "string",
+      "enum": [
+        "metadata_only",
+        "full_encrypted"
+      ],
+      "x-enum-registry": "content_audit_effective_mode"
+    },
+    "ContentAuditObjectKind": {
+      "type": "string",
+      "enum": [
+        "original_request",
+        "final_upstream_request",
+        "upstream_response"
+      ],
+      "x-enum-registry": "content_audit_object_kind"
+    },
+    "StepUpGrant": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "purpose": {
+          "$ref": "#/$defs/StepUpPurpose"
+        },
+        "actor_user_id": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "consumed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "purpose",
+        "actor_user_id",
+        "expires_at"
+      ]
+    },
+    "ApprovalCase": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ApprovalKind"
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "requested_by": {
+          "type": "string"
+        },
+        "request_step_up_grant_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action_snapshot_digest": {
+          "type": "string"
+        },
+        "requested_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "$ref": "#/$defs/ApprovalState"
+        },
+        "decided_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_step_up_grant_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decided_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "scope",
+        "requested_by",
+        "request_step_up_grant_id",
+        "reason",
+        "action_snapshot_digest",
+        "requested_at",
+        "expires_at",
+        "state",
+        "revision"
+      ]
+    },
+    "ContentAuditObject": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "attempt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ContentAuditObjectKind"
+        },
+        "ciphertext_location": {
+          "type": "string"
+        },
+        "wrapped_dek": {
+          "type": "string"
+        },
+        "aead_algorithm": {
+          "type": "string"
+        },
+        "plaintext_digest": {
+          "type": "string"
+        },
+        "retention_until": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "legal_hold_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "request_id",
+        "kind",
+        "ciphertext_location",
+        "wrapped_dek",
+        "aead_algorithm",
+        "plaintext_digest",
+        "retention_until",
+        "legal_hold_ids",
+        "created_at"
+      ]
+    }
+  }
+}

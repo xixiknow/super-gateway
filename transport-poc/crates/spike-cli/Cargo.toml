@@ -1,0 +1,31 @@
+[package]
+name = "spike-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+boring-backend = ["controlled-h2-capture/boring-backend", "transport-core/boring-backend"]
+
+[dependencies]
+anyhow.workspace = true
+archetype-bundle = { path = "../archetype-bundle" }
+capture-schema = { path = "../capture-schema" }
+clap.workspace = true
+controlled-h2-capture = { path = "../controlled-h2-capture" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+transport-core = { path = "../transport-core" }
+tokio.workspace = true
+tls-tap = { path = "../tls-tap" }
+uuid.workspace = true
+hex.workspace = true
+wire-normalizer = { path = "../wire-normalizer" }
+wire-diff = { path = "../wire-diff" }
+
+[lints]
+workspace = true

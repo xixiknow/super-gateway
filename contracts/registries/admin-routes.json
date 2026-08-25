@@ -1,0 +1,1377 @@
+{
+  "schema_version": "1.0.0",
+  "routes": [
+    {
+      "method": "get",
+      "path": "/admin/v1/alert-silences",
+      "description": "查询或创建维护静默",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/alert-silences",
+      "description": "查询或创建维护静默",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/alert-silences/{id}",
+      "description": "静默范围、过期与创建者",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/alert-silences/{id}:end",
+      "description": "提前结束静默",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/alerts",
+      "description": "告警列表",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/alerts/{id}:acknowledge",
+      "description": "确认",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/alerts/{id}:resolve",
+      "description": "解决",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/approval-cases",
+      "description": "查询或发起审批",
+      "tag": "高风险审批",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/approval-cases",
+      "description": "查询或发起审批",
+      "tag": "高风险审批",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/approval-cases/{id}",
+      "description": "详情",
+      "tag": "高风险审批",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/approval-cases/{id}:approve",
+      "description": "第二名 Admin 批准",
+      "tag": "高风险审批",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/approval-cases/{id}:cancel",
+      "description": "发起人撤销",
+      "tag": "高风险审批",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/approval-cases/{id}:reject",
+      "description": "拒绝",
+      "tag": "高风险审批",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/artifacts/{id}",
+      "description": "统一只读 Artifact 元数据、hash 和 provenance",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/audit-events",
+      "description": "全局管理审计；Key Owner 自动限定本人范围",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/auth/login",
+      "description": "用户名和密码登录",
+      "tag": "路径",
+      "explicit_role": "匿名"
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/auth/me",
+      "description": "当前 User、Session、step-up 状态",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/auth/mfa/enrollments",
+      "description": "创建 TOTP enrollment",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/auth/mfa/enrollments/{id}:confirm",
+      "description": "确认 TOTP",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/auth/mfa/verify",
+      "description": "完成登录二次验证",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/auth/password/change",
+      "description": "修改密码并撤销其他 Session",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "delete",
+      "path": "/admin/v1/auth/session",
+      "description": "注销当前 Session",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/auth/sessions",
+      "description": "查看本人 Session",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "delete",
+      "path": "/admin/v1/auth/sessions/{id}",
+      "description": "撤销本人某个 Session",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/auth/step-up",
+      "description": "获取短时高风险授权",
+      "tag": "路径",
+      "explicit_role": "本人"
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/background-catalog-versions",
+      "description": "测活与背景流量特征版本",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/background-catalog-versions",
+      "description": "测活与背景流量特征版本",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/background-catalog-versions/{id}:activate",
+      "description": "按证据门槛及双人审批激活",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/background-catalog-versions/{id}:publish-shadow",
+      "description": "开始不少于 7 天的 Shadow 窗口",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/background-catalog-versions/{id}:rollback",
+      "description": "回滚历史不可变 Catalog",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/background-catalog-versions/{id}:validate",
+      "description": "编译强结构模板并由平台运行确定性样本",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/capability-versions",
+      "description": "查询或创建 typed candidate",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/capability-versions",
+      "description": "查询或创建 typed candidate",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/capability-versions/{id}:activate",
+      "description": "激活版本",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/capability-versions/{id}:validate",
+      "description": "样本与路径展开验证",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/content-audit/legal-holds",
+      "description": "查询或创建 Legal Hold；创建需双人审批",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/content-audit/legal-holds",
+      "description": "查询或创建 Legal Hold；创建需双人审批",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/content-audit/legal-holds/{id}",
+      "description": "范围、复核、到期与 active object count",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/content-audit/legal-holds/{id}:release",
+      "description": "双人审批后解除",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/content-audit/legal-holds/{id}:review",
+      "description": "定期复核并记录理由",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/content-audit/purge-jobs",
+      "description": "到期或管理员明确清理 Job",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/content-audit/records/{id}",
+      "description": "解密单条记录，强审计",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/content-audit/records/{id}:export",
+      "description": "双重确认后的独立导出",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/content-audit/search-sessions",
+      "description": "step-up + 理由，创建短时检索 Session",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/content-audit/search-sessions/{id}/records",
+      "description": "在授权范围内查询",
+      "tag": "Content Audit",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credential-enrollments",
+      "description": "发起添加流程",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/credential-enrollments/{id}",
+      "description": "当前状态与 next action",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credential-enrollments/{id}:cancel",
+      "description": "取消 enrollment",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credential-enrollments/{id}:complete-callback",
+      "description": "完成 OAuth 回调",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credential-enrollments/{id}:submit-material",
+      "description": "提交 Setup Token 等临时 secret",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/credential-profiles",
+      "description": "Profile 集合、Archetype/Bundle/epoch/健康筛选",
+      "tag": "Profile 与 Egress",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/credential-profiles/{id}",
+      "description": "Profile、profile epoch、Archetype、Device Identity 摘要、证据状态",
+      "tag": "Profile 与 Egress",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/credentials",
+      "description": "查询 Credential",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/credentials/{id}",
+      "description": "Admin 详情",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/credentials/{id}/browser-operations",
+      "description": "只读状态、过期时间、Egress 摘要；无 Cookie/页面正文",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}/browser-operations/{operation_id}:cancel",
+      "description": "取消尚未终态的交互/静默授权",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/credentials/{id}/maintenance-operations",
+      "description": "refresh、reauth、PLAN 历史",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/credentials/{id}/reauth-strategy",
+      "description": "策略类型、健康、Browser material version 与 next action",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}/reauth-strategy:disable",
+      "description": "停用自动维护并重算 management class",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}/reauth-strategy:initialize",
+      "description": "建立或重建 Managed Browser Strategy，202",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}/reauth-strategy:reactivate",
+      "description": "完整验证后恢复自动维护",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "patch",
+      "path": "/admin/v1/credentials/{id}/scheduling-config",
+      "description": "priority、weight、容量和能力收窄",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:archive",
+      "description": "归档",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:begin-recovery",
+      "description": "从 `manual_recovery_required` 开始恢复",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:clear-cooldown",
+      "description": "明确清除 cooldown",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:disable",
+      "description": "禁用",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:migrate-group",
+      "description": "排空后迁移至目标 Group",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:migrate-profile-cohort",
+      "description": "迁移 Archetype 版本",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:reactivate",
+      "description": "恢复",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:rebind-egress",
+      "description": "重绑出口并原子增加 profile epoch 与 egress epoch",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:rebuild-device-identity",
+      "description": "双人审批后重建设备身份",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:refresh-plan",
+      "description": "手工刷新展示用 PLAN",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:refresh-token",
+      "description": "手工触发 Token refresh Job",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:revoke",
+      "description": "吊销",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/dashboard/summary",
+      "description": "角色裁剪后的首页聚合",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/egress-bindings",
+      "description": "Egress Binding 集合、mode/Proxy/健康/漂移筛选",
+      "tag": "Profile 与 Egress",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/egress-bindings/{id}",
+      "description": "mode、Proxy、egress epoch、出口摘要、健康与漂移",
+      "tag": "Profile 与 Egress",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/enforcement-versions",
+      "description": "安全强制版本",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/enforcement-versions",
+      "description": "安全强制版本",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/enforcement-versions/{id}:activate",
+      "description": "双人审批后激活并原子生成 Group Config snapshot",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/enforcement-versions/{id}:publish-shadow",
+      "description": "发布 Shadow 候选并冻结证据窗口",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/enforcement-versions/{id}:rollback",
+      "description": "双人审批后回滚历史不可变版本",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/enforcement-versions/{id}:validate",
+      "description": "typed 编译与不可放宽校验",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/environment-archetypes",
+      "description": "类别模板",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/environment-archetypes",
+      "description": "类别模板",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/environment-archetypes/{id}",
+      "description": "字段和证据摘要",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/environment-archetypes/{id}:activate",
+      "description": "激活供新 Credential 分配",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/environment-archetypes/{id}:promote-canary",
+      "description": "进入 Canary",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/environment-archetypes/{id}:retire",
+      "description": "退休",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/environment-archetypes/{id}:verify",
+      "description": "运行自动证据门禁",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/exports",
+      "description": "创建导出",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/exports/{id}",
+      "description": "Job 状态",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/exports/{id}/download",
+      "description": "短期一次性下载",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/groups",
+      "description": "查询或创建 Group",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups",
+      "description": "查询或创建 Group",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/groups/{id}",
+      "description": "聚合信息；PATCH 只改名称等元数据",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "patch",
+      "path": "/admin/v1/groups/{id}",
+      "description": "聚合信息；PATCH 只改名称等元数据",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/groups/{id}/capacity",
+      "description": "管理面实时容量，不形成公开 Availability",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/groups/{id}/config-versions",
+      "description": "查询或创建不可变候选配置",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}/config-versions",
+      "description": "查询或创建不可变候选配置",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/groups/{id}/config-versions/{version}",
+      "description": "读取完整配置、hash、来源",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}/config-versions/{version}:activate",
+      "description": "激活",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}/config-versions/{version}:promote-canary",
+      "description": "推进 Canary",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}/config-versions/{version}:publish-shadow",
+      "description": "发布 Shadow",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}/config-versions/{version}:simulate",
+      "description": "样本请求与历史窗口模拟",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}/config-versions/{version}:validate",
+      "description": "静态验证",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/groups/{id}/credentials",
+      "description": "组内 Credential 列表",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}:archive",
+      "description": "归档",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}:disable",
+      "description": "禁用并结束尚未获得 Lease 的请求",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}:reactivate",
+      "description": "恢复服务",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/groups/{id}:rollback-config",
+      "description": "回滚 Active Pointer",
+      "tag": "路径与配置发布",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/models",
+      "description": "模型目录与发布状态",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/models/{id}",
+      "description": "详情、能力版本和定价引用",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/models/{id}:approve",
+      "description": "审核新模型后发布",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/models/{id}:deprecate",
+      "description": "标记弃用，不再接受新请求",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/models/{id}:disable",
+      "description": "停用",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/models:refresh",
+      "description": "自动发现 Job",
+      "tag": "模型与能力",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/notification-channels",
+      "description": "邮件、Webhook、Server酱3 等渠道",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/notification-channels",
+      "description": "邮件、Webhook、Server酱3 等渠道",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/notification-channels/{id}:test",
+      "description": "测试发送",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/notifications",
+      "description": "当前用户站内通知 inbox",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/notifications/{id}:read",
+      "description": "标记已读",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/notifications:read-all",
+      "description": "当前用户全部已读",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/operations/backup-jobs",
+      "description": "在线备份",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/backup-runs",
+      "description": "备份历史、manifest、WAL 与验证状态",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/backup-runs/{id}",
+      "description": "单次备份详情",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/drills",
+      "description": "演练历史",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/operations/drills",
+      "description": "演练任务",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/drills/{id}",
+      "description": "结果、RPO/RTO 与证据引用",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/jobs",
+      "description": "异步 Job",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/jobs/{id}",
+      "description": "Job 进度与逐项结果",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/operations/jobs/{id}:cancel",
+      "description": "取消尚可中止的 Job",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/operations/key-lifecycle-jobs",
+      "description": "restore-gated 的主密钥退役或销毁",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/operations/key-rotation-jobs",
+      "description": "主密钥轮换",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/restore-validations",
+      "description": "预检历史",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/operations/restore-validations",
+      "description": "离线恢复包预检",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/restore-validations/{id}",
+      "description": "单次预检详情",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/operations/upgrade-checks",
+      "description": "检查历史与当前兼容性",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/operations/upgrade-checks",
+      "description": "升级前检查",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/plan-mapping-versions",
+      "description": "PLAN Mapping typed candidate",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/plan-mapping-versions",
+      "description": "PLAN Mapping typed candidate",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/plan-mapping-versions/{id}",
+      "description": "版本、来源、mapping、diff 与影响摘要",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/plan-mapping-versions/{id}:activate",
+      "description": "激活并创建重算 Job，返回标准 `202 JobEnvelope`",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/plan-mapping-versions/{id}:recompute",
+      "description": "显式重算已保存 raw，202",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/plan-mapping-versions/{id}:rollback",
+      "description": "切回历史版本并创建重算 Job，返回标准 `202 JobEnvelope`",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/plan-mapping-versions/{id}:validate",
+      "description": "对已保存 raw corpus 验证",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/platform-keys",
+      "description": "查询或创建 Key",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/platform-keys",
+      "description": "查询或创建 Key",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/platform-keys/{id}",
+      "description": "详情或可变配置",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "patch",
+      "path": "/admin/v1/platform-keys/{id}",
+      "description": "详情或可变配置",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/platform-keys/{id}/audit-events",
+      "description": "Key 范围审计",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/platform-keys/{id}/client-config",
+      "description": "生成不含 secret 的客户端配置模板",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/platform-keys/{id}/config-versions",
+      "description": "配置历史",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/platform-keys/{id}:disable",
+      "description": "临时禁用",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/platform-keys/{id}:reactivate",
+      "description": "恢复",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/platform-keys/{id}:reveal",
+      "description": "step-up 后再次查看完整 secret",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/platform-keys/{id}:revoke",
+      "description": "永久吊销",
+      "tag": "路径",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/price-versions",
+      "description": "模型价格版本",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/price-versions",
+      "description": "模型价格版本",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/proxies",
+      "description": "查询或创建 CONNECT/SOCKS5 Proxy",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/proxies",
+      "description": "查询或创建 CONNECT/SOCKS5 Proxy",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/proxies/{id}",
+      "description": "普通元数据和容量配置",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "patch",
+      "path": "/admin/v1/proxies/{id}",
+      "description": "普通元数据和容量配置",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/proxies/{id}/bindings",
+      "description": "当前绑定 Credential",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/proxies/{id}:archive",
+      "description": "归档",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/proxies/{id}:disable",
+      "description": "禁用",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/proxies/{id}:probe",
+      "description": "异步验证连通性、TLS pass-through 与出口",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/proxies/{id}:reactivate",
+      "description": "恢复",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/proxies/{id}:replace-secret",
+      "description": "step-up 后替换认证 secret",
+      "tag": "Proxy",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/requests",
+      "description": "请求与使用记录统一列表",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/requests/{id}",
+      "description": "阶段、attempt、usage、成本与错误",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/requests/{id}/attempts",
+      "description": "ConnectionAttempt 与 Messages Attempt",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/rulesets",
+      "description": "规则候选",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/rulesets",
+      "description": "规则候选",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/rulesets/{id}:activate",
+      "description": "激活",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/rulesets/{id}:simulate",
+      "description": "输入样本模拟",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/rulesets/{id}:validate",
+      "description": "静态验证",
+      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/system/status",
+      "description": "release、Schema、readiness、capacity、SLO 与完整性摘要",
+      "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/transport-bundles",
+      "description": "Bundle 元数据与上传",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/transport-bundles",
+      "description": "Bundle 元数据与上传",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/transport-bundles/{id}:activate",
+      "description": "双人审批后激活",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/transport-bundles/{id}:promote-canary",
+      "description": "绑定至少 20 次 fresh、零硬失配的机器证据后进入 Canary",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/transport-bundles/{id}:rollback",
+      "description": "切回已验证版本",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/transport-bundles/{id}:verify",
+      "description": "签名、hash、ABI、证据验证",
+      "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/usage/summary",
+      "description": "时间、User、Key、Group、Credential、模型聚合",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/usage/timeseries",
+      "description": "使用量与估算成本时序",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/users",
+      "description": "查询或创建 User",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/users",
+      "description": "查询或创建 User",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/users/{id}",
+      "description": "查看或修改显示名、邮箱",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "patch",
+      "path": "/admin/v1/users/{id}",
+      "description": "查看或修改显示名、邮箱",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/users/{id}/sessions",
+      "description": "Session 摘要",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/users/{id}/sessions:revoke-all",
+      "description": "撤销全部 Session",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/users/{id}:archive",
+      "description": "全部 Key 已 revoked 后归档",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/users/{id}:disable",
+      "description": "禁用 User，并同步禁用其 Key",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/users/{id}:reactivate",
+      "description": "恢复 User；Key 保持原状态",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/users/{id}:unlock",
+      "description": "解锁登录",
+      "tag": "路径",
+      "explicit_role": "Admin"
+    }
+  ]
+}

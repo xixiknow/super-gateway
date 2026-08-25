@@ -1,0 +1,242 @@
+[
+  {
+    "fixture_id": "FIX-R3-ROUTE-MATRIX-001",
+    "source": "synthetic",
+    "scenario": "auth_first_route_matrix",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "cf3613c97dcd75ee656abf7b28dd08c1fd767016856cb70a94d0c082111ddd8a",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-AUTH-ACCESS-001",
+    "source": "synthetic",
+    "scenario": "platform_key_and_ingress_access",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "22de9cbe1be0d77ca3a84d88e3bba774f8a66657da85b5753394730278435ba7",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-MESSAGES-CORPUS-001",
+    "source": "synthetic",
+    "scenario": "messages_framing_and_lossless_json",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "0e5058e7ea175c71d2bb7659bc6c669c27e8e096b9d366ea513ef8de0b192d76",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-CLIENT-CORPUS-001",
+    "source": "synthetic",
+    "scenario": "client_session_traffic_classification",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "47987486f9dcefc473299dc8f8858dc93d894794c3184da78156c0e9740a04fa",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-CAPABILITY-001",
+    "source": "synthetic",
+    "scenario": "bounded_model_capability",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "5fdf5da0c3eb0eafef0b86d2360a4125545ffa0226bc407d1c803c46879194ee",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-SYSTEM-MODES-001",
+    "source": "synthetic",
+    "scenario": "system_policy_four_modes",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "61549c186130c8623a3371f79bcbb3bedd2358cafc336267e4c942fe168d00b5",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-RULESET-001",
+    "source": "synthetic",
+    "scenario": "deterministic_ruleset",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "8ee8b0d81f2b402e96aed40608e8c963fb607b07037520c70d758a7e6341c149",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-UNKNOWN-EXT-001",
+    "source": "synthetic",
+    "scenario": "unknown_extension_roundtrip_and_pin",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "1167ddf6f89b23c276979bf5aa4ab5a63eafb33e336a6edf5f919ff7d018a62a",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-GENERIC-REQUEST-001",
+    "source": "synthetic",
+    "scenario": "credential_neutral_generic_request",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "5c006bd35e9cb2da41b361cca3ba13f50453abea55468cdf773e8cdf7dc20531",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-MODELS-001",
+    "source": "synthetic",
+    "scenario": "published_model_scope_and_pagination",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "d2206fe3680ebd5989d5f75307d1ba3e7be8c11023dbf4ff886d3410ce3da3bf",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-FUZZ-CORPUS-001",
+    "source": "synthetic",
+    "scenario": "bounded_mutation_regression_corpus",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "18405749d12ef54c7e68b14f74aff9b7c232df2456a3441a29c3c203a4472668",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R3-SECRET-CANARY-001",
+    "source": "synthetic",
+    "scenario": "southbound_identity_canary",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-policy-r3-v1",
+    "content_sha256": "a71ef8ae769f2fd2fa630d6debe368268c2d79998e48df23942f6702d9ed6923",
+    "privacy_scan": "builtin-r3:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r3-v1",
+      "claude-messages-compatible"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  }
+]

@@ -1,0 +1,202 @@
+[
+  {
+    "schema_version": "1.0.0",
+    "event_seq": 1,
+    "trace_id": "trc_01",
+    "request_id": "req_01",
+    "parent_event_id": null,
+    "occurred_at_utc": "2026-08-24T00:00:00Z",
+    "monotonic_ns": 100,
+    "runtime_generation": 1,
+    "actor": {
+      "kind": "platform_key",
+      "id_digest": "key_digest"
+    },
+    "executor": {
+      "instance_id": "gw_01",
+      "owner_partition": "group_01"
+    },
+    "phase": "accepted",
+    "outcome": "pending",
+    "event_id": "evt_req",
+    "event_type": "request",
+    "payload": {
+      "response_mode": "stream",
+      "state": "accepted",
+      "client_class": "claude_code_cli",
+      "platform_key_id_digest": "key_digest",
+      "group_id": "grp_01",
+      "base_session_digest": "base_digest",
+      "agent_digest": "agent_digest",
+      "portability": "portable",
+      "generic_request_digest": "generic_digest",
+      "snapshot_refs": {
+        "group_config": "gcv_1"
+      },
+      "pre_upstream_queue_deadline_utc": "2026-08-24T00:00:30Z",
+      "upstream_total_deadline_utc": null,
+      "connection_attempt_count": 0,
+      "messages_attempt_count": 0,
+      "final_attempt_id": null,
+      "response_committed": false,
+      "terminal_reason": null
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "event_seq": 1,
+    "trace_id": "trc_01",
+    "request_id": "req_01",
+    "parent_event_id": null,
+    "occurred_at_utc": "2026-08-24T00:00:00Z",
+    "monotonic_ns": 100,
+    "runtime_generation": 1,
+    "actor": {
+      "kind": "platform_key",
+      "id_digest": "key_digest"
+    },
+    "executor": {
+      "instance_id": "gw_01",
+      "owner_partition": "group_01"
+    },
+    "phase": "tls_handshaking",
+    "outcome": "pending",
+    "event_id": "evt_conn",
+    "event_type": "connection_attempt",
+    "payload": {
+      "attempt_id": "conn_01",
+      "ordinal": 1,
+      "credential_id_digest": "cred_digest",
+      "profile_epoch": 1,
+      "archetype_version_id": "archv_01",
+      "capture_cohort": "win-2026-08-a",
+      "bundle_id": "bundle_01",
+      "bundle_version": 1,
+      "bundle_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egress_binding_id": "egress_01",
+      "proxy_id_digest": null,
+      "egress_epoch": 1,
+      "authority": "api.anthropic.com",
+      "sni": "api.anthropic.com",
+      "protocol": "h1",
+      "pool_key_digest": "pool_digest",
+      "activation_generation": 1,
+      "state": "tls_handshaking",
+      "connect_timeout_ms": 5000,
+      "pool_reused": false,
+      "request_bytes_written": 0,
+      "failure_domain": null,
+      "connection_disposition": null,
+      "retry_safe": true,
+      "health_effect": null
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "event_seq": 1,
+    "trace_id": "trc_01",
+    "request_id": "req_01",
+    "parent_event_id": null,
+    "occurred_at_utc": "2026-08-24T00:00:00Z",
+    "monotonic_ns": 100,
+    "runtime_generation": 1,
+    "actor": {
+      "kind": "platform_key",
+      "id_digest": "key_digest"
+    },
+    "executor": {
+      "instance_id": "gw_01",
+      "owner_partition": "group_01"
+    },
+    "phase": "connection_ready",
+    "outcome": "pending",
+    "event_id": "evt_transport",
+    "event_type": "transport",
+    "payload": {
+      "connection_attempt_id": "conn_01",
+      "attempt_id": null,
+      "transport_seq": 1,
+      "kind": "connection_ready",
+      "connection_id_digest": "connection_digest",
+      "request_bytes_written": 0,
+      "response_bytes_read": 0,
+      "upstream_submission_complete": false,
+      "connection_disposition": null,
+      "diagnostic_code": null
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "event_seq": 1,
+    "trace_id": "trc_01",
+    "request_id": "req_01",
+    "parent_event_id": null,
+    "occurred_at_utc": "2026-08-24T00:00:00Z",
+    "monotonic_ns": 100,
+    "runtime_generation": 1,
+    "actor": {
+      "kind": "platform_key",
+      "id_digest": "key_digest"
+    },
+    "executor": {
+      "instance_id": "gw_01",
+      "owner_partition": "group_01"
+    },
+    "phase": "submitting",
+    "outcome": "pending",
+    "event_id": "evt_attempt",
+    "event_type": "messages_attempt",
+    "payload": {
+      "attempt_id": "att_01",
+      "ordinal": 1,
+      "reason": "initial",
+      "state": "submitting",
+      "credential_id_digest": "cred_digest",
+      "token_version": 1,
+      "profile_epoch": 1,
+      "archetype_version_id": "archv_01",
+      "capture_cohort": "win-2026-08-a",
+      "bundle_id": "bundle_01",
+      "egress_epoch": 1,
+      "upstream_request_id": null,
+      "submitted": true,
+      "response_committed": false,
+      "retry_decision": null,
+      "is_final": false
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "event_seq": 1,
+    "trace_id": "trc_01",
+    "request_id": "req_01",
+    "parent_event_id": null,
+    "occurred_at_utc": "2026-08-24T00:00:00Z",
+    "monotonic_ns": 100,
+    "runtime_generation": 1,
+    "actor": {
+      "kind": "platform_key",
+      "id_digest": "key_digest"
+    },
+    "executor": {
+      "instance_id": "gw_01",
+      "owner_partition": "group_01"
+    },
+    "phase": "completed",
+    "outcome": "success",
+    "event_id": "evt_usage",
+    "event_type": "usage",
+    "payload": {
+      "attempt_id": "att_01",
+      "source": "official",
+      "completeness": "complete",
+      "input_tokens": 20,
+      "output_tokens": 10,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "estimated_amount": 0.001,
+      "currency": "USD",
+      "algorithm_version": null
+    }
+  }
+]

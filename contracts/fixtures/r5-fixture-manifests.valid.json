@@ -1,0 +1,362 @@
+[
+  {
+    "fixture_id": "FIX-R5-C01",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_01",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "bacd0ba8d1c2eab5be570442df9e543acf965784156069c58e9278b9b13dcd84",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C02",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_02",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "179256ee7be6753046078abc57ab20d09409463168e0aa4630b979c47e6c31dd",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C03",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_03",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "e686a1ad3222484f5f8791798ff356a7486641c7c4bc35200a4afb30fd0367fc",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C04",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_04",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "16e61264b5369917209a6374467fff718c241cccf45139bfef7cf822d7b26ce2",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C05",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_05",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "f56cc808064e2f268c049ad37ee75411b3711f4bf30f515e4c69ac3d2f19f20e",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C06",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_06",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "f5a20b2cf03c3ea5509536da4d0f44aaa79d3a38ff546acce94259a3e4dd8907",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C07",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_07",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "12aa0e1ac108a4e336349729009769aaf090127727cb5bb7e0ab4148212048f6",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C08",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_08",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "76095727bab218c95dcc9a3a0c5de1da0337b7daa9e1fb6742e6ffad4329479c",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C09",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_09",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "228a547d2e9e52a16d0ed788c380867662b9a61b1ab4ef3ef14b9ff199559561",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C10",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_10",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "73a39e7c9df4b40febee3256198e5f67b4198a91ad666e2b8adbded71979a16b",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C11",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_11",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "051004e0e2ba0a08f7730ab577fc8d00589f38489a85fdf7fe4d2b437b84ec48",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C12",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_12",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "ae1b49acc3de5ec4ae9a974dfa1b728ef5643dc563b681066ecf601a6167dce1",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C13",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_13",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "44f257acbed5034bb96030594d48cc7b6da34776ab57f4a25138b5dc6b5a0805",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C14",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_14",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "2e7ca2a114bbe44e7ae18a066b63b94275039217fb2195c76f5b7d77b22b7580",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C15",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_15",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "590be677629410a189f6923a29aaec76f90c05321c277123957a076a4e27e7e2",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C16",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_16",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "8be32d6c849d063ff881398b651719a872d67af9ca7e4305603590e08280aaf7",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C17",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_17",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "2a3586984204bfebb9907470fcd919e3129db17202d11239efbfe25629375ac8",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R5-C18",
+    "source": "synthetic",
+    "scenario": "credential_lifecycle_18",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-credential-r5-v1",
+    "content_sha256": "143657c151e86c78f7b6d336e9620d6e6ffc1dc7c657be906cdd3ebf624ad146",
+    "privacy_scan": "builtin-r5:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r5-v1",
+      "postgresql-16-plus"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  }
+]

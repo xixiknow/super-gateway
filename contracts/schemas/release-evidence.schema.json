@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/release-evidence.schema.json",
+  "title": "R1 Release and Evidence Contracts",
+  "$defs": {
+    "DigestArtifact": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "path",
+        "sha256",
+        "size_bytes"
+      ]
+    },
+    "SchemaCompatibility": {
+      "type": "object",
+      "properties": {
+        "minimum": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maximum": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "minimum",
+        "maximum"
+      ]
+    },
+    "ReleaseManifest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "application": {
+          "type": "string",
+          "const": "super-gatewayd"
+        },
+        "application_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rust_toolchain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_abi_version": {
+          "type": "string",
+          "const": "r2-v1"
+        },
+        "testkit_abi_version": {
+          "type": "string",
+          "const": "gateway-testkit-r1-v1"
+        },
+        "schema_compatibility": {
+          "$ref": "#/$defs/SchemaCompatibility"
+        },
+        "cargo_lock_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "contract_tree_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "migration_checksums": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DigestArtifact"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "application",
+        "application_version",
+        "target",
+        "created_at",
+        "source_revision",
+        "rust_toolchain",
+        "runtime_abi_version",
+        "testkit_abi_version",
+        "schema_compatibility",
+        "cargo_lock_sha256",
+        "contract_tree_sha256",
+        "migration_checksums",
+        "artifacts"
+      ]
+    },
+    "BuildProvenance": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "builder": {
+          "type": "string",
+          "minLength": 1
+        },
+        "build_type": {
+          "type": "string",
+          "const": "super-gateway/rust-release-v1"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DigestArtifact"
+          },
+          "minItems": 2
+        },
+        "subjects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DigestArtifact"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "builder",
+        "build_type",
+        "created_at",
+        "target",
+        "command",
+        "materials",
+        "subjects"
+      ]
+    },
+    "EvidenceManifest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "release_manifest": {
+          "$ref": "#/$defs/DigestArtifact"
+        },
+        "provenance": {
+          "$ref": "#/$defs/DigestArtifact"
+        },
+        "sbom": {
+          "$ref": "#/$defs/DigestArtifact"
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_run"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "release_manifest",
+        "provenance",
+        "sbom",
+        "verification"
+      ]
+    },
+    "FixtureManifest": {
+      "type": "object",
+      "properties": {
+        "fixture_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "synthetic",
+            "normalized_capture",
+            "regression"
+          ]
+        },
+        "scenario": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "normalizer_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "privacy_scan": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation_command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compatibility": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expiration_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "os_family": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtime_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "architecture": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capture_cohort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fixture_id",
+        "source",
+        "scenario",
+        "schema_version",
+        "normalizer_version",
+        "content_sha256",
+        "privacy_scan",
+        "generation_command",
+        "compatibility",
+        "expiration_policy",
+        "os_family",
+        "runtime_version",
+        "client_version",
+        "architecture",
+        "capture_cohort"
+      ]
+    }
+  }
+}

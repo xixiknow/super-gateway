@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/runtime-config.schema.json",
+  "title": "R1 Runtime Configuration Contract",
+  "$defs": {
+    "RuntimeVariable": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^GATEWAY_[A-Z0-9_]+$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "socket_address",
+            "path",
+            "secret_file",
+            "provider_uri",
+            "duration",
+            "secret_value",
+            "string",
+            "enum"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "secret": {
+          "type": "boolean"
+        },
+        "readiness_gate": {
+          "type": "boolean"
+        },
+        "relationship": {
+          "type": "string",
+          "enum": [
+            "independent",
+            "pair",
+            "exactly_one",
+            "conditional"
+          ]
+        },
+        "related_to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind",
+        "required",
+        "secret",
+        "readiness_gate",
+        "relationship",
+        "related_to",
+        "default"
+      ]
+    },
+    "RuntimeConfigContract": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "2.0.0"
+        },
+        "environment_prefix": {
+          "type": "string",
+          "const": "GATEWAY_"
+        },
+        "dotenv_supported": {
+          "type": "boolean",
+          "const": true
+        },
+        "unknown_variable_policy": {
+          "type": "string",
+          "const": "ignore"
+        },
+        "variables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuntimeVariable"
+          },
+          "minItems": 15
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "environment_prefix",
+        "dotenv_supported",
+        "unknown_variable_policy",
+        "variables"
+      ]
+    }
+  },
+  "$ref": "#/$defs/RuntimeConfigContract"
+}

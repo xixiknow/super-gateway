@@ -1,0 +1,47 @@
+{
+  "schema_version": "2.0.0",
+  "backup_id": "0198d5d0-0000-7000-8000-000000000001",
+  "created_at_utc": "2026-08-24T00:00:00Z",
+  "scope": "local_fixture",
+  "backup_key_version": 1,
+  "database_system_id": "fixture-system",
+  "timeline": 1,
+  "base_backup_lsn": "0/1000000",
+  "wal_end_lsn": "0/1000100",
+  "release_version": "0.1.0",
+  "schema_version_value": 20260824003800,
+  "migration_manifest_sha256": "25eae87488bcc64f5295083ee7cfbd5da000ffda72483c8d643558a18a46e552",
+  "audit_seal_watermark": "2026-08-24",
+  "deletion_ledger_watermark": 0,
+  "audit": {
+    "sealed_through": "2026-08-24",
+    "seal_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "deletion_ledger": {
+    "sequence": 0,
+    "entry_hash": null
+  },
+  "lineage": {
+    "release_version": "0.1.0",
+    "schema_version": 20260824003800,
+    "migration_manifest_sha256": "25eae87488bcc64f5295083ee7cfbd5da000ffda72483c8d643558a18a46e552",
+    "parent_manifest_sha256": null
+  },
+  "objects": [
+    {
+      "kind": "postgres_dump",
+      "uri": "fixture://database",
+      "size_bytes": 1,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "included_categories": [
+    "database"
+  ],
+  "excluded_categories": [
+    "production_wal",
+    "offsite_copy"
+  ],
+  "manifest_hmac_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "encrypted": true
+}

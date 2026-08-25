@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/maintenance.schema.json",
+  "title": "Credential Maintenance Contracts",
+  "$defs": {
+    "MaintenanceKind": {
+      "type": "string",
+      "enum": [
+        "verify",
+        "refresh",
+        "reauthenticate",
+        "manual_recovery",
+        "auth_method_migration",
+        "plan_collect",
+        "browser_health"
+      ],
+      "x-enum-registry": "maintenance_kind"
+    },
+    "MaintenanceTrigger": {
+      "type": "string",
+      "enum": [
+        "enrollment",
+        "scheduled",
+        "expiry_guard",
+        "upstream_401",
+        "admin",
+        "manual_recovery",
+        "strategy_health"
+      ],
+      "x-enum-registry": "maintenance_trigger"
+    },
+    "MaintenanceConflictClass": {
+      "type": "string",
+      "enum": [
+        "auth_material_write",
+        "plan_collect",
+        "browser_health"
+      ],
+      "x-enum-registry": "maintenance_conflict_class"
+    },
+    "MaintenanceState": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "leased",
+        "running",
+        "verifying_account",
+        "committing",
+        "waiting_backoff",
+        "waiting_egress",
+        "needs_attention",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "expired"
+      ],
+      "x-enum-registry": "maintenance_state"
+    },
+    "CredentialMaintenanceOperation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "credential_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/MaintenanceKind"
+        },
+        "trigger": {
+          "$ref": "#/$defs/MaintenanceTrigger"
+        },
+        "conflict_class": {
+          "$ref": "#/$defs/MaintenanceConflictClass"
+        },
+        "state": {
+          "$ref": "#/$defs/MaintenanceState"
+        },
+        "expected_credential_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expected_token_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "egress_epoch_snapshot": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempt_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "next_retry_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "outcome_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "credential_id",
+        "kind",
+        "trigger",
+        "conflict_class",
+        "state",
+        "expected_credential_revision",
+        "expected_token_version",
+        "egress_epoch_snapshot",
+        "generation",
+        "attempt_count",
+        "created_at",
+        "updated_at"
+      ]
+    }
+  }
+}

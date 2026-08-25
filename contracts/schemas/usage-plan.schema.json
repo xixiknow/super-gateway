@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/usage-plan.schema.json",
+  "title": "Usage and PLAN Contracts",
+  "$defs": {
+    "UsageSource": {
+      "type": "string",
+      "enum": [
+        "official",
+        "local_estimate",
+        "console_count",
+        "cancel_estimate"
+      ],
+      "x-enum-registry": "usage_source"
+    },
+    "UsageCompleteness": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unknown"
+      ],
+      "x-enum-registry": "usage_completeness"
+    },
+    "PlanAdapter": {
+      "type": "string",
+      "enum": [
+        "oauth_profile",
+        "claude_cli_bootstrap",
+        "not_applicable"
+      ],
+      "x-enum-registry": "plan_adapter"
+    },
+    "PlanFreshness": {
+      "type": "string",
+      "enum": [
+        "fresh",
+        "stale",
+        "unknown",
+        "not_applicable"
+      ],
+      "x-enum-registry": "plan_freshness"
+    },
+    "TokenCounts": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cache_creation_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cache_read_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens"
+      ]
+    },
+    "UsageObservation": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "attempt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/UsageSource"
+        },
+        "completeness": {
+          "$ref": "#/$defs/UsageCompleteness"
+        },
+        "tokens": {
+          "$ref": "#/$defs/TokenCounts"
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "price_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "estimated_amount": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Z]{3}$"
+        },
+        "algorithm_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "source",
+        "completeness",
+        "tokens",
+        "model_id",
+        "observed_at"
+      ]
+    },
+    "PlanObservation": {
+      "type": "object",
+      "properties": {
+        "credential_id": {
+          "type": "string"
+        },
+        "adapter": {
+          "$ref": "#/$defs/PlanAdapter"
+        },
+        "freshness": {
+          "$ref": "#/$defs/PlanFreshness"
+        },
+        "raw": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
+        "normalized_plan": {
+          "type": "string"
+        },
+        "mapping_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_attempt_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_refresh_failed": {
+          "type": "boolean"
+        },
+        "failure_category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "credential_id",
+        "adapter",
+        "freshness",
+        "normalized_plan",
+        "last_refresh_failed"
+      ]
+    },
+    "PlanMappingVersion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "candidate",
+            "active",
+            "retired"
+          ]
+        },
+        "mapping": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "state",
+        "mapping",
+        "content_hash",
+        "created_at"
+      ]
+    }
+  }
+}

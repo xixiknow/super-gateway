@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/audit-integrity.schema.json",
+  "title": "R2 Audit Chain and Daily Seal Contract",
+  "$defs": {
+    "AuditIntegrityVector": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "event_domain": {
+          "type": "string",
+          "const": "gateway-audit-event-v1"
+        },
+        "seal_domain": {
+          "type": "string",
+          "const": "gateway-audit-day-v1"
+        },
+        "hash_algorithm": {
+          "type": "string",
+          "const": "sha256"
+        },
+        "seal_algorithm": {
+          "type": "string",
+          "const": "hmac_sha256"
+        },
+        "event_day": {
+          "type": "string"
+        },
+        "daily_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "canonical_event": {
+          "type": "string"
+        },
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_domain",
+        "seal_domain",
+        "hash_algorithm",
+        "seal_algorithm",
+        "event_day",
+        "daily_sequence",
+        "canonical_event",
+        "event_hash"
+      ]
+    }
+  },
+  "$ref": "#/$defs/AuditIntegrityVector"
+}

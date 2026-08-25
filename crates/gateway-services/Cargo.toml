@@ -1,0 +1,37 @@
+[package]
+name = "gateway-services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aes-gcm.workspace = true
+argon2.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+gateway-domain = { path = "../gateway-domain" }
+gateway-scheduler = { path = "../gateway-scheduler" }
+gateway-storage = { path = "../gateway-storage" }
+gateway-transport = { path = "../gateway-transport" }
+getrandom.workspace = true
+hmac.workspace = true
+http.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+sqlx.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

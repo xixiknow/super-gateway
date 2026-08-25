@@ -1,0 +1,49 @@
+[package]
+name = "super-gatewayd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "super-gatewayd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+arc-swap.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+dotenvy.workspace = true
+gateway-api = { path = "../gateway-api" }
+gateway-domain = { path = "../gateway-domain" }
+gateway-policy = { path = "../gateway-policy" }
+gateway-scheduler = { path = "../gateway-scheduler" }
+gateway-services = { path = "../gateway-services" }
+gateway-storage = { path = "../gateway-storage" }
+gateway-transport = { path = "../gateway-transport" }
+getrandom.workspace = true
+hmac.workspace = true
+ipnet.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gateway-transport = { path = "../gateway-transport", features = ["boring-backend"] }
+
+[lints]
+workspace = true

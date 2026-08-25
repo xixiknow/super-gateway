@@ -1,0 +1,274 @@
+{
+  "schema_version": "1.0.0",
+  "postgres_minimum_major": 16,
+  "minimum_compatible_version": 20260824000100,
+  "current_version": 20260824003800,
+  "migrations": [
+    {
+      "version": 20260824000100,
+      "name": "20260824000100_foundation.sql",
+      "sha256": "e18969e35f20e25332f915b405dae6eda391585f894737a1d18643fb2fd94f21",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824000200,
+      "name": "20260824000200_catalog_gateway.sql",
+      "sha256": "f5aafe1f065fe006100090fe5c85b131dc20e34ebadb6eefc52de44b513e61ba",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824000300,
+      "name": "20260824000300_telemetry.sql",
+      "sha256": "2bb3d8990205f0fa6dfb53232d641cbea2916a13d935e9880a30f537f69679f6",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824000400,
+      "name": "20260824000400_scheduler.sql",
+      "sha256": "091021bd1629f7408c6b8f4bdb382b4faa51ea8e489b7029f2672edbdba758fa",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824000500,
+      "name": "20260824000500_credential_lifecycle.sql",
+      "sha256": "b24f106e29c14fe62c453d439f7821e48cc51ec1b1c786029541ab5d16cc8974",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824000600,
+      "name": "20260824000600_r5_contract_alignment.sql",
+      "sha256": "36d18ca95350686897ced431a735a2ca446cc641174faaf159c36996eace7cfa",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824000700,
+      "name": "20260824000700_r6_transport_contract.sql",
+      "sha256": "e7cf53b2515aab81e4c51c999b9e5baddeb8f9eab550d892ca6365d7ae4fa73a",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824000800,
+      "name": "20260824000800_r7_response_usage.sql",
+      "sha256": "61f131126b6d3acd6c589d55d7effcbbaffe019d9bd2de6a86df023aad8eb89e",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824000900,
+      "name": "20260824000900_r8_management_security.sql",
+      "sha256": "2793fa60c4d7f54d0374b9e65c0fa13e154f26078c553bc65657b3e97f8b51bf",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001000,
+      "name": "20260824001000_r9_security_operations.sql",
+      "sha256": "a4c6ff52f226baa8153b2b3c70a5dc0897764dfd12094bda3b08fed75538b2e6",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001100,
+      "name": "20260824001100_r9_governance_closure.sql",
+      "sha256": "dcb76800b1ea29157720bf36ce7ea7b1b279230940357279327d74c4b2127b64",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001200,
+      "name": "20260824001200_r3_policy_snapshot_alignment.sql",
+      "sha256": "03bc1fb6198596023248d0fc979553d32837f7c0ce09ff45194ccf263bca0624",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001300,
+      "name": "20260824001300_r4_retry_attempts.sql",
+      "sha256": "79a83c0d1261f7e44f5755b6005695596d7204c1d5c881c80830a39db7d7e164",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001400,
+      "name": "20260824001400_r5_provider_profiles.sql",
+      "sha256": "de5b6a528a4234346c8b7ffae4b168930d4356e66f0063f90a0dbb7845ef6183",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001500,
+      "name": "20260824001500_r4_request_deadlines.sql",
+      "sha256": "1ed1e3bb6a5f49f07cc4ff59258de0e0167582ec466c22b30257cbe65baf388b",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001600,
+      "name": "20260824001600_r5_enrollment_provider_profile.sql",
+      "sha256": "b1431b8584f027b55ec0262451cac6fd8baf67df469b90d182e52c4ee7b3f1f3",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001700,
+      "name": "20260824001700_r5_recovery_enrollment.sql",
+      "sha256": "65a9cf4948e098ccce32c0c0440b7aad38e6cbaa370f50174b8a4f4a846aaf0c",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001800,
+      "name": "20260824001800_r7_usage_aggregates.sql",
+      "sha256": "92fbc78ea7d4d767a25931eb351dae5870274642c8cff6f9a5c377ab31a4caa2",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824001900,
+      "name": "20260824001900_r8_approval_binding.sql",
+      "sha256": "e102375c8e5d92bbef697a8ac2b6fb568be93529768c3622cd3f9c96a63b2c62",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002000,
+      "name": "20260824002000_r7_cancel_estimate.sql",
+      "sha256": "4de69e918ffe1ef52ba7d94ae4955e542f12a744e9edc24f45057ec1553ca248",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002100,
+      "name": "20260824002100_r5_setup_token_enrollment.sql",
+      "sha256": "d23edd8b71c0407ed5f146b3177eb86455d487eb8b2daf2784df40217df1ede1",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002200,
+      "name": "20260824002200_usage_export.sql",
+      "sha256": "999fa6e55d5fafcc48ba0f6745c92d99bb76e7351c0627db64f249231b55b472",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002300,
+      "name": "20260824002300_r9_backup_restore_control_plane.sql",
+      "sha256": "d580ed037a71411941ea3b814a8d4d8eb2b8838915feff2bead83a3498957c21",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002400,
+      "name": "20260824002400_proxy_control_plane.sql",
+      "sha256": "b50f55396e4d9f844fe1cc7e5f5f2719e4800043c25a3ab96993d5950f360173",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002500,
+      "name": "20260824002500_price_freeze_and_management.sql",
+      "sha256": "481bc245fb84ee072d2c8723ffdeef02aba3fd3d4323fbe80ec3801ba41f739f",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002600,
+      "name": "20260824002600_group_config_release.sql",
+      "sha256": "2b4f67860de59b5b984f98fa980e068fae522327a1c0481b42159f0d9ec16129",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002700,
+      "name": "20260824002700_ruleset_release.sql",
+      "sha256": "10fd278fcc7271c7b26f98f8583ec45e88c4d0cd655c45eba3b177ab5f46b961",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002800,
+      "name": "20260824002800_notification_delivery.sql",
+      "sha256": "35d78ec8fb7b76eb456e51e4f31a530f747592a8e06cb5acfbe5357b7b0d458d",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824002900,
+      "name": "20260824002900_content_audit_read_sessions.sql",
+      "sha256": "19b0baa6e24bf4405488b1d0ad07a96afb5486bf718e13802aba8909bfb38c8d",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003000,
+      "name": "20260824003000_content_audit_export.sql",
+      "sha256": "bda2a01de4e0b1c47ca9622d9e05f7b5aa4dd477a9503034bed10806650df739",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003100,
+      "name": "20260824003100_upgrade_preflight.sql",
+      "sha256": "6a1984356696b83ea9185250b44adadd80250d686b337ea3ca9f3a9b74928c16",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003200,
+      "name": "20260824003200_group_migration_jobs.sql",
+      "sha256": "14060eedb1d8d966b74fec0cf40b58e6c8cde23b3bf19c7d9cf5e822624b00f1",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003300,
+      "name": "20260824003300_model_discovery.sql",
+      "sha256": "b8738a0fd3cbcada7b62ab3f823a0a8716b12c6dae08917c484872a6f145c458",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003400,
+      "name": "20260824003400_managed_browser_jobs.sql",
+      "sha256": "647dfef243c81555b0de37586bd0f256b81c7f56afc928a84c0e5b8d680e1cfc",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003500,
+      "name": "20260824003500_r3_policy_artifact_release.sql",
+      "sha256": "db8115ff0af4da397cb9f08a71b2f2c3e1526edefa7394796479a78cc51febb8",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003600,
+      "name": "20260824003600_r2_business_key_retirement.sql",
+      "sha256": "915bf255c96bdb844d88895cb8d36e020add88430a1ae126d7aaab8316e292ee",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003700,
+      "name": "20260824003700_r9_alert_notification_fanout.sql",
+      "sha256": "88c188a3e9b743558848b688b9059e82ef68ed2efce3ac7e9d84c489b3e55cd5",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003800,
+      "name": "20260824003800_r7_cancel_estimate_hardening.sql",
+      "sha256": "1cb6a0e6aba4eb657b249099a716ad1e9d66ad3b026c06eb3a8e29ce1dc626a9",
+      "direction": "forward_only",
+      "transactional": true
+    }
+  ]
+}

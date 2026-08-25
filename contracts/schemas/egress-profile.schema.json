@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/egress-profile.schema.json",
+  "title": "Egress and Credential Profile Contracts",
+  "$defs": {
+    "ProxyType": {
+      "type": "string",
+      "enum": [
+        "http_connect",
+        "socks5"
+      ],
+      "x-enum-registry": "proxy_type"
+    },
+    "ProxyLifecycle": {
+      "type": "string",
+      "enum": [
+        "active",
+        "draining",
+        "disabled",
+        "archived"
+      ],
+      "x-enum-registry": "proxy_lifecycle"
+    },
+    "ProxyHealth": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "probing",
+        "healthy",
+        "unhealthy_dns",
+        "unhealthy_connect",
+        "unhealthy_auth",
+        "unhealthy_tunnel",
+        "unhealthy_tls_passthrough"
+      ],
+      "x-enum-registry": "proxy_health"
+    },
+    "EgressMode": {
+      "type": "string",
+      "enum": [
+        "direct",
+        "proxy"
+      ],
+      "x-enum-registry": "egress_mode"
+    },
+    "EgressStability": {
+      "type": "string",
+      "enum": [
+        "static",
+        "dynamic"
+      ],
+      "x-enum-registry": "egress_stability"
+    },
+    "EgressBindingStability": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "stable",
+        "drifted",
+        "unavailable"
+      ],
+      "x-enum-registry": "egress_binding_stability"
+    },
+    "EgressBindingLifecycle": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "active",
+        "transport_unavailable",
+        "rebinding",
+        "disabled"
+      ],
+      "x-enum-registry": "egress_binding_lifecycle"
+    },
+    "Proxy": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/ProxyType"
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/ProxyLifecycle"
+        },
+        "health": {
+          "$ref": "#/$defs/ProxyHealth"
+        },
+        "stability": {
+          "$ref": "#/$defs/EgressStability"
+        },
+        "max_active_credentials": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 5
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "type",
+        "host",
+        "port",
+        "lifecycle",
+        "health",
+        "stability",
+        "max_active_credentials",
+        "revision"
+      ]
+    },
+    "CredentialEgressBinding": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "credential_id": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/EgressMode"
+        },
+        "proxy_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stability": {
+          "$ref": "#/$defs/EgressBindingStability"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/EgressBindingLifecycle"
+        },
+        "egress_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expected_exit_ip_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_exit_ip_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "credential_id",
+        "mode",
+        "stability",
+        "lifecycle",
+        "egress_epoch"
+      ]
+    },
+    "CredentialDeviceIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "credential_id": {
+          "type": "string"
+        },
+        "device_id_digest": {
+          "type": "string"
+        },
+        "client_id_digest": {
+          "type": "string"
+        },
+        "profile_seed_secret_ref": {
+          "type": "string"
+        },
+        "session_hmac_secret_ref": {
+          "type": "string"
+        },
+        "device_epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "credential_id",
+        "device_id_digest",
+        "client_id_digest",
+        "profile_seed_secret_ref",
+        "session_hmac_secret_ref",
+        "device_epoch"
+      ]
+    },
+    "CredentialProfile": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "credential_id": {
+          "type": "string"
+        },
+        "archetype_version_id": {
+          "type": "string"
+        },
+        "device_identity_id": {
+          "type": "string"
+        },
+        "egress_binding_id": {
+          "type": "string"
+        },
+        "profile_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "capture_cohort": {
+          "type": "string"
+        },
+        "bundle_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "credential_id",
+        "archetype_version_id",
+        "device_identity_id",
+        "egress_binding_id",
+        "profile_epoch",
+        "capture_cohort",
+        "bundle_id"
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "format_version": "1.0.0",
+  "domain": "transport_bundle_v1",
+  "keys": [
+    {
+      "key_id": "bundle-signing-01",
+      "status": "current",
+      "public_key_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "valid_from_unix_seconds": 1777161600,
+      "valid_until_unix_seconds": null
+    }
+  ]
+}

@@ -1,0 +1,258 @@
+{
+  "schema_version": "2.0.0",
+  "environment_prefix": "GATEWAY_",
+  "dotenv_supported": true,
+  "unknown_variable_policy": "ignore",
+  "variables": [
+    {
+      "name": "GATEWAY_DATA_BIND",
+      "kind": "socket_address",
+      "required": true,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_ADMIN_BIND",
+      "kind": "socket_address",
+      "required": true,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_DATABASE_URL_FILE",
+      "kind": "secret_file",
+      "required": true,
+      "secret": true,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_MIGRATOR_DATABASE_URL_FILE",
+      "kind": "secret_file",
+      "required": false,
+      "secret": true,
+      "readiness_gate": false,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_BUSINESS_KEY_PROVIDER",
+      "kind": "enum",
+      "required": false,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": "database"
+    },
+    {
+      "name": "GATEWAY_KEY_PROVIDER_URI",
+      "kind": "provider_uri",
+      "required": false,
+      "secret": true,
+      "readiness_gate": true,
+      "relationship": "conditional",
+      "related_to": "GATEWAY_BUSINESS_KEY_PROVIDER=uri",
+      "default": null
+    },
+    {
+      "name": "GATEWAY_APP_KEY_FILE",
+      "kind": "secret_file",
+      "required": false,
+      "secret": true,
+      "readiness_gate": true,
+      "relationship": "conditional",
+      "related_to": "GATEWAY_BUSINESS_KEY_PROVIDER=file",
+      "default": null
+    },
+    {
+      "name": "GATEWAY_DIGEST_KEY_FILE",
+      "kind": "secret_file",
+      "required": true,
+      "secret": true,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_AUDIT_INTEGRITY_KEY_FILE",
+      "kind": "secret_file",
+      "required": true,
+      "secret": true,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_BUNDLE_TRUST_STORE",
+      "kind": "path",
+      "required": true,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_BUNDLE_DIR",
+      "kind": "path",
+      "required": true,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_RESPONSE_TMP_DIR",
+      "kind": "path",
+      "required": true,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_CONTENT_AUDIT_KEY_FILE",
+      "kind": "secret_file",
+      "required": false,
+      "secret": true,
+      "readiness_gate": true,
+      "relationship": "pair",
+      "related_to": "GATEWAY_CONTENT_AUDIT_DIR",
+      "default": null
+    },
+    {
+      "name": "GATEWAY_CONTENT_AUDIT_DIR",
+      "kind": "path",
+      "required": false,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "pair",
+      "related_to": "GATEWAY_CONTENT_AUDIT_KEY_FILE",
+      "default": null
+    },
+    {
+      "name": "GATEWAY_BACKUP_KEY_FILE",
+      "kind": "secret_file",
+      "required": false,
+      "secret": true,
+      "readiness_gate": false,
+      "relationship": "pair",
+      "related_to": "GATEWAY_BACKUP_REPOSITORY",
+      "default": null
+    },
+    {
+      "name": "GATEWAY_BACKUP_REPOSITORY",
+      "kind": "string",
+      "required": false,
+      "secret": false,
+      "readiness_gate": false,
+      "relationship": "pair",
+      "related_to": "GATEWAY_BACKUP_KEY_FILE",
+      "default": null
+    },
+    {
+      "name": "GATEWAY_DRAIN_DEADLINE",
+      "kind": "duration",
+      "required": false,
+      "secret": false,
+      "readiness_gate": false,
+      "relationship": "independent",
+      "related_to": null,
+      "default": "300s"
+    },
+    {
+      "name": "GATEWAY_EGRESS_OBSERVER_HOST",
+      "kind": "string",
+      "required": false,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": "api64.ipify.org"
+    },
+    {
+      "name": "GATEWAY_EGRESS_OBSERVER_PATH",
+      "kind": "string",
+      "required": false,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": "/"
+    },
+    {
+      "name": "GATEWAY_MANAGED_BROWSER_TOOL",
+      "kind": "path",
+      "required": false,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_MANAGED_BROWSER_TIMEOUT",
+      "kind": "duration",
+      "required": false,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "conditional",
+      "related_to": "GATEWAY_MANAGED_BROWSER_TOOL",
+      "default": "300s"
+    },
+    {
+      "name": "GATEWAY_BOOTSTRAP_ADMIN_USERNAME",
+      "kind": "string",
+      "required": false,
+      "secret": false,
+      "readiness_gate": true,
+      "relationship": "pair",
+      "related_to": "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
+      "default": null
+    },
+    {
+      "name": "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
+      "kind": "secret_value",
+      "required": false,
+      "secret": true,
+      "readiness_gate": true,
+      "relationship": "pair",
+      "related_to": "GATEWAY_BOOTSTRAP_ADMIN_USERNAME",
+      "default": null
+    },
+    {
+      "name": "GATEWAY_BOOTSTRAP_ADMIN_EMAIL",
+      "kind": "string",
+      "required": false,
+      "secret": false,
+      "readiness_gate": false,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    },
+    {
+      "name": "GATEWAY_BOOTSTRAP_ADMIN_DISPLAY_NAME",
+      "kind": "string",
+      "required": false,
+      "secret": false,
+      "readiness_gate": false,
+      "relationship": "independent",
+      "related_to": null,
+      "default": null
+    }
+  ]
+}

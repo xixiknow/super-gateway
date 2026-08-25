@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/requirement-trace-ledger.schema.json",
+  "title": "Requirement Trace Ledger",
+  "$defs": {
+    "Phase": {
+      "type": "string",
+      "enum": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10"
+      ],
+      "x-enum-registry": "requirement_phase"
+    },
+    "Status": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "implemented",
+        "verified",
+        "blocked",
+        "retired"
+      ],
+      "x-enum-registry": "requirement_status"
+    },
+    "SourceRef": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "line",
+        "text_sha256"
+      ]
+    },
+    "Requirement": {
+      "type": "object",
+      "properties": {
+        "requirement_id": {
+          "type": "string",
+          "pattern": "^(REQ-F(0[1-9]|1[0-8])|REQ-R(1-[0-9]{3}|[2-9]-[0-9]{3}|10-[0-9]{3})|DEC-(00[1-9]|0[1-9][0-9]|1[0-2][0-9]|13[0-2]))$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "functional_module",
+            "product_decision",
+            "phase_requirement"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/SourceRef"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "release_gate": {
+          "type": "string",
+          "enum": [
+            "r0",
+            "canary",
+            "ga"
+          ]
+        },
+        "test_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "fixture_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "kind",
+        "title",
+        "source",
+        "owner",
+        "phase",
+        "release_gate",
+        "test_ids",
+        "fixture_ids",
+        "status"
+      ]
+    },
+    "TestCase": {
+      "type": "object",
+      "properties": {
+        "test_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "requirement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "automation": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "test_id",
+        "kind",
+        "owner",
+        "phase",
+        "requirement_ids",
+        "automation"
+      ]
+    },
+    "RequirementTraceLedger": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_revision": {
+          "type": "string"
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Requirement"
+          },
+          "minItems": 150
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestCase"
+          },
+          "minItems": 150
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generated_at",
+        "source_revision",
+        "requirements",
+        "tests"
+      ]
+    }
+  },
+  "$ref": "#/$defs/RequirementTraceLedger"
+}

@@ -1,0 +1,194 @@
+[
+  {
+    "fixture_id": "FIX-R3-ROUTE-MATRIX-001",
+    "scenario": "auth_first_route_matrix",
+    "sources": [
+      "crates/gateway-api/src/edge.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-api/src/edge.rs": "a6d3a7b1a732ed1b1bb84eebaaaf644eb1104dfb93c4e409772a533975b002be"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-AUTH-ACCESS-001",
+    "scenario": "platform_key_and_ingress_access",
+    "sources": [
+      "crates/gateway-api/src/data.rs",
+      "crates/gateway-api/src/edge.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-api/src/data.rs": "ae27314407501c82b761205c63d64ca5c1efbceffe6d24ec5251e0f56c730c41",
+      "crates/gateway-api/src/edge.rs": "a6d3a7b1a732ed1b1bb84eebaaaf644eb1104dfb93c4e409772a533975b002be"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-MESSAGES-CORPUS-001",
+    "scenario": "messages_framing_and_lossless_json",
+    "sources": [
+      "crates/gateway-policy/src/parser.rs",
+      "crates/gateway-api/src/edge.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-policy/src/parser.rs": "7ecc7946a11317c551109a2db4abbbc3a5cf1f9d9d5566eeaf9833ebc2f0f8c1",
+      "crates/gateway-api/src/edge.rs": "a6d3a7b1a732ed1b1bb84eebaaaf644eb1104dfb93c4e409772a533975b002be"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-CLIENT-CORPUS-001",
+    "scenario": "client_session_traffic_classification",
+    "sources": [
+      "crates/gateway-api/src/edge.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-api/src/edge.rs": "a6d3a7b1a732ed1b1bb84eebaaaf644eb1104dfb93c4e409772a533975b002be"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-CAPABILITY-001",
+    "scenario": "bounded_model_capability",
+    "sources": [
+      "crates/gateway-policy/src/capability.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-policy/src/capability.rs": "33ad87d9eddef1a762e799328bf0786a236bca986e5bde4396313f2028fef682"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-SYSTEM-MODES-001",
+    "scenario": "system_policy_four_modes",
+    "sources": [
+      "crates/gateway-policy/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-policy/src/engine.rs": "7d09c0d8be4ec4b6c16acd7a779f8836179d31704c437350b6a428d824c503db"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-RULESET-001",
+    "scenario": "deterministic_ruleset",
+    "sources": [
+      "crates/gateway-policy/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-policy/src/engine.rs": "7d09c0d8be4ec4b6c16acd7a779f8836179d31704c437350b6a428d824c503db"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-UNKNOWN-EXT-001",
+    "scenario": "unknown_extension_roundtrip_and_pin",
+    "sources": [
+      "crates/gateway-policy/src/parser.rs",
+      "crates/gateway-policy/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-policy/src/parser.rs": "7ecc7946a11317c551109a2db4abbbc3a5cf1f9d9d5566eeaf9833ebc2f0f8c1",
+      "crates/gateway-policy/src/engine.rs": "7d09c0d8be4ec4b6c16acd7a779f8836179d31704c437350b6a428d824c503db"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-GENERIC-REQUEST-001",
+    "scenario": "credential_neutral_generic_request",
+    "sources": [
+      "crates/gateway-domain/src/request.rs",
+      "crates/gateway-policy/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-domain/src/request.rs": "983ee05f93acc95055ce52d0ff483570c21e72e6dae3b00f6a303bdcb24c3743",
+      "crates/gateway-policy/src/engine.rs": "7d09c0d8be4ec4b6c16acd7a779f8836179d31704c437350b6a428d824c503db"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-MODELS-001",
+    "scenario": "published_model_scope_and_pagination",
+    "sources": [
+      "crates/gateway-api/src/edge.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-api/src/edge.rs": "a6d3a7b1a732ed1b1bb84eebaaaf644eb1104dfb93c4e409772a533975b002be"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-FUZZ-CORPUS-001",
+    "scenario": "bounded_mutation_regression_corpus",
+    "sources": [
+      "crates/gateway-policy/src/parser.rs",
+      "crates/gateway-policy/src/capability.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-policy/src/parser.rs": "7ecc7946a11317c551109a2db4abbbc3a5cf1f9d9d5566eeaf9833ebc2f0f8c1",
+      "crates/gateway-policy/src/capability.rs": "33ad87d9eddef1a762e799328bf0786a236bca986e5bde4396313f2028fef682"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  },
+  {
+    "fixture_id": "FIX-R3-SECRET-CANARY-001",
+    "scenario": "southbound_identity_canary",
+    "sources": [
+      "crates/gateway-api/src/data.rs",
+      "crates/gateway-api/src/edge.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-api/src/data.rs": "ae27314407501c82b761205c63d64ca5c1efbceffe6d24ec5251e0f56c730c41",
+      "crates/gateway-api/src/edge.rs": "a6d3a7b1a732ed1b1bb84eebaaaf644eb1104dfb93c4e409772a533975b002be"
+    },
+    "privacy_canaries": [
+      "synthetic-platform-key",
+      "synthetic-client-identity"
+    ],
+    "privacy_scan": "builtin-r3:passed"
+  }
+]

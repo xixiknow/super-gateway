@@ -1,0 +1,107 @@
+{
+  "envelope_version": "1.0.0",
+  "payload": {
+    "schema_version": "1.0.0",
+    "engine_abi_version": "1.0",
+    "bundle_id": "bundle_01",
+    "artifact_version": 1,
+    "lifecycle": "verified",
+    "evidence_gate": "passed",
+    "runtime_state": "loadable",
+    "backend_id": "boringssl-h1-v1",
+    "required_capabilities": [
+      "tls_client_hello",
+      "ordered_http1"
+    ],
+    "source_archetype_version_id": "archv_01",
+    "capture_cohort": "win-2026-08-a",
+    "application": {
+      "protocol": "h1",
+      "authority": "api.anthropic.com",
+      "tls": {
+        "client_hello_profile": "claude-code-win-2.1.241-a",
+        "alpn": [
+          "http/1.1"
+        ],
+        "cipher_suite_ids": [
+          4865,
+          4866,
+          4867,
+          49199
+        ],
+        "supported_group_ids": [
+          29,
+          23
+        ],
+        "key_share_group_ids": [
+          29
+        ],
+        "extension_order": [
+          0,
+          11,
+          10,
+          16,
+          5,
+          18
+        ],
+        "grease_enabled": true,
+        "permute_extensions": false,
+        "session_resumption": false
+      },
+      "http1": {
+        "request_line_form": "origin",
+        "header_order": [
+          {
+            "name": "host",
+            "value_template": "{authority}",
+            "sensitive": false
+          }
+        ],
+        "framing": "content-length"
+      },
+      "connection": {
+        "pool_key_fields": [
+          "credential_id",
+          "profile_epoch",
+          "bundle_id",
+          "bundle_version",
+          "egress_binding_id",
+          "egress_epoch",
+          "authority",
+          "sni",
+          "protocol"
+        ],
+        "reuse_policy": "exact_pool_key",
+        "resumption_cache_scope": "disabled"
+      }
+    },
+    "min_engine_build": "0.1.0",
+    "max_engine_build": null,
+    "engine_builds": [
+      {
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "boringssl_revision": "rev-1",
+        "compiler": "rustc-stable"
+      }
+    ],
+    "supported_targets": [
+      "x86_64-unknown-linux-gnu"
+    ],
+    "evidence_hashes": [
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "created_at": "2026-08-24T00:00:00Z"
+  },
+  "canonicalization": {
+    "algorithm": "jcs_rfc8785",
+    "hash_algorithm": "sha256",
+    "canonical_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "signature": {
+    "domain": "transport_bundle_v1",
+    "algorithm": "ed25519",
+    "key_id": "bundle-signing-01",
+    "detached_signature_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}

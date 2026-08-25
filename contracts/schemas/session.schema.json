@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/session.schema.json",
+  "title": "Session and Affinity Contracts",
+  "$defs": {
+    "ClientClass": {
+      "type": "string",
+      "enum": [
+        "claude_code_cli",
+        "non_claude_code_cli"
+      ],
+      "x-enum-registry": "client_class"
+    },
+    "BaseSessionKind": {
+      "type": "string",
+      "enum": [
+        "explicit",
+        "anonymous_reuse"
+      ],
+      "x-enum-registry": "base_session_kind"
+    },
+    "Portability": {
+      "type": "string",
+      "enum": [
+        "portable",
+        "credential_bound",
+        "unknown"
+      ],
+      "x-enum-registry": "portability"
+    },
+    "BaseSessionIdentity": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/BaseSessionKind"
+        },
+        "stable_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "client_class": {
+          "$ref": "#/$defs/ClientClass"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "stable_digest",
+        "client_class"
+      ]
+    },
+    "AgentIdentity": {
+      "type": "object",
+      "properties": {
+        "agent_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "base_session_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "agent_digest",
+        "base_session_digest"
+      ]
+    },
+    "SessionDerivationInput": {
+      "type": "object",
+      "properties": {
+        "derivation_version": {
+          "type": "string"
+        },
+        "credential_id": {
+          "type": "string"
+        },
+        "platform_key_id": {
+          "type": "string"
+        },
+        "base_session_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "field_purpose": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "derivation_version",
+        "credential_id",
+        "platform_key_id",
+        "base_session_digest",
+        "field_purpose"
+      ]
+    },
+    "AffinityRecord": {
+      "type": "object",
+      "properties": {
+        "platform_key_id": {
+          "type": "string"
+        },
+        "base_session_digest": {
+          "type": "string"
+        },
+        "agent_digest": {
+          "type": "string"
+        },
+        "credential_id": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "platform_key_id",
+        "base_session_digest",
+        "agent_digest",
+        "credential_id",
+        "expires_at"
+      ]
+    }
+  }
+}

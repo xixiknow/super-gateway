@@ -1,0 +1,402 @@
+[
+  {
+    "fixture_id": "FIX-R4-S01",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_01",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "09b7d0cdab4524116e99a013c80d04bcbac15c9f21039eb90e11a787372faf64",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S02",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_02",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "8c2e23f8efc0282fc69a26475ac070d775e1821e91f182129a1904a27ab55405",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S03",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_03",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "5fff9528d7e09bd887b10776df41b35d0d4486c336ac865ab5ac4cf77179a57e",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S04",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_04",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "80648105759e1bf570d8f80f4ccb771c718cdce8ceb22ce9e2fb122517ac3dc5",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S05",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_05",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "4865f3e916f1782195f7b0013352a6b6d665aa7079f4de0db2e317c6aa1f25c2",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S06",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_06",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "e55300f4c83c8c22e4dd005d4e03874f5d568afbefa9df9debf40cf43c5573b9",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S07",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_07",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "f433e7e8f8c5f666c071678a9c5409525ff6bc927adf73be5b2cd960d2248ffa",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S08",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_08",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "497069b12cf86107f7ea41eec2f2aa705cc5ef07878aa29604605f49fbb487f3",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S09",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_09",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "4f947ba29c099a3778887c1a804b80d81443323dee6c0f8f657a7e97f2ed3e9a",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S10",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_10",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "e48065b82dfafe3c824c19fb89acf17a8b7c18744c01cb5d25a921a3e3cd7cc9",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S11",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_11",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "581e694827b28f54bf6db5a1aa7a3b42f5ea443bd651c79377f660367f2f543f",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S12",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_12",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "f735d9c81af438e1af688fe33fe3e3eb70edd253520fd1f130f1509fa6ddf3f8",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S13",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_13",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "6e26a353c3f04760b3041ca2943fa9ba09cb315d7c139319d0caa9e8680055af",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S14",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_14",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "4de6af09fa9bc2a3b77f50053288c9e9ae51a6cab84054942fe6aaa6f846dd99",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S15",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_15",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "22e2626a3fe69f62efec48115bfaf587fd857638e0832f499b797b4bb2adea2f",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S16",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_16",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "d9a9f69c7b0c7b448319b8bf0f001089c254200c56e66c8815833d0264306526",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S17",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_17",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "be2eceaf3f6b1bc7d130ed811da877f84a6d25fcd166b75c5ce0af08190fb40c",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S18",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_18",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "7e0dfa9e6589102e621a3711c83d699cf51d03d6a84d3a72f363be4f4457e715",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S19",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_19",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "a162df0c4839de83cc3c735f337ab23f2b5b11e2b1eeb642594508ba1463bc44",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  },
+  {
+    "fixture_id": "FIX-R4-S20",
+    "source": "synthetic",
+    "scenario": "scheduler_scenario_20",
+    "schema_version": "1.0.0",
+    "normalizer_version": "gateway-scheduler-r4-v1",
+    "content_sha256": "1bafb14e9d5eb9a8d618b1196db976447aeaaa5bdd2b69e9584cc146229dc539",
+    "privacy_scan": "builtin-r4:passed",
+    "generation_command": "python -B tools/generate_contracts.py",
+    "compatibility": [
+      "gateway-r4-v1",
+      "scheduler-reference-model-v1"
+    ],
+    "expiration_policy": "regenerate_on_source_or_contract_change",
+    "os_family": null,
+    "runtime_version": "rust-1.95",
+    "client_version": null,
+    "architecture": null,
+    "capture_cohort": null
+  }
+]

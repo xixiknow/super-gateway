@@ -1,0 +1,36 @@
+[Unit]
+Description=Enterprise Claude Code Gateway
+Wants=network-online.target
+After=network-online.target super-gateway-migrate.service
+Requires=super-gateway-migrate.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=super-gateway
+Group=super-gateway
+EnvironmentFile=/etc/super-gateway/runtime.env
+ExecStart=/opt/super-gateway/current/super-gatewayd
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=330s
+UMask=0077
+LimitNOFILE=262144
+LimitCORE=0
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/super-gateway /var/log/super-gateway
+
+[Install]
+WantedBy=multi-user.target

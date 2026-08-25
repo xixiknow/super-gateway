@@ -1,0 +1,292 @@
+[
+  {
+    "fixture_id": "FIX-R6-T01",
+    "scenario": "transport_production_01",
+    "sources": [
+      "crates/gateway-domain/src/transport.rs",
+      "crates/gateway-transport/src/port.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-domain/src/transport.rs": "47c01cefc58cd08c38325d24c49c440dda3e978d5797bf3b0438c6b6cf9a6331",
+      "crates/gateway-transport/src/port.rs": "7ad71beed15081954c0d5355db8b395963e8c2cc2026cdfe7c6ff255c442fbf9"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T02",
+    "scenario": "transport_production_02",
+    "sources": [
+      "crates/gateway-transport/src/bundle.rs",
+      "contracts/schemas/transport-bundle-manifest.schema.json"
+    ],
+    "source_sha256": {
+      "crates/gateway-transport/src/bundle.rs": "605906285fb80b1dec2ee20d7d5fb8d7abe5626bb9423cb34fd1856980f99454",
+      "contracts/schemas/transport-bundle-manifest.schema.json": "e2d6a5811e9cb228fa8c1bbb868450c0cf1ffdeb4f1c878e038f5af8522e082b"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T03",
+    "scenario": "transport_production_03",
+    "sources": [
+      "crates/gateway-transport/src/engine.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-transport/src/engine.rs": "5e72e7fa908980df6f2e7c97b0318553f81d1f9c7f4c3316262fcd68966d725d"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T04",
+    "scenario": "transport_production_04",
+    "sources": [
+      "crates/gateway-transport/src/pool.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-transport/src/pool.rs": "a135794a678acd87538e4ce381a7bc7f963da24ff200d7e3fba5452a6ab280ca"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T05",
+    "scenario": "transport_production_05",
+    "sources": [
+      "crates/gateway-transport/src/h1.rs",
+      "crates/gateway-transport/src/production.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-transport/src/h1.rs": "12d4459d3974a81f0c8525807cf39208e1e0e6fcc5e84d2d9bab4639efdc8d97",
+      "crates/gateway-transport/src/production.rs": "6955ea6175e988ff5853e8749164a93b4004d56cee9631e7163dfc08e51a7405"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T06",
+    "scenario": "transport_production_06",
+    "sources": [
+      "crates/gateway-transport/src/egress.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-transport/src/egress.rs": "f0e7b13ba983ab2c2b259754555e319eab5f13069e3d6390d08ce57d2dcaffd6"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T07",
+    "scenario": "transport_production_07",
+    "sources": [
+      "crates/gateway-transport/src/tls.rs",
+      "Cargo.lock"
+    ],
+    "source_sha256": {
+      "crates/gateway-transport/src/tls.rs": "f87b493b70bb43c88242f66aa9f219da2e14366498c74971188d3f8416b1ee90",
+      "Cargo.lock": "43c65d66b1136220157cc968645e6bc6338799e1c90f8a03f7244741157b97be"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T08",
+    "scenario": "transport_production_08",
+    "sources": [
+      "crates/gateway-transport/src/attempt.rs",
+      "crates/gateway-transport/src/event.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-transport/src/attempt.rs": "63a1eb1b775d2b53ea25181040a76fe9075299f1f559dfcc5b6b392e8561ebfc",
+      "crates/gateway-transport/src/event.rs": "237af11b4dd59ebe863f37b2de9aa4ddfc36317fcb832e62dfbee8c9834c273a"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T09",
+    "scenario": "transport_production_09",
+    "sources": [
+      "crates/gateway-transport/src/production.rs"
+    ],
+    "source_sha256": {
+      "crates/gateway-transport/src/production.rs": "6955ea6175e988ff5853e8749164a93b4004d56cee9631e7163dfc08e51a7405"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "implemented_local_gate"
+  },
+  {
+    "fixture_id": "FIX-R6-T10",
+    "scenario": "transport_production_10",
+    "sources": [
+      "planning/transport-engine.md",
+      "crates/gateway-transport/src/production.rs"
+    ],
+    "source_sha256": {
+      "planning/transport-engine.md": "621a7aba687e4d7b8ed2e81f370b20fb5bc727b8a6443fb2ee1628a8a282de44",
+      "crates/gateway-transport/src/production.rs": "6955ea6175e988ff5853e8749164a93b4004d56cee9631e7163dfc08e51a7405"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "blocked_external_evidence"
+  },
+  {
+    "fixture_id": "FIX-R6-T11",
+    "scenario": "transport_production_11",
+    "sources": [
+      "planning/transport-spike-report.md",
+      "transport-poc/var/real-capture/windows-2.1.241-fresh-v1/windows-2.1.241.current.audit-canary.json"
+    ],
+    "source_sha256": {
+      "planning/transport-spike-report.md": "662ebf356a0d81c84088593d215964475d7e21667e21ecd834f1ba8a19235864",
+      "transport-poc/var/real-capture/windows-2.1.241-fresh-v1/windows-2.1.241.current.audit-canary.json": "4f5470b9cecad370a1f3e60d4dae0d63c324aa54857838fe9a05c649b2e2763a"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "blocked_external_evidence"
+  },
+  {
+    "fixture_id": "FIX-R6-T12",
+    "scenario": "transport_production_12",
+    "sources": [
+      "planning/transport-spike-report.md",
+      ".github/workflows/ci.yml"
+    ],
+    "source_sha256": {
+      "planning/transport-spike-report.md": "662ebf356a0d81c84088593d215964475d7e21667e21ecd834f1ba8a19235864",
+      ".github/workflows/ci.yml": "26024007ed53ba58a5af9cefc759bc17120e74aeed99fe30e4a96342a4d4331a"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "blocked_external_evidence"
+  },
+  {
+    "fixture_id": "FIX-R6-T13",
+    "scenario": "transport_production_13",
+    "sources": [
+      "planning/test-strategy.md",
+      ".github/workflows/ci.yml"
+    ],
+    "source_sha256": {
+      "planning/test-strategy.md": "5e30256618b3783709ff995052938077a33c2b1759f74a65016567762da3d42a",
+      ".github/workflows/ci.yml": "26024007ed53ba58a5af9cefc759bc17120e74aeed99fe30e4a96342a4d4331a"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "blocked_external_evidence"
+  },
+  {
+    "fixture_id": "FIX-R6-T14",
+    "scenario": "transport_production_14",
+    "sources": [
+      "planning/test-strategy.md",
+      "transport-poc/var/e2e-v2/runtime-load-current.json"
+    ],
+    "source_sha256": {
+      "planning/test-strategy.md": "5e30256618b3783709ff995052938077a33c2b1759f74a65016567762da3d42a",
+      "transport-poc/var/e2e-v2/runtime-load-current.json": "181e49dc14883495ae700f74855ea8337b53c1f3fab90b07e7e6fec1294ff737"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "blocked_external_evidence"
+  },
+  {
+    "fixture_id": "FIX-R6-T15",
+    "scenario": "transport_production_15",
+    "sources": [
+      "planning/test-strategy.md"
+    ],
+    "source_sha256": {
+      "planning/test-strategy.md": "5e30256618b3783709ff995052938077a33c2b1759f74a65016567762da3d42a"
+    },
+    "privacy_canaries": [
+      "synthetic-oauth-access-token",
+      "synthetic-proxy-password",
+      "synthetic-session-hmac",
+      "synthetic-platform-key"
+    ],
+    "privacy_scan": "builtin-r6:passed",
+    "activation": "blocked_external_evidence"
+  }
+]

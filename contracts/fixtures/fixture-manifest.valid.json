@@ -1,0 +1,19 @@
+{
+  "fixture_id": "fixture_r1_probe_contract",
+  "source": "synthetic",
+  "scenario": "privacy_safe_probes",
+  "schema_version": "1.0.0",
+  "normalizer_version": null,
+  "content_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "privacy_scan": "builtin-r1:passed",
+  "generation_command": "python -B tools/generate_contracts.py",
+  "compatibility": [
+    "gateway-testkit-r1-v1"
+  ],
+  "expiration_policy": "regenerate_on_contract_change",
+  "os_family": null,
+  "runtime_version": null,
+  "client_version": null,
+  "architecture": null,
+  "capture_cohort": null
+}

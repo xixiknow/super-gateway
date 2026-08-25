@@ -1,0 +1,36 @@
+[package]
+name = "gateway-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+boring-backend = ["dep:boring", "dep:tokio-boring"]
+
+[dependencies]
+arc-swap.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+boring = { workspace = true, optional = true }
+bytes.workspace = true
+ed25519-dalek.workspace = true
+futures-core.workspace = true
+gateway-domain = { path = "../gateway-domain" }
+http.workspace = true
+httparse.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_jcs.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-boring = { workspace = true, optional = true }
+tokio-util.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

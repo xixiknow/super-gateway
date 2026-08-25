@@ -1,0 +1,26 @@
+[package]
+name = "controlled-h2-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+boring-backend = ["dep:boring", "dep:bytes", "dep:h2", "dep:http", "dep:serde_json", "dep:tokio-boring"]
+
+[dependencies]
+boring = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+capture-schema = { path = "../capture-schema" }
+h2 = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-boring = { workspace = true, optional = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0.0",
+  "event_domain": "gateway-audit-event-v1",
+  "seal_domain": "gateway-audit-day-v1",
+  "hash_algorithm": "sha256",
+  "seal_algorithm": "hmac_sha256",
+  "event_day": "2026-08-24",
+  "daily_sequence": 1,
+  "canonical_event": "{\"action\":\"fixture\"}",
+  "event_hash": "726cd74f0771a3c476776b4fce2cc78a0bbdbc55ef9b727ecbe576a303762783"
+}

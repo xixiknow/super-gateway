@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/backup-restore-manifest.schema.json",
+  "title": "R2 Backup and Restore Manifest",
+  "$defs": {
+    "BackupRestoreManifest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "2.0.0"
+        },
+        "backup_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "created_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "scope": {
+          "type": "string",
+          "const": "local_fixture"
+        },
+        "backup_key_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "database_system_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeline": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "base_backup_lsn": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wal_end_lsn": {
+          "type": "string",
+          "minLength": 1
+        },
+        "release_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema_version_value": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "migration_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "audit_seal_watermark": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deletion_ledger_watermark": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "audit": {
+          "type": "object",
+          "properties": {
+            "sealed_through": {
+              "type": "string"
+            },
+            "seal_digest": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "sealed_through",
+            "seal_digest"
+          ]
+        },
+        "deletion_ledger": {
+          "type": "object",
+          "properties": {
+            "sequence": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "entry_hash": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "sequence",
+            "entry_hash"
+          ]
+        },
+        "lineage": {
+          "type": "object",
+          "properties": {
+            "release_version": {
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "migration_manifest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "parent_manifest_sha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "release_version",
+            "schema_version",
+            "migration_manifest_sha256",
+            "parent_manifest_sha256"
+          ]
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "uri": {
+                "type": "string"
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "uri",
+              "size_bytes",
+              "sha256"
+            ]
+          },
+          "minItems": 1
+        },
+        "included_categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "excluded_categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "manifest_hmac_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "encrypted": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "backup_id",
+        "created_at_utc",
+        "scope",
+        "backup_key_version",
+        "database_system_id",
+        "timeline",
+        "base_backup_lsn",
+        "wal_end_lsn",
+        "release_version",
+        "schema_version_value",
+        "migration_manifest_sha256",
+        "audit_seal_watermark",
+        "deletion_ledger_watermark",
+        "audit",
+        "deletion_ledger",
+        "lineage",
+        "objects",
+        "included_categories",
+        "excluded_categories",
+        "manifest_hmac_sha256",
+        "encrypted"
+      ]
+    }
+  },
+  "$ref": "#/$defs/BackupRestoreManifest"
+}

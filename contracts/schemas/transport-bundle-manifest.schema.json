@@ -1,0 +1,553 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/transport-bundle-manifest.schema.json",
+  "title": "Transport Bundle Manifest",
+  "$defs": {
+    "BundleLifecycle": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "verified",
+        "canary",
+        "active",
+        "retired"
+      ],
+      "x-enum-registry": "bundle_lifecycle"
+    },
+    "Protocol": {
+      "type": "string",
+      "enum": [
+        "h1",
+        "h2"
+      ],
+      "x-enum-registry": "bundle_protocol"
+    },
+    "EvidenceGate": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "passed",
+        "failed"
+      ],
+      "x-enum-registry": "bundle_evidence_gate"
+    },
+    "RuntimeState": {
+      "type": "string",
+      "enum": [
+        "loadable",
+        "quarantined"
+      ],
+      "x-enum-registry": "bundle_runtime_state"
+    },
+    "OrderedHeader": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+$"
+        },
+        "value_template": {
+          "type": "string"
+        },
+        "sensitive": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value_template",
+        "sensitive"
+      ]
+    },
+    "EngineBuild": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "artifact_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "boringssl_revision": {
+          "type": "string"
+        },
+        "compiler": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "artifact_digest",
+        "boringssl_revision",
+        "compiler"
+      ]
+    },
+    "Http1Application": {
+      "type": "object",
+      "properties": {
+        "authority": {
+          "type": "string"
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "client_hello_profile": {
+              "type": "string"
+            },
+            "alpn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cipher_suite_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "supported_group_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "key_share_group_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "extension_order": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "grease_enabled": {
+              "type": "boolean"
+            },
+            "permute_extensions": {
+              "type": "boolean"
+            },
+            "session_resumption": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "client_hello_profile",
+            "alpn",
+            "cipher_suite_ids",
+            "supported_group_ids",
+            "key_share_group_ids",
+            "extension_order",
+            "grease_enabled",
+            "permute_extensions",
+            "session_resumption"
+          ]
+        },
+        "connection": {
+          "type": "object",
+          "properties": {
+            "pool_key_fields": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 9,
+              "maxItems": 9,
+              "uniqueItems": true
+            },
+            "reuse_policy": {
+              "type": "string"
+            },
+            "resumption_cache_scope": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "pool_key_fields",
+            "reuse_policy",
+            "resumption_cache_scope"
+          ]
+        },
+        "protocol": {
+          "const": "h1"
+        },
+        "http1": {
+          "type": "object",
+          "properties": {
+            "request_line_form": {
+              "type": "string"
+            },
+            "header_order": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/OrderedHeader"
+              }
+            },
+            "framing": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "request_line_form",
+            "header_order",
+            "framing"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "authority",
+        "tls",
+        "http1",
+        "connection"
+      ]
+    },
+    "Http2Application": {
+      "type": "object",
+      "properties": {
+        "authority": {
+          "type": "string"
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "client_hello_profile": {
+              "type": "string"
+            },
+            "alpn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cipher_suite_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "supported_group_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "key_share_group_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "extension_order": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "grease_enabled": {
+              "type": "boolean"
+            },
+            "permute_extensions": {
+              "type": "boolean"
+            },
+            "session_resumption": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "client_hello_profile",
+            "alpn",
+            "cipher_suite_ids",
+            "supported_group_ids",
+            "key_share_group_ids",
+            "extension_order",
+            "grease_enabled",
+            "permute_extensions",
+            "session_resumption"
+          ]
+        },
+        "connection": {
+          "type": "object",
+          "properties": {
+            "pool_key_fields": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 9,
+              "maxItems": 9,
+              "uniqueItems": true
+            },
+            "reuse_policy": {
+              "type": "string"
+            },
+            "resumption_cache_scope": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "pool_key_fields",
+            "reuse_policy",
+            "resumption_cache_scope"
+          ]
+        },
+        "protocol": {
+          "const": "h2"
+        },
+        "http2": {
+          "type": "object",
+          "properties": {
+            "settings_order": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "initial_window_size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "pseudo_header_order": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "header_order": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/OrderedHeader"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "settings_order",
+            "initial_window_size",
+            "pseudo_header_order",
+            "header_order"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "authority",
+        "tls",
+        "http2",
+        "connection"
+      ]
+    },
+    "TransportBundlePayload": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "engine_abi_version": {
+          "type": "string"
+        },
+        "bundle_id": {
+          "type": "string"
+        },
+        "artifact_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/BundleLifecycle"
+        },
+        "evidence_gate": {
+          "$ref": "#/$defs/EvidenceGate"
+        },
+        "runtime_state": {
+          "$ref": "#/$defs/RuntimeState"
+        },
+        "backend_id": {
+          "type": "string"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "source_archetype_version_id": {
+          "type": "string"
+        },
+        "capture_cohort": {
+          "type": "string"
+        },
+        "application": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Http1Application"
+            },
+            {
+              "$ref": "#/$defs/Http2Application"
+            }
+          ]
+        },
+        "min_engine_build": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_engine_build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "engine_builds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EngineBuild"
+          },
+          "minItems": 1
+        },
+        "supported_targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "evidence_hashes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "engine_abi_version",
+        "bundle_id",
+        "artifact_version",
+        "lifecycle",
+        "evidence_gate",
+        "runtime_state",
+        "backend_id",
+        "required_capabilities",
+        "source_archetype_version_id",
+        "capture_cohort",
+        "application",
+        "min_engine_build",
+        "max_engine_build",
+        "engine_builds",
+        "supported_targets",
+        "evidence_hashes",
+        "created_at"
+      ]
+    },
+    "TransportBundleManifest": {
+      "type": "object",
+      "properties": {
+        "envelope_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "payload": {
+          "$ref": "#/$defs/TransportBundlePayload"
+        },
+        "canonicalization": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "jcs_rfc8785"
+            },
+            "hash_algorithm": {
+              "type": "string",
+              "const": "sha256"
+            },
+            "canonical_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "hash_algorithm",
+            "canonical_hash"
+          ]
+        },
+        "signature": {
+          "type": "object",
+          "properties": {
+            "domain": {
+              "type": "string",
+              "const": "transport_bundle_v1"
+            },
+            "algorithm": {
+              "type": "string",
+              "const": "ed25519"
+            },
+            "key_id": {
+              "type": "string"
+            },
+            "detached_signature_base64": {
+              "type": "string",
+              "minLength": 40
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "domain",
+            "algorithm",
+            "key_id",
+            "detached_signature_base64"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "envelope_version",
+        "payload",
+        "canonicalization",
+        "signature"
+      ]
+    }
+  },
+  "$ref": "#/$defs/TransportBundleManifest"
+}

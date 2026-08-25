@@ -1,0 +1,10 @@
+/target/
+/reports/
+/var/
+/fixtures/raw/
+*.pcap
+*.pcapng
+*.keylog
+*.pem
+*.key
+

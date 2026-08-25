@@ -1,0 +1,401 @@
+{
+  "schema_version": "1.0.0",
+  "source": [
+    "planning/domain-model.md",
+    "planning/database-schema.md",
+    "planning/credential-lifecycle.md",
+    "planning/api-contract.md"
+  ],
+  "enums": {
+    "credential_auth_kind": [
+      "oauth_subscription",
+      "setup_token_subscription",
+      "console_api_key"
+    ],
+    "credential_purpose": [
+      "business",
+      "verification_only",
+      "count_tokens"
+    ],
+    "credential_lifecycle": [
+      "pending_verify",
+      "pending_profile",
+      "pending_egress",
+      "pending_reauth_strategy",
+      "active",
+      "disabled",
+      "revoked",
+      "archived"
+    ],
+    "credential_attachment": [
+      "attached",
+      "draining",
+      "detached",
+      "attaching"
+    ],
+    "credential_auth_state": [
+      "healthy",
+      "expiring",
+      "refreshing",
+      "reauth_retrying",
+      "reauth_waiting_egress",
+      "manual_recovery_required",
+      "needs_admin_reauth",
+      "auth_broken"
+    ],
+    "credential_capacity": [
+      "available",
+      "limited",
+      "cooldown",
+      "half_open"
+    ],
+    "credential_transport": [
+      "ready",
+      "transport_unavailable"
+    ],
+    "credential_management_class": [
+      "fully_managed",
+      "non_managed",
+      "pending_reauth_strategy",
+      "manual_recovery_required"
+    ],
+    "enrollment_mode": [
+      "create",
+      "recover"
+    ],
+    "enrollment_auth_method": [
+      "oauth_pkce",
+      "setup_token",
+      "existing_oauth_material",
+      "console_api_key"
+    ],
+    "enrollment_state": [
+      "created",
+      "resolving_egress",
+      "awaiting_user_action",
+      "exchanging_material",
+      "verifying_account",
+      "deduplicating",
+      "provisioning_identity",
+      "configuring_reauth",
+      "activation_check",
+      "recovering_existing",
+      "succeeded",
+      "cancelled",
+      "expired",
+      "failed"
+    ],
+    "enrollment_next_action": [
+      "wait_for_egress",
+      "open_authorization_url",
+      "submit_setup_material",
+      "submit_existing_oauth_material",
+      "complete_oauth_callback",
+      "complete_browser_login",
+      "retry",
+      "manual_recovery",
+      "none"
+    ],
+    "maintenance_kind": [
+      "verify",
+      "refresh",
+      "reauthenticate",
+      "manual_recovery",
+      "auth_method_migration",
+      "plan_collect",
+      "browser_health"
+    ],
+    "maintenance_trigger": [
+      "enrollment",
+      "scheduled",
+      "expiry_guard",
+      "upstream_401",
+      "admin",
+      "manual_recovery",
+      "strategy_health"
+    ],
+    "maintenance_conflict_class": [
+      "auth_material_write",
+      "plan_collect",
+      "browser_health"
+    ],
+    "maintenance_state": [
+      "planned",
+      "leased",
+      "running",
+      "verifying_account",
+      "committing",
+      "waiting_backoff",
+      "waiting_egress",
+      "needs_attention",
+      "succeeded",
+      "failed",
+      "cancelled",
+      "expired"
+    ],
+    "proxy_type": [
+      "http_connect",
+      "socks5"
+    ],
+    "proxy_lifecycle": [
+      "active",
+      "draining",
+      "disabled",
+      "archived"
+    ],
+    "proxy_health": [
+      "unknown",
+      "probing",
+      "healthy",
+      "unhealthy_dns",
+      "unhealthy_connect",
+      "unhealthy_auth",
+      "unhealthy_tunnel",
+      "unhealthy_tls_passthrough"
+    ],
+    "egress_mode": [
+      "direct",
+      "proxy"
+    ],
+    "egress_stability": [
+      "static",
+      "dynamic"
+    ],
+    "egress_binding_stability": [
+      "pending",
+      "stable",
+      "drifted",
+      "unavailable"
+    ],
+    "egress_binding_lifecycle": [
+      "pending",
+      "active",
+      "transport_unavailable",
+      "rebinding",
+      "disabled"
+    ],
+    "client_class": [
+      "claude_code_cli",
+      "non_claude_code_cli"
+    ],
+    "base_session_kind": [
+      "explicit",
+      "anonymous_reuse"
+    ],
+    "portability": [
+      "portable",
+      "credential_bound",
+      "unknown"
+    ],
+    "usage_source": [
+      "official",
+      "local_estimate",
+      "console_count",
+      "cancel_estimate"
+    ],
+    "usage_completeness": [
+      "complete",
+      "partial",
+      "unknown"
+    ],
+    "plan_adapter": [
+      "oauth_profile",
+      "claude_cli_bootstrap",
+      "not_applicable"
+    ],
+    "plan_freshness": [
+      "fresh",
+      "stale",
+      "unknown",
+      "not_applicable"
+    ],
+    "step_up_purpose": [
+      "key_secret_reveal",
+      "irreversible_lifecycle",
+      "content_audit_access",
+      "approval_decision",
+      "key_provider_change",
+      "backup_restore_security",
+      "bundle_activation",
+      "device_rebuild"
+    ],
+    "approval_kind": [
+      "key_full_audit",
+      "group_audit_policy",
+      "content_read",
+      "content_export",
+      "device_rebuild",
+      "key_provider_change",
+      "legal_hold",
+      "manual_delete",
+      "background_catalog_activate",
+      "background_catalog_risk_acceptance",
+      "enforcement_activate"
+    ],
+    "approval_state": [
+      "pending",
+      "approved",
+      "rejected",
+      "expired",
+      "revoked"
+    ],
+    "content_audit_requested_mode": [
+      "metadata_only",
+      "full_encrypted"
+    ],
+    "content_audit_group_policy": [
+      "allow",
+      "require",
+      "forbid"
+    ],
+    "content_audit_effective_mode": [
+      "metadata_only",
+      "full_encrypted"
+    ],
+    "content_audit_object_kind": [
+      "original_request",
+      "final_upstream_request",
+      "upstream_response"
+    ],
+    "job_status": [
+      "queued",
+      "running",
+      "succeeded",
+      "partially_succeeded",
+      "failed",
+      "cancelled"
+    ],
+    "request_state": [
+      "accepted",
+      "queued",
+      "executing",
+      "delivering",
+      "completed",
+      "failed",
+      "cancelled"
+    ],
+    "response_mode": [
+      "stream",
+      "non_stream"
+    ],
+    "delivery_status": [
+      "not_started",
+      "delivering",
+      "delivered",
+      "cancelled_by_client",
+      "client_delivery_failed"
+    ],
+    "cancel_phase": [
+      "buffer_admission_queue",
+      "pre_upstream_with_lease",
+      "upstream_request_upload",
+      "awaiting_upstream_response",
+      "receiving_upstream_response",
+      "pre_client_commit_after_upstream_complete",
+      "client_response_delivery"
+    ],
+    "connection_attempt_state": [
+      "planned",
+      "pool_lookup",
+      "resolving",
+      "tcp_connecting",
+      "proxy_tunneling",
+      "tls_handshaking",
+      "alpn_negotiating",
+      "protocol_ready",
+      "promoted_on_first_byte",
+      "failed_before_first_byte",
+      "cancelled_before_first_byte"
+    ],
+    "messages_attempt_reason": [
+      "initial",
+      "oauth_refresh_replay",
+      "network_retry",
+      "rate_limit_retry",
+      "overload_retry",
+      "credential_switch"
+    ],
+    "messages_attempt_state": [
+      "planned",
+      "submitting",
+      "receiving",
+      "completed",
+      "failed",
+      "cancelled"
+    ],
+    "trace_event_type": [
+      "request",
+      "connection_attempt",
+      "transport",
+      "messages_attempt",
+      "usage",
+      "resource_ledger",
+      "delivery"
+    ],
+    "trace_outcome": [
+      "pending",
+      "success",
+      "failure",
+      "cancelled",
+      "unknown"
+    ],
+    "resource_kind": [
+      "key_concurrency",
+      "group_queue",
+      "session_slot",
+      "credential_lease",
+      "reservation",
+      "socket",
+      "pool_entry",
+      "tls_ticket",
+      "h2_stream",
+      "buffer",
+      "temporary_file",
+      "timer"
+    ],
+    "resource_action": [
+      "acquire",
+      "release"
+    ],
+    "bundle_lifecycle": [
+      "draft",
+      "verified",
+      "canary",
+      "active",
+      "retired"
+    ],
+    "bundle_protocol": [
+      "h1",
+      "h2"
+    ],
+    "bundle_evidence_gate": [
+      "pending",
+      "passed",
+      "failed"
+    ],
+    "bundle_runtime_state": [
+      "loadable",
+      "quarantined"
+    ],
+    "requirement_phase": [
+      "R0",
+      "R1",
+      "R2",
+      "R3",
+      "R4",
+      "R5",
+      "R6",
+      "R7",
+      "R8",
+      "R9",
+      "R10"
+    ],
+    "requirement_status": [
+      "planned",
+      "implemented",
+      "verified",
+      "blocked",
+      "retired"
+    ]
+  }
+}

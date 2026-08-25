@@ -621,10 +621,13 @@ async fn process_job(
     backup_executor: &dyn BackupOperationsExecutor,
     credential_runtime: &ProductionDispatcher,
     readiness: &ReadinessCoordinator,
-    _proxy_probe_target: &ProxyProbeTarget,
+    proxy_probe_target: &ProxyProbeTarget,
     job: JobLease,
     worker_id: &str,
 ) {
+    #[cfg(not(target_os = "linux"))]
+    let _ = proxy_probe_target;
+
     match job.kind.as_str() {
         "audit_integrity_verify" | "audit_daily_seal" => {
             let _ = storage
@@ -833,7 +836,7 @@ async fn process_job(
         }
         "credential_egress_rebind_v1" => {
             #[cfg(target_os = "linux")]
-            process_credential_egress_rebind(storage, credential_runtime, _proxy_probe_target, &job).await;
+            process_credential_egress_rebind(storage, credential_runtime, proxy_probe_target, &job).await;
             #[cfg(not(target_os = "linux"))]
             let _ = storage
                 .dead_letter_job(
@@ -999,7 +1002,7 @@ async fn process_job(
         }
         "proxy_full_path_probe_v1" => {
             #[cfg(target_os = "linux")]
-            process_proxy_probe(storage, _proxy_probe_target, &job).await;
+            process_proxy_probe(storage, proxy_probe_target, &job).await;
             #[cfg(not(target_os = "linux"))]
             let _ = storage
                 .dead_letter_job(job.job_id, job.generation, "proxy_probe_requires_linux", None)
@@ -3140,9 +3143,11 @@ async fn process_business_key_rotation(
 }
 
 #[derive(Debug, Default)]
+#[cfg(not(target_os = "linux"))]
 pub struct EvidenceGatedEnrollmentExecutor;
 
 #[async_trait::async_trait]
+#[cfg(not(target_os = "linux"))]
 impl CredentialEnrollmentJobExecutor for EvidenceGatedEnrollmentExecutor {
     async fn execute(&self, _attempt: CredentialEnrollmentJobAttempt) -> JobAttemptDecision {
         JobAttemptDecision::Retry {

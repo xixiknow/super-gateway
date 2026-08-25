@@ -662,9 +662,17 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
     let archetype = Uuid::now_v7();
     let version = Uuid::now_v7();
     let bundle = Uuid::now_v7();
+    let mut transaction = storage.pool().begin().await?;
+    // The PostgreSQL integration tests share one database and execute in
+    // parallel. Serialize the max+1 artifact-version allocation so two
+    // fixtures cannot claim the same globally unique version.
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(0x5357_4752_i64)
+        .execute(&mut *transaction)
+        .await?;
     let artifact_version: i64 =
         sqlx::query_scalar("SELECT COALESCE(max(artifact_version),0)+1 FROM catalog.transport_bundle")
-            .fetch_one(&storage.pool())
+            .fetch_one(&mut *transaction)
             .await?;
     sqlx::query(
         "INSERT INTO catalog.environment_archetype \
@@ -673,7 +681,7 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
     )
     .bind(archetype)
     .bind(format!("r5-enrollment-{archetype}"))
-    .execute(&storage.pool())
+    .execute(&mut *transaction)
     .await?;
     sqlx::query(
         "INSERT INTO catalog.environment_archetype_version \
@@ -684,7 +692,7 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
     .bind(version)
     .bind(archetype)
     .bind(Uuid::now_v7().as_bytes().to_vec())
-    .execute(&storage.pool())
+    .execute(&mut *transaction)
     .await?;
     sqlx::query(
         "INSERT INTO catalog.transport_bundle \
@@ -699,7 +707,7 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
     .bind(Uuid::now_v7().as_bytes().to_vec())
     .bind(vec![7_u8; 32])
     .bind(version)
-    .execute(&storage.pool())
+    .execute(&mut *transaction)
     .await?;
     sqlx::query(
         "INSERT INTO catalog.archetype_bundle_binding \
@@ -708,7 +716,7 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
     )
     .bind(version)
     .bind(bundle)
-    .execute(&storage.pool())
+    .execute(&mut *transaction)
     .await?;
     sqlx::query(
         "INSERT INTO catalog.archetype_capacity_policy \
@@ -717,8 +725,9 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
     )
     .bind(Uuid::now_v7())
     .bind(version)
-    .execute(&storage.pool())
+    .execute(&mut *transaction)
     .await?;
+    transaction.commit().await?;
     Ok(())
 }
 

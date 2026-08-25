@@ -220,7 +220,7 @@
     ],
     "source_sha256": {
       "planning/transport-spike-report.md": "662ebf356a0d81c84088593d215964475d7e21667e21ecd834f1ba8a19235864",
-      ".github/workflows/ci.yml": "26024007ed53ba58a5af9cefc759bc17120e74aeed99fe30e4a96342a4d4331a"
+      ".github/workflows/ci.yml": "6a7234ecb79ca2086ac23f1ab9ad91f6e4161398a9959f539520984cca700e4e"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -240,7 +240,7 @@
     ],
     "source_sha256": {
       "planning/test-strategy.md": "5e30256618b3783709ff995052938077a33c2b1759f74a65016567762da3d42a",
-      ".github/workflows/ci.yml": "26024007ed53ba58a5af9cefc759bc17120e74aeed99fe30e4a96342a4d4331a"
+      ".github/workflows/ci.yml": "6a7234ecb79ca2086ac23f1ab9ad91f6e4161398a9959f539520984cca700e4e"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",

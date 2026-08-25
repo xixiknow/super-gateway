@@ -27,6 +27,7 @@ gateway-storage = { path = "../gateway-storage" }
 gateway-transport = { path = "../gateway-transport" }
 getrandom.workspace = true
 hmac.workspace = true
+http.workspace = true
 ipnet.workspace = true
 serde.workspace = true
 serde_json.workspace = true

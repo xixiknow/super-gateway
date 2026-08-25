@@ -122,7 +122,7 @@
     ],
     "source_sha256": {
       "crates/gateway-transport/src/tls.rs": "446df06ab5d4a299c212bca5d321ca94e082099f45991730ec1db622f18f562e",
-      "Cargo.lock": "43c65d66b1136220157cc968645e6bc6338799e1c90f8a03f7244741157b97be"
+      "Cargo.lock": "f4f96ba0850cb0c6304269f66e5ecf0483b9a53ff660f71cc36a8c5666de9c6a"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",

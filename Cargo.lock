@@ -2395,6 +2395,7 @@ dependencies = [
  "gateway-transport",
  "getrandom 0.3.4",
  "hmac",
+ "http",
  "ipnet",
  "serde",
  "serde_json",

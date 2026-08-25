@@ -1,0 +1,178 @@
+{
+  "mode": "canary",
+  "decision": "ready_for_canary",
+  "bundle_sha256": "9013dc1d550f15940bb91b02823db6b8e2e39bbbf58da901a20cc3e038da6b50",
+  "backend": {
+    "backend_id": "cloudflare-boring-5.2+h2-0.4",
+    "tls": "cloudflare/boring 5.2",
+    "http1": "ordered byte writer",
+    "http2": "hyperium/h2 0.4",
+    "capabilities": {
+      "tls_protocol_versions": "native",
+      "tls_cipher_order": "wire_verification_required",
+      "tls_extension_order": "wire_verification_required",
+      "tls_alpn_order": "native",
+      "tls_client_hello_length": "wire_verification_required",
+      "tls_record_framing": "wire_verification_required",
+      "tls_dynamic_fields": "native",
+      "tls_session_resumption": "native",
+      "http1_request_line": "native",
+      "http1_header_order": "native",
+      "http1_header_casing": "native",
+      "http1_body_framing": "native",
+      "http2_settings_values": "native",
+      "http2_settings_order": "wire_verification_required",
+      "http2_connection_window": "native",
+      "http2_frame_sequence": "wire_verification_required",
+      "http2_pseudo_header_order": "wire_verification_required",
+      "http2_header_order": "wire_verification_required",
+      "http2_header_casing": "native",
+      "http2_hpack_encoding": "evidence_missing",
+      "cancellation_behavior": "evidence_missing"
+    }
+  },
+  "items": [
+    {
+      "control": "tls_protocol_versions",
+      "support": "native",
+      "required_by": [
+        "/tls/legacy_version"
+      ],
+      "blocking": false,
+      "note": "backend exposes a direct configuration API",
+      "verification_evidence": []
+    },
+    {
+      "control": "tls_cipher_order",
+      "support": "wire_verification_required",
+      "required_by": [
+        "/tls/cipher_suites"
+      ],
+      "blocking": false,
+      "note": "BoringSSL exposes pre-TLS1.3 cipher configuration; TLS1.3 suites remain library-defined; verified by integrity-bound Canary TLS evidence",
+      "verification_evidence": [
+        "2edca73a8fea63f2d9be58280af6968287165d5dea158c640a7055570baaa48d"
+      ]
+    },
+    {
+      "control": "tls_extension_order",
+      "support": "wire_verification_required",
+      "required_by": [
+        "/tls/extensions"
+      ],
+      "blocking": false,
+      "note": "BoringSSL exposes GREASE and permutation toggles, not an arbitrary extension-order API; verified by integrity-bound Canary TLS evidence",
+      "verification_evidence": [
+        "2edca73a8fea63f2d9be58280af6968287165d5dea158c640a7055570baaa48d"
+      ]
+    },
+    {
+      "control": "tls_alpn_order",
+      "support": "native",
+      "required_by": [
+        "/tls/alpn_order"
+      ],
+      "blocking": false,
+      "note": "backend exposes a direct configuration API",
+      "verification_evidence": []
+    },
+    {
+      "control": "tls_client_hello_length",
+      "support": "wire_verification_required",
+      "required_by": [
+        "/tls/client_hello_len"
+      ],
+      "blocking": false,
+      "note": "backend output must pass capture-and-diff before Canary; verified by integrity-bound Canary TLS evidence",
+      "verification_evidence": [
+        "2edca73a8fea63f2d9be58280af6968287165d5dea158c640a7055570baaa48d"
+      ]
+    },
+    {
+      "control": "tls_record_framing",
+      "support": "wire_verification_required",
+      "required_by": [
+        "/tls/record_lengths"
+      ],
+      "blocking": false,
+      "note": "backend output must pass capture-and-diff before Canary; verified by integrity-bound Canary TLS evidence",
+      "verification_evidence": [
+        "2edca73a8fea63f2d9be58280af6968287165d5dea158c640a7055570baaa48d"
+      ]
+    },
+    {
+      "control": "tls_dynamic_fields",
+      "support": "native",
+      "required_by": [
+        "/tls/dynamic_fields"
+      ],
+      "blocking": false,
+      "note": "backend exposes a direct configuration API",
+      "verification_evidence": []
+    },
+    {
+      "control": "tls_session_resumption",
+      "support": "native",
+      "required_by": [
+        "/connection/resumption_observations"
+      ],
+      "blocking": false,
+      "note": "backend exposes a direct configuration API",
+      "verification_evidence": []
+    },
+    {
+      "control": "http1_request_line",
+      "support": "native",
+      "required_by": [
+        "/application/profile/method",
+        "/application/profile/version"
+      ],
+      "blocking": false,
+      "note": "backend exposes a direct configuration API",
+      "verification_evidence": []
+    },
+    {
+      "control": "http1_header_order",
+      "support": "native",
+      "required_by": [
+        "/headers/ordered_names"
+      ],
+      "blocking": false,
+      "note": "backend exposes a direct configuration API",
+      "verification_evidence": []
+    },
+    {
+      "control": "http1_header_casing",
+      "support": "native",
+      "required_by": [
+        "/headers/casing_policy"
+      ],
+      "blocking": false,
+      "note": "backend exposes a direct configuration API",
+      "verification_evidence": []
+    },
+    {
+      "control": "http1_body_framing",
+      "support": "native",
+      "required_by": [
+        "/application/profile/content_length_framing"
+      ],
+      "blocking": false,
+      "note": "backend exposes a direct configuration API",
+      "verification_evidence": []
+    },
+    {
+      "control": "cancellation_behavior",
+      "support": "evidence_missing",
+      "required_by": [
+        "capture_manifest:cancellation_matrix"
+      ],
+      "blocking": false,
+      "note": "current fixture does not yet carry a verified cancellation scenario matrix; verified by integrity-bound Canary TLS evidence",
+      "verification_evidence": [
+        "3799b35ec9f3a6da0b5f7160370f8390c00e8fb08ca852ccd44d255f02acb371"
+      ]
+    }
+  ],
+  "blocker_count": 0
+}

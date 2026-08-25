@@ -1,0 +1,11 @@
+{
+  "sse_connections_requested": 1200,
+  "sse_connections_completed": 1200,
+  "peak_sse_connections": 1200,
+  "short_requests_completed": 2500,
+  "elapsed_micros": 12129,
+  "measured_requests_per_second": 206109.07292139,
+  "unfinished_tasks": 0,
+  "rss_before_kib": null,
+  "rss_after_kib": null
+}

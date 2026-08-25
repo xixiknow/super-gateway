@@ -160,7 +160,7 @@ jobs:
             --database-url "$TEST_DATABASE_ADMIN_URL" \
             --key-file "$RUNNER_TEMP/r2-backup-key" \
             --output-dir evidence/postgres-r2
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: postgres-r2-evidence
           path: evidence/postgres-r2
@@ -285,7 +285,7 @@ jobs:
           --profile r10-local
           --expected-revision ${{ github.sha }}
           --expected-target ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: super-gatewayd-${{ matrix.target }}
           path: evidence/${{ matrix.target }}

@@ -133,6 +133,15 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def normalized_text_bytes(path: Path) -> bytes:
+    """Return platform-independent bytes for text evidence hashing."""
+    return path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def text_sha256(path: Path) -> str:
+    return hashlib.sha256(normalized_text_bytes(path)).hexdigest()
+
+
 def schema_id(name: str) -> str:
     return f"https://super-gateway.local/contracts/schemas/{name}"
 
@@ -2206,11 +2215,11 @@ def generate_ledger() -> None:
             "requirement_ids": [rid], "automation": automation,
         })
     source_revision = hashlib.sha256(
-        functional_path.read_bytes()
-        + roadmap_path.read_bytes()
-        + scheduler_path.read_bytes()
-        + lifecycle_path.read_bytes()
-        + transport_path.read_bytes()
+        normalized_text_bytes(functional_path)
+        + normalized_text_bytes(roadmap_path)
+        + normalized_text_bytes(scheduler_path)
+        + normalized_text_bytes(lifecycle_path)
+        + normalized_text_bytes(transport_path)
     ).hexdigest()
     ledger = {
         "schema_version": "1.0.0", "generated_at": "2026-08-24T00:00:00Z", "source_revision": source_revision,
@@ -2364,10 +2373,7 @@ def generate_fixtures() -> None:
             "fixture_id": fixture_id,
             "scenario": scenario,
             "sources": sources,
-            "source_sha256": {
-                source: hashlib.sha256((ROOT / source).read_bytes()).hexdigest()
-                for source in sources
-            },
+            "source_sha256": {source: text_sha256(ROOT / source) for source in sources},
             "privacy_canaries": ["synthetic-platform-key", "synthetic-client-identity"],
             "privacy_scan": "builtin-r3:passed",
         }
@@ -2417,7 +2423,7 @@ def generate_fixtures() -> None:
     for fixture_id, scenario, sources in r4_scenarios:
         item = {
             "fixture_id": fixture_id, "scenario": scenario, "sources": sources,
-            "source_sha256": {source: hashlib.sha256((ROOT / source).read_bytes()).hexdigest() for source in sources},
+            "source_sha256": {source: text_sha256(ROOT / source) for source in sources},
             "privacy_canaries": ["synthetic-platform-key", "synthetic-credential-token"],
             "privacy_scan": "builtin-r4:passed",
         }
@@ -2464,7 +2470,7 @@ def generate_fixtures() -> None:
         scenario = f"credential_lifecycle_{index:02d}"
         item = {
             "fixture_id": fixture_id, "scenario": scenario, "sources": sources,
-            "source_sha256": {source: hashlib.sha256((ROOT / source).read_bytes()).hexdigest() for source in sources},
+            "source_sha256": {source: text_sha256(ROOT / source) for source in sources},
             "privacy_canaries": [
                 "synthetic-oauth-access-token", "synthetic-refresh-token", "synthetic-browser-cookie",
                 "synthetic-pkce-verifier", "synthetic-session-hmac",
@@ -2513,7 +2519,7 @@ def generate_fixtures() -> None:
         scenario = f"transport_production_{index:02d}"
         item = {
             "fixture_id": fixture_id, "scenario": scenario, "sources": sources,
-            "source_sha256": {source: hashlib.sha256((ROOT / source).read_bytes()).hexdigest() for source in sources},
+            "source_sha256": {source: text_sha256(ROOT / source) for source in sources},
             "privacy_canaries": [
                 "synthetic-oauth-access-token", "synthetic-proxy-password", "synthetic-session-hmac",
                 "synthetic-platform-key",
@@ -2539,7 +2545,7 @@ def generate_fixtures() -> None:
     write_json(FIXTURES / "r6-fixture-manifests.valid.json", r6_manifests)
     artifact = {"name": "super-gatewayd", "path": "bin/super-gatewayd", "sha256": "e" * 64, "size_bytes": 1}
     release_migrations = sorted((ROOT / "crates" / "gateway-storage" / "migrations").glob("*.sql"))
-    release_migration_checksums = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in release_migrations}
+    release_migration_checksums = {path.name: text_sha256(path) for path in release_migrations}
     release_versions = [int(path.name[:14]) for path in release_migrations]
     release_manifest = {
         "schema_version": "1.0.0", "application": "super-gatewayd", "application_version": "0.1.0",
@@ -2576,7 +2582,7 @@ def generate_fixtures() -> None:
     migrations = [
         {
             "version": int(path.name[:14]), "name": path.name,
-            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "sha256": text_sha256(path),
             "direction": "forward_only", "transactional": True,
         }
         for path in migration_files
@@ -2588,7 +2594,7 @@ def generate_fixtures() -> None:
     }
     migration_fixture_path = FIXTURES / "migration-manifest.valid.json"
     write_json(migration_fixture_path, migration_manifest)
-    migration_manifest_hash = hashlib.sha256(migration_fixture_path.read_bytes()).hexdigest()
+    migration_manifest_hash = text_sha256(migration_fixture_path)
     sql_text = "\n".join(path.read_text(encoding="utf-8") for path in migration_files)
     all_tables = sorted(set(re.findall(r"CREATE TABLE\s+([a-z_]+\.[a-z0-9_]+)", sql_text)))
     required_tables = [

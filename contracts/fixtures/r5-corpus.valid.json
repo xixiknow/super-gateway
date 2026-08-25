@@ -7,8 +7,8 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-services/src/security.rs": "cedb610a9c73ac4f972ce7204c30ac770a0b7159704ce377713bd094a61153ae",
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-services/src/security.rs": "7cc936665140a2cf3859a722b2728f56ac6c5d8cfda13bf752d619a96392cd35",
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -28,8 +28,8 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e",
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-domain/src/credential.rs": "2c708aed51ed4bff5fa94400ef40331b0b0d106490950e0e32fb839559247c7a",
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -48,7 +48,7 @@
       "crates/gateway-domain/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e"
+      "crates/gateway-domain/src/credential.rs": "2c708aed51ed4bff5fa94400ef40331b0b0d106490950e0e32fb839559247c7a"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -68,7 +68,7 @@
       "crates/gateway-storage/migrations/20260824000600_r5_contract_alignment.sql"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e",
+      "crates/gateway-domain/src/credential.rs": "2c708aed51ed4bff5fa94400ef40331b0b0d106490950e0e32fb839559247c7a",
       "crates/gateway-storage/migrations/20260824000600_r5_contract_alignment.sql": "36d18ca95350686897ced431a735a2ca446cc641174faaf159c36996eace7cfa"
     },
     "privacy_canaries": [
@@ -88,7 +88,7 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -108,8 +108,8 @@
       "crates/gateway-storage/tests/credential_r5_pg.rs"
     ],
     "source_sha256": {
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b",
-      "crates/gateway-storage/tests/credential_r5_pg.rs": "1c08f59fbc0886310dad83f502b37a86751c371e0d9ad77f8534fc5d756a509c"
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b",
+      "crates/gateway-storage/tests/credential_r5_pg.rs": "3eacba140f7563e8ad4d8a96cc35d1ce7191ad884aa9d793d565f57fa39c5f17"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -128,7 +128,7 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -147,7 +147,7 @@
       "crates/gateway-domain/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e"
+      "crates/gateway-domain/src/credential.rs": "2c708aed51ed4bff5fa94400ef40331b0b0d106490950e0e32fb839559247c7a"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -167,8 +167,8 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-services/src/credential.rs": "00edbf3c6e9b94c059cd9d3b8b5d8beab34de0301db482f98812b11fa170c534",
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-services/src/credential.rs": "0202a0a02cdb53945d28cd014bee7bbe7d80280711b65699bb0c8e6deb49081c",
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -187,7 +187,7 @@
       "crates/gateway-services/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-services/src/credential.rs": "00edbf3c6e9b94c059cd9d3b8b5d8beab34de0301db482f98812b11fa170c534"
+      "crates/gateway-services/src/credential.rs": "0202a0a02cdb53945d28cd014bee7bbe7d80280711b65699bb0c8e6deb49081c"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -206,7 +206,7 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -225,7 +225,7 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -245,8 +245,8 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-services/src/credential.rs": "00edbf3c6e9b94c059cd9d3b8b5d8beab34de0301db482f98812b11fa170c534",
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-services/src/credential.rs": "0202a0a02cdb53945d28cd014bee7bbe7d80280711b65699bb0c8e6deb49081c",
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -266,8 +266,8 @@
       "crates/gateway-services/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-scheduler/src/engine.rs": "a322cc4ebb24153934e13a99c1f9f778c8f9d047ac6d8af22f32bbfe2617c39e",
-      "crates/gateway-services/src/credential.rs": "00edbf3c6e9b94c059cd9d3b8b5d8beab34de0301db482f98812b11fa170c534"
+      "crates/gateway-scheduler/src/engine.rs": "07fc9c0d4a06d78ea8a09fa0c7f62c1f1ecdfb53edd6ea581acdd6750969f949",
+      "crates/gateway-services/src/credential.rs": "0202a0a02cdb53945d28cd014bee7bbe7d80280711b65699bb0c8e6deb49081c"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -287,8 +287,8 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e",
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-domain/src/credential.rs": "2c708aed51ed4bff5fa94400ef40331b0b0d106490950e0e32fb839559247c7a",
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -308,8 +308,8 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/credential.rs": "bb35842e251079dbb299070dcf937ae66a7f7fd92f8ba824a4c429110151501e",
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-domain/src/credential.rs": "2c708aed51ed4bff5fa94400ef40331b0b0d106490950e0e32fb839559247c7a",
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -329,8 +329,8 @@
       "crates/gateway-storage/src/postgres.rs"
     ],
     "source_sha256": {
-      "crates/gateway-services/src/operations.rs": "46fd56e611c04cf1bcd1fb017b6d1b317a01675afca49559a7780f032fe1eddd",
-      "crates/gateway-storage/src/postgres.rs": "213e5916a9e909b20946d19ab26e46b6312cdc589fcb5ee45d9907d6450008f7"
+      "crates/gateway-services/src/operations.rs": "7fa21fcb05d5b65b44aeb3cfdf4588651d526969a8b44f79d2d84656a05d5257",
+      "crates/gateway-storage/src/postgres.rs": "c326fba8670498e5f516da9d861cb262d04afb7377204002f8cc8c2f5ac967db"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -350,8 +350,8 @@
       "crates/gateway-storage/src/credential.rs"
     ],
     "source_sha256": {
-      "crates/gateway-services/src/security.rs": "cedb610a9c73ac4f972ce7204c30ac770a0b7159704ce377713bd094a61153ae",
-      "crates/gateway-storage/src/credential.rs": "e85f2d27d6d1266f161e78ec06918fe2e1e4be409b7255f8cd33110a4e0ab34b"
+      "crates/gateway-services/src/security.rs": "7cc936665140a2cf3859a722b2728f56ac6c5d8cfda13bf752d619a96392cd35",
+      "crates/gateway-storage/src/credential.rs": "fc3175a05f4a7f5b86ef2befd50e7b115ff64bc6a1098399a13a7f239136291b"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",

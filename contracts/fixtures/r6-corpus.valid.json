@@ -7,8 +7,8 @@
       "crates/gateway-transport/src/port.rs"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/transport.rs": "47c01cefc58cd08c38325d24c49c440dda3e978d5797bf3b0438c6b6cf9a6331",
-      "crates/gateway-transport/src/port.rs": "7ad71beed15081954c0d5355db8b395963e8c2cc2026cdfe7c6ff255c442fbf9"
+      "crates/gateway-domain/src/transport.rs": "e64dfd824e24d17ca37685bc1f1f9892815f533260ed92395e4e239735672a9f",
+      "crates/gateway-transport/src/port.rs": "f663d7af464cd4cb8a6dc78839a1dfe94154b62c30eb4da1f89970023165396a"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -27,8 +27,8 @@
       "contracts/schemas/transport-bundle-manifest.schema.json"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/bundle.rs": "605906285fb80b1dec2ee20d7d5fb8d7abe5626bb9423cb34fd1856980f99454",
-      "contracts/schemas/transport-bundle-manifest.schema.json": "e2d6a5811e9cb228fa8c1bbb868450c0cf1ffdeb4f1c878e038f5af8522e082b"
+      "crates/gateway-transport/src/bundle.rs": "141e712e2a737ff352c26b13ffcaef35d16e91797931933e6c23feff7eaed98d",
+      "contracts/schemas/transport-bundle-manifest.schema.json": "e8d0bd8d060640f962d950d2614273b882f52c0a92b46d4a0a83a78b62500bb2"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -46,7 +46,7 @@
       "crates/gateway-transport/src/engine.rs"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/engine.rs": "5e72e7fa908980df6f2e7c97b0318553f81d1f9c7f4c3316262fcd68966d725d"
+      "crates/gateway-transport/src/engine.rs": "2f1f41f95d28fd945d3936d0032a515b6d428d3f7fcf828b20124ea9b218dde2"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -64,7 +64,7 @@
       "crates/gateway-transport/src/pool.rs"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/pool.rs": "a135794a678acd87538e4ce381a7bc7f963da24ff200d7e3fba5452a6ab280ca"
+      "crates/gateway-transport/src/pool.rs": "b8ee0b681ddf085f6c43893f587f94835ab6fa0c2030d4638dc798a6eaf69177"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -83,8 +83,8 @@
       "crates/gateway-transport/src/production.rs"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/h1.rs": "12d4459d3974a81f0c8525807cf39208e1e0e6fcc5e84d2d9bab4639efdc8d97",
-      "crates/gateway-transport/src/production.rs": "6955ea6175e988ff5853e8749164a93b4004d56cee9631e7163dfc08e51a7405"
+      "crates/gateway-transport/src/h1.rs": "e6d335365b7b41e9ccff9ddfbe8df54fdd5fc9326a328a250e935fb81227926c",
+      "crates/gateway-transport/src/production.rs": "3ecf8e27aeccbc1f9d7511abebf2f4411147505e4291ab15f8bdef502d0bccab"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -102,7 +102,7 @@
       "crates/gateway-transport/src/egress.rs"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/egress.rs": "f0e7b13ba983ab2c2b259754555e319eab5f13069e3d6390d08ce57d2dcaffd6"
+      "crates/gateway-transport/src/egress.rs": "393747e64a2bcd72752f4d7a6c7ce642e4e74caa17e1df1b3976a4438320db3f"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -121,7 +121,7 @@
       "Cargo.lock"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/tls.rs": "f87b493b70bb43c88242f66aa9f219da2e14366498c74971188d3f8416b1ee90",
+      "crates/gateway-transport/src/tls.rs": "446df06ab5d4a299c212bca5d321ca94e082099f45991730ec1db622f18f562e",
       "Cargo.lock": "43c65d66b1136220157cc968645e6bc6338799e1c90f8a03f7244741157b97be"
     },
     "privacy_canaries": [
@@ -141,8 +141,8 @@
       "crates/gateway-transport/src/event.rs"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/attempt.rs": "63a1eb1b775d2b53ea25181040a76fe9075299f1f559dfcc5b6b392e8561ebfc",
-      "crates/gateway-transport/src/event.rs": "237af11b4dd59ebe863f37b2de9aa4ddfc36317fcb832e62dfbee8c9834c273a"
+      "crates/gateway-transport/src/attempt.rs": "099ff9fc55b500454c0456a2b56f1ca3e34fe4208d45329030c3cdcbcfe0a898",
+      "crates/gateway-transport/src/event.rs": "831dfab73e80d263b8e65c218fd0c43a09c160d12cdd2678461e8fd8d1f7ff0f"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -160,7 +160,7 @@
       "crates/gateway-transport/src/production.rs"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/production.rs": "6955ea6175e988ff5853e8749164a93b4004d56cee9631e7163dfc08e51a7405"
+      "crates/gateway-transport/src/production.rs": "3ecf8e27aeccbc1f9d7511abebf2f4411147505e4291ab15f8bdef502d0bccab"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -180,7 +180,7 @@
     ],
     "source_sha256": {
       "planning/transport-engine.md": "621a7aba687e4d7b8ed2e81f370b20fb5bc727b8a6443fb2ee1628a8a282de44",
-      "crates/gateway-transport/src/production.rs": "6955ea6175e988ff5853e8749164a93b4004d56cee9631e7163dfc08e51a7405"
+      "crates/gateway-transport/src/production.rs": "3ecf8e27aeccbc1f9d7511abebf2f4411147505e4291ab15f8bdef502d0bccab"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",

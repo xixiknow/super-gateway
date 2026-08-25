@@ -5,7 +5,7 @@
     "scenario": "auth_first_route_matrix",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "cf3613c97dcd75ee656abf7b28dd08c1fd767016856cb70a94d0c082111ddd8a",
+    "content_sha256": "fb049f61b7681cfa5c85425f33ade98235281c3ab944dbcf03baac14e8dbcb82",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -25,7 +25,7 @@
     "scenario": "platform_key_and_ingress_access",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "22de9cbe1be0d77ca3a84d88e3bba774f8a66657da85b5753394730278435ba7",
+    "content_sha256": "6c42b2abef669cfbe2a56fb1f5626f5419a11153fdfcd16dc5ad5e50e688c7af",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -45,7 +45,7 @@
     "scenario": "messages_framing_and_lossless_json",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "0e5058e7ea175c71d2bb7659bc6c669c27e8e096b9d366ea513ef8de0b192d76",
+    "content_sha256": "b7b4b17eb93a44ade5ee7b7d705650ae721568340f3da8921afbde83e01e139e",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -65,7 +65,7 @@
     "scenario": "client_session_traffic_classification",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "47987486f9dcefc473299dc8f8858dc93d894794c3184da78156c0e9740a04fa",
+    "content_sha256": "757635e2472aa5d5d097230145f05877d9dcc40b495dfe00cc994c6db2e1bbf7",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -85,7 +85,7 @@
     "scenario": "bounded_model_capability",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "5fdf5da0c3eb0eafef0b86d2360a4125545ffa0226bc407d1c803c46879194ee",
+    "content_sha256": "8dd52d887bcc5eb114282a743ce3031fcd91b9c779d45f02005cae233f1f8ad0",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -105,7 +105,7 @@
     "scenario": "system_policy_four_modes",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "61549c186130c8623a3371f79bcbb3bedd2358cafc336267e4c942fe168d00b5",
+    "content_sha256": "0acd4c01f65eaf056ca98cbafe9f60e0b89103d16c3793c0c95099e05ff2de32",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -125,7 +125,7 @@
     "scenario": "deterministic_ruleset",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "8ee8b0d81f2b402e96aed40608e8c963fb607b07037520c70d758a7e6341c149",
+    "content_sha256": "0d200cba4b8125baac345f72b18f88920e621d4ab652656c12a7a7980b40d424",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -145,7 +145,7 @@
     "scenario": "unknown_extension_roundtrip_and_pin",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "1167ddf6f89b23c276979bf5aa4ab5a63eafb33e336a6edf5f919ff7d018a62a",
+    "content_sha256": "2472ca0c7b6e01125a8743c4b88ffbf0bf7dc71478bda7417efb145150b9fe47",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -165,7 +165,7 @@
     "scenario": "credential_neutral_generic_request",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "5c006bd35e9cb2da41b361cca3ba13f50453abea55468cdf773e8cdf7dc20531",
+    "content_sha256": "01a9886ef7023596a24c5fd131d34def93a547ed1d8fab2e66effaaed1039baa",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -185,7 +185,7 @@
     "scenario": "published_model_scope_and_pagination",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "d2206fe3680ebd5989d5f75307d1ba3e7be8c11023dbf4ff886d3410ce3da3bf",
+    "content_sha256": "05e44053b2950d1b673ee0fcc7700b4f33b576668087aa8db045c0560beca61a",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -205,7 +205,7 @@
     "scenario": "bounded_mutation_regression_corpus",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "18405749d12ef54c7e68b14f74aff9b7c232df2456a3441a29c3c203a4472668",
+    "content_sha256": "71dd1207ef42a4e5257d38361bce70452730aaeadc20828f014bc04d8a4782b9",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -225,7 +225,7 @@
     "scenario": "southbound_identity_canary",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-policy-r3-v1",
-    "content_sha256": "a71ef8ae769f2fd2fa630d6debe368268c2d79998e48df23942f6702d9ed6923",
+    "content_sha256": "575d92be219c1c8bccd8b708268601bdd76d67f2f7a6f898a9c07ba73a2c4437",
     "privacy_scan": "builtin-r3:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [

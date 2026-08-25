@@ -17,6 +17,11 @@ CONTRACTS = ROOT / "contracts"
 JSON_FILES = sorted(CONTRACTS.rglob("*.json"))
 
 
+def text_sha256(path: Path) -> str:
+    content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(content).hexdigest()
+
+
 @dataclass
 class Finding:
     location: str
@@ -472,7 +477,7 @@ class ContractValidator:
         self.check(len(actual_files) == len(migration["migrations"]), "migration-manifest", "migration file count drifted")
         for item, path in zip(migration["migrations"], actual_files, strict=False):
             self.check(item["name"] == path.name, "migration-manifest", "migration ordering/name drifted")
-            self.check(item["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest(), path.name, "published migration checksum drifted")
+            self.check(item["sha256"] == text_sha256(path), path.name, "published migration checksum drifted")
         database = self.documents[(CONTRACTS / "fixtures" / "database-schema-manifest.valid.json").resolve()]
         self.check(len(database["required_tables"]) == 116, "database-schema-manifest", "116-table baseline drifted")
         self.check(
@@ -517,7 +522,7 @@ class ContractValidator:
                 self.check(path.exists(), fixture_id, f"fixture source missing: {source}")
                 if path.exists():
                     self.check(
-                        hashlib.sha256(path.read_bytes()).hexdigest() == expected_hash,
+                        text_sha256(path) == expected_hash,
                         fixture_id,
                         f"fixture source hash drifted: {source}",
                     )
@@ -555,7 +560,7 @@ class ContractValidator:
                 self.check(path.exists(), fixture_id, f"fixture source missing: {source}")
                 if path.exists():
                     self.check(
-                        hashlib.sha256(path.read_bytes()).hexdigest() == expected_hash,
+                        text_sha256(path) == expected_hash,
                         fixture_id,
                         f"fixture source hash drifted: {source}",
                     )
@@ -598,7 +603,7 @@ class ContractValidator:
                 self.check(path.exists(), fixture_id, f"fixture source missing: {source}")
                 if path.exists():
                     self.check(
-                        hashlib.sha256(path.read_bytes()).hexdigest() == expected_hash,
+                        text_sha256(path) == expected_hash,
                         fixture_id,
                         f"fixture source hash drifted: {source}",
                     )

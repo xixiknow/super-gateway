@@ -202,12 +202,14 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
             linker: gcc
             package: gcc
           - target: aarch64-unknown-linux-gnu
-            linker: aarch64-linux-gnu-gcc
-            package: gcc-aarch64-linux-gnu
-    runs-on: ubuntu-24.04
+            runner: ubuntu-24.04-arm
+            linker: gcc
+            package: gcc
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -230,11 +232,14 @@ jobs:
           CARGO_TARGET_DIR: target-primary
         run: cargo build --release --locked --target ${{ matrix.target }} -p super-gatewayd
       - name: Reproducibility comparison
+        env:
+          CARGO_TARGET_DIR: target-primary
         shell: bash
         run: |
           cp 'target-primary/${{ matrix.target }}/release/super-gatewayd' first-build
-          CARGO_TARGET_DIR=target-repro cargo build --release --locked --target '${{ matrix.target }}' -p super-gatewayd
-          cmp first-build 'target-repro/${{ matrix.target }}/release/super-gatewayd'
+          cargo clean --target '${{ matrix.target }}'
+          cargo build --release --locked --target '${{ matrix.target }}' -p super-gatewayd
+          cmp first-build 'target-primary/${{ matrix.target }}/release/super-gatewayd'
       - uses: actions/download-artifact@v4
         with:
           name: postgres-r2-evidence

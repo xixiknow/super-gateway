@@ -306,7 +306,7 @@ class ContractValidator:
         route_registry = self.documents[(CONTRACTS / "registries" / "admin-routes.json").resolve()]["routes"]
         expected_routes = {(item["path"], item["method"]) for item in route_registry}
         self.check(actual_routes == expected_routes, "admin.openapi/paths", "OpenAPI routes differ from the extracted route registry")
-        self.check(admin.get("x-route-count") == len(expected_routes) == 196, "admin.openapi/x-route-count", "admin operation count drifted")
+        self.check(admin.get("x-route-count") == len(expected_routes) == 181, "admin.openapi/x-route-count", "admin operation count drifted")
 
     def validate_source_traceability(self) -> None:
         ledger = self.documents[(CONTRACTS / "traceability" / "requirements.json").resolve()]

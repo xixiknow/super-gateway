@@ -837,8 +837,8 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<Uuid, Box<dyn std::err
     .await?;
     sqlx::query(
         "INSERT INTO catalog.archetype_capacity_policy \
-         (id,archetype_version_id,max_credentials,max_connections,revision,created_at,updated_at) \
-         VALUES ($1,$2,100,100,1,clock_timestamp(),clock_timestamp())",
+         (id,archetype_version_id,max_credentials,revision,created_at,updated_at) \
+         VALUES ($1,$2,100,1,clock_timestamp(),clock_timestamp())",
     )
     .bind(Uuid::now_v7())
     .bind(version)
@@ -895,8 +895,8 @@ async fn fixture_archetype_upgrade(
     .await?;
     sqlx::query(
         "INSERT INTO catalog.archetype_capacity_policy \
-         (id,archetype_version_id,max_credentials,max_connections,revision,created_at,updated_at) \
-         VALUES ($1,$2,100,100,1,clock_timestamp(),clock_timestamp())",
+         (id,archetype_version_id,max_credentials,revision,created_at,updated_at) \
+         VALUES ($1,$2,100,1,clock_timestamp(),clock_timestamp())",
     )
     .bind(Uuid::now_v7())
     .bind(version)

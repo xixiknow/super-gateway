@@ -7,11 +7,10 @@ mod management;
 mod probes;
 
 pub use data::{
-    AccessGrant, AccessResolver, BackgroundCatalog, BackgroundCatalogDocument, BackgroundCatalogEntry,
-    BackgroundCatalogError, BackgroundSignal, ContentAuditMode, DataPlaneState, DenyAllAccessResolver, DispatchError,
-    DispatchRequest, EndpointPermission, InMemoryAccessResolver, ManagementRuntimeBridge, ManagementRuntimeSnapshot,
-    MessageDispatcher, ModelCatalog, ModelRecord, ProbeAction, RateLimit, StaticModelCatalog, UnavailableDispatcher,
-    UpstreamResponse, VersionedDigestAccessResolver,
+    AccessGrant, AccessResolver, AllowAllSpendAuthorizer, ContentAuditMode, DataPlaneState, DenyAllAccessResolver,
+    DispatchError, DispatchRequest, EndpointPermission, InMemoryAccessResolver, ManagementRuntimeBridge,
+    ManagementRuntimeSnapshot, MessageDispatcher, ModelCatalog, ModelRecord, RateLimit, SpendAuthorizer, SpendDecision,
+    StaticModelCatalog, UnavailableDispatcher, UpstreamResponse, VersionedDigestAccessResolver,
 };
 pub use edge::{BusinessRateLimiter, KeyConcurrencyLimiter, TrustedProxyConfig, data_plane_router};
 pub use management::{

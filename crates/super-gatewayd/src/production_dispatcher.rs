@@ -1170,11 +1170,7 @@ impl MessageDispatcher for ProductionDispatcher {
                     lease.bundle_hash.as_str(),
                 )
                 .ok_or(DispatchError::DeterministicUnavailable)?;
-            let derived_session = derive_session_id(
-                &selected.session_hmac,
-                request.base_session_id.as_str(),
-                request.agent_id.as_str(),
-            )?;
+            let derived_session = derive_session_id(&selected.session_hmac, request.base_session_id.as_str())?;
             let final_request = Arc::new(build_final_request(&request, &selected, &engine, &derived_session)?);
             let health_proxy_endpoint_id = selected.proxy_endpoint_id.clone();
             let reason = next_attempt_reason;
@@ -3409,12 +3405,7 @@ fn build_final_request(
         let canonical = template.name.to_ascii_lowercase();
         if matches!(
             canonical.as_str(),
-            "connection"
-                | "proxy-connection"
-                | "proxy-authorization"
-                | "forwarded"
-                | "host-forwarded"
-                | "x-forwarded-host"
+            "proxy-connection" | "proxy-authorization" | "forwarded" | "host-forwarded" | "x-forwarded-host"
         ) {
             return Err(DispatchError::DeterministicUnavailable);
         }
@@ -3425,6 +3416,7 @@ fn build_final_request(
             session_id,
             anthropic_version,
             anthropic_beta,
+            request.generic.replay_body.bytes().len(),
         )?;
         if canonical == "authorization" || canonical == "x-api-key" {
             let expected = if selected.auth_kind.as_ref() == "console_api_key" {
@@ -3467,7 +3459,9 @@ fn render_template(
     session_id: &str,
     anthropic_version: &str,
     anthropic_beta: &str,
+    content_length: usize,
 ) -> Result<String, DispatchError> {
+    let content_length = content_length.to_string();
     let mut rendered = template.to_owned();
     for (token, value) in [
         ("{authority}", authority),
@@ -3476,6 +3470,7 @@ fn render_template(
         ("{anthropic_version}", anthropic_version),
         ("{anthropic_beta}", anthropic_beta),
         ("{content_type}", "application/json"),
+        ("{content_length}", content_length.as_str()),
     ] {
         rendered = rendered.replace(token, value);
     }
@@ -3485,12 +3480,13 @@ fn render_template(
     Ok(rendered)
 }
 
-fn derive_session_id(secret: &SecretBytes, base_session: &str, agent: &str) -> Result<String, DispatchError> {
+// 合同约束(request-pipeline.md §11 / database-schema.md §11.4):上游 Session 仅由
+// canonical Base Session 派生,Agent 只参与公平队列与 affinity,不进入派生输入,
+// 以保证同一 Base Session 下 main 与各 subagent 共享同一上游会话与 prompt cache。
+fn derive_session_id(secret: &SecretBytes, base_session: &str) -> Result<String, DispatchError> {
     let mut hmac = HmacSha256::new_from_slice(secret.expose()).map_err(|_| DispatchError::DeterministicUnavailable)?;
     hmac.update(b"gateway-credential-session-v1\0");
     hmac.update(base_session.as_bytes());
-    hmac.update(b"\0");
-    hmac.update(agent.as_bytes());
     let digest = hmac.finalize().into_bytes();
     let mut bytes = [0_u8; 16];
     bytes.copy_from_slice(&digest[..16]);
@@ -4273,20 +4269,24 @@ mod tests {
     }
 
     #[test]
-    fn session_derivation_is_stable_per_base_session_and_agent() -> Result<(), Box<dyn std::error::Error>> {
+    fn session_derivation_is_stable_per_base_session_and_shared_across_agents() -> Result<(), Box<dyn std::error::Error>>
+    {
         let secret = SecretBytes::new(vec![7; 32]);
-        let first = derive_session_id(&secret, "session-a", "main").map_err(|_| "derive")?;
-        let same = derive_session_id(&secret, "session-a", "main").map_err(|_| "derive")?;
-        let subagent = derive_session_id(&secret, "session-a", "subagent-1").map_err(|_| "derive")?;
+        let first = derive_session_id(&secret, "session-a").map_err(|_| "derive")?;
+        let same = derive_session_id(&secret, "session-a").map_err(|_| "derive")?;
+        let other_session = derive_session_id(&secret, "session-b").map_err(|_| "derive")?;
+        let other_secret = derive_session_id(&SecretBytes::new(vec![9; 32]), "session-a").map_err(|_| "derive")?;
+        // 同一 Base Session 恒定(main 与 subagent 共享);跨会话、跨凭据密钥必须不同
         assert_eq!(first, same);
-        assert_ne!(first, subagent);
+        assert_ne!(first, other_session);
+        assert_ne!(first, other_secret);
         assert_eq!(first.len(), 36);
         Ok(())
     }
 
     #[test]
     fn unknown_header_template_fails_closed() {
-        assert!(render_template("{unknown}", "a", "b", "c", "d", "e").is_err());
+        assert!(render_template("{unknown}", "a", "b", "c", "d", "e", 0).is_err());
     }
 
     #[test]

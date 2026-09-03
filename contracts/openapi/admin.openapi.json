@@ -806,7 +806,7 @@
       "get": {
         "operationId": "getArtifactsById",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "统一只读 Artifact 元数据、hash 和 provenance",
         "x-roles": [
@@ -1432,389 +1432,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StepUpCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/background-catalog-versions": {
-      "get": {
-        "operationId": "getBackgroundCatalogVersions",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "测活与背景流量特征版本",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/PageSize"
-          },
-          {
-            "$ref": "#/components/parameters/PageAfter"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      },
-      "post": {
-        "operationId": "postBackgroundCatalogVersions",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "测活与背景流量特征版本",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TypedArtifactCreateCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/background-catalog-versions/{id}:activate": {
-      "post": {
-        "operationId": "postBackgroundCatalogVersionsByIdActivate",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "按证据门槛及双人审批激活",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyArtifactActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/background-catalog-versions/{id}:publish-shadow": {
-      "post": {
-        "operationId": "postBackgroundCatalogVersionsByIdPublishShadow",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "开始不少于 7 天的 Shadow 窗口",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyArtifactActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/background-catalog-versions/{id}:rollback": {
-      "post": {
-        "operationId": "postBackgroundCatalogVersionsByIdRollback",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "回滚历史不可变 Catalog",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyArtifactActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/background-catalog-versions/{id}:validate": {
-      "post": {
-        "operationId": "postBackgroundCatalogVersionsByIdValidate",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "编译强结构模板并由平台运行确定性样本",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyArtifactActionCommand"
               }
             }
           }
@@ -4707,389 +4324,6 @@
         }
       }
     },
-    "/admin/v1/enforcement-versions": {
-      "get": {
-        "operationId": "getEnforcementVersions",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "安全强制版本",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/PageSize"
-          },
-          {
-            "$ref": "#/components/parameters/PageAfter"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      },
-      "post": {
-        "operationId": "postEnforcementVersions",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "安全强制版本",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TypedArtifactCreateCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/enforcement-versions/{id}:activate": {
-      "post": {
-        "operationId": "postEnforcementVersionsByIdActivate",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "双人审批后激活并原子生成 Group Config snapshot",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyArtifactActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/enforcement-versions/{id}:publish-shadow": {
-      "post": {
-        "operationId": "postEnforcementVersionsByIdPublishShadow",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "发布 Shadow 候选并冻结证据窗口",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyArtifactActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/enforcement-versions/{id}:rollback": {
-      "post": {
-        "operationId": "postEnforcementVersionsByIdRollback",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "双人审批后回滚历史不可变版本",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyArtifactActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/enforcement-versions/{id}:validate": {
-      "post": {
-        "operationId": "postEnforcementVersionsByIdValidate",
-        "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
-        ],
-        "summary": "typed 编译与不可放宽校验",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyArtifactActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
     "/admin/v1/environment-archetypes": {
       "get": {
         "operationId": "getEnvironmentArchetypes",
@@ -5318,77 +4552,6 @@
         }
       }
     },
-    "/admin/v1/environment-archetypes/{id}:promote-canary": {
-      "post": {
-        "operationId": "postEnvironmentArchetypesByIdPromoteCanary",
-        "tags": [
-          "Archetype 与 Transport Bundle"
-        ],
-        "summary": "进入 Canary",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReasonActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
     "/admin/v1/environment-archetypes/{id}:retire": {
       "post": {
         "operationId": "postEnvironmentArchetypesByIdRetire",
@@ -5532,6 +4695,52 @@
       }
     },
     "/admin/v1/exports": {
+      "get": {
+        "operationId": "getExports",
+        "tags": [
+          "查询"
+        ],
+        "summary": "本人导出任务列表",
+        "x-roles": [
+          "platform_admin",
+          "key_owner"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageExportListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
       "post": {
         "operationId": "postExports",
         "tags": [
@@ -6186,165 +5395,7 @@
         "tags": [
           "路径与配置发布"
         ],
-        "summary": "激活",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "../schemas/common.schema.json#/$defs/ActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/groups/{id}/config-versions/{version}:promote-canary": {
-      "post": {
-        "operationId": "postGroupsByIdConfigVersionsByVersionPromoteCanary",
-        "tags": [
-          "路径与配置发布"
-        ],
-        "summary": "推进 Canary",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "../schemas/common.schema.json#/$defs/ActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/groups/{id}/config-versions/{version}:publish-shadow": {
-      "post": {
-        "operationId": "postGroupsByIdConfigVersionsByVersionPublishShadow",
-        "tags": [
-          "路径与配置发布"
-        ],
-        "summary": "发布 Shadow",
+        "summary": "激活（新建版本可直接激活，无需 Shadow/Canary 与双人审批）",
         "x-roles": [
           "platform_admin"
         ],
@@ -6914,7 +5965,7 @@
         "tags": [
           "模型与能力"
         ],
-        "summary": "模型目录与发布状态",
+        "summary": "模型目录、发布状态、公开 token limits 与 provider capabilities",
         "x-roles": [
           "platform_admin"
         ],
@@ -6932,7 +5983,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
+                  "$ref": "#/components/schemas/ModelListEnvelope"
                 }
               }
             }
@@ -6961,7 +6012,7 @@
         "tags": [
           "模型与能力"
         ],
-        "summary": "详情、能力版本和定价引用",
+        "summary": "详情、公开能力、能力版本和定价引用",
         "x-roles": [
           "platform_admin"
         ],
@@ -6987,7 +6038,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                  "$ref": "#/components/schemas/ModelEnvelope"
                 }
               }
             }
@@ -7229,7 +6280,7 @@
         "tags": [
           "模型与能力"
         ],
-        "summary": "自动发现 Job",
+        "summary": "无凭据同步 Anthropic 当前及 still-available legacy 模型 Job；公开源异常时使用内置快照。管理页面用固定机器原因直接提交，无人工确认步骤",
         "x-roles": [
           "platform_admin"
         ],
@@ -8497,7 +7548,7 @@
       "get": {
         "operationId": "getPlanMappingVersions",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "PLAN Mapping typed candidate",
         "x-roles": [
@@ -8542,7 +7593,7 @@
       "post": {
         "operationId": "postPlanMappingVersions",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "PLAN Mapping typed candidate",
         "x-roles": [
@@ -8599,7 +7650,7 @@
       "get": {
         "operationId": "getPlanMappingVersionsById",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "版本、来源、mapping、diff 与影响摘要",
         "x-roles": [
@@ -8654,7 +7705,7 @@
       "post": {
         "operationId": "postPlanMappingVersionsByIdActivate",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "激活并创建重算 Job，返回标准 `202 JobEnvelope`",
         "x-roles": [
@@ -8725,7 +7776,7 @@
       "post": {
         "operationId": "postPlanMappingVersionsByIdRecompute",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "显式重算已保存 raw，202",
         "x-roles": [
@@ -8796,7 +7847,7 @@
       "post": {
         "operationId": "postPlanMappingVersionsByIdRollback",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "切回历史版本并创建重算 Job，返回标准 `202 JobEnvelope`",
         "x-roles": [
@@ -8867,7 +7918,7 @@
       "post": {
         "operationId": "postPlanMappingVersionsByIdValidate",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "对已保存 raw corpus 验证",
         "x-roles": [
@@ -8985,7 +8036,8 @@
         ],
         "summary": "查询或创建 Key",
         "x-roles": [
-          "platform_admin"
+          "platform_admin",
+          "key_owner"
         ],
         "parameters": [
           {
@@ -9617,7 +8669,7 @@
       "get": {
         "operationId": "getPriceVersions",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "模型价格版本",
         "x-roles": [
@@ -9662,7 +8714,7 @@
       "post": {
         "operationId": "postPriceVersions",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "模型价格版本",
         "x-roles": [
@@ -10512,7 +9564,7 @@
       "get": {
         "operationId": "getRulesets",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "规则候选",
         "x-roles": [
@@ -10557,7 +9609,7 @@
       "post": {
         "operationId": "postRulesets",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "规则候选",
         "x-roles": [
@@ -10614,7 +9666,7 @@
       "post": {
         "operationId": "postRulesetsByIdActivate",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "激活",
         "x-roles": [
@@ -10685,7 +9737,7 @@
       "post": {
         "operationId": "postRulesetsByIdSimulate",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "输入样本模拟",
         "x-roles": [
@@ -10753,7 +9805,7 @@
       "post": {
         "operationId": "postRulesetsByIdValidate",
         "tags": [
-          "RuleSet、Enforcement、Catalog 与 Price"
+          "RuleSet 与 Price"
         ],
         "summary": "静态验证",
         "x-roles": [
@@ -10972,7 +10024,7 @@
         "tags": [
           "Archetype 与 Transport Bundle"
         ],
-        "summary": "双人审批后激活",
+        "summary": "`verified` 且证据门禁通过、runtime 可加载即可激活（无双人审批与 canary 段）",
         "x-roles": [
           "platform_admin"
         ],
@@ -11031,77 +10083,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/TransportBundleActivateCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/transport-bundles/{id}:promote-canary": {
-      "post": {
-        "operationId": "postTransportBundlesByIdPromoteCanary",
-        "tags": [
-          "Archetype 与 Transport Bundle"
-        ],
-        "summary": "绑定至少 20 次 fresh、零硬失配的机器证据后进入 Canary",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReasonActionCommand"
               }
             }
           }
@@ -11454,7 +10435,7 @@
         "tags": [
           "路径"
         ],
-        "summary": "查看或修改显示名、邮箱",
+        "summary": "查看或修改显示名、邮箱、角色、Key 上限和余额",
         "x-roles": [
           "platform_admin"
         ],
@@ -11507,7 +10488,7 @@
         "tags": [
           "路径"
         ],
-        "summary": "查看或修改显示名、邮箱",
+        "summary": "查看或修改显示名、邮箱、角色、Key 上限和余额",
         "x-roles": [
           "platform_admin"
         ],
@@ -12043,6 +11024,73 @@
         "properties": {},
         "additionalProperties": false
       },
+      "ModelResource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "upstream_model_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "released_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "upstream_model_id",
+          "display_name"
+        ]
+      },
+      "ModelEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ModelResource"
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "ModelListEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelResource"
+            }
+          },
+          "page": {
+            "$ref": "../schemas/common.schema.json#/$defs/Page"
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "page",
+          "meta"
+        ]
+      },
       "LoginCommand": {
         "type": "object",
         "properties": {
@@ -12132,8 +11180,7 @@
         "additionalProperties": false,
         "required": [
           "purpose",
-          "current_password",
-          "totp_code"
+          "current_password"
         ]
       },
       "UserCreateCommand": {
@@ -12153,13 +11200,33 @@
           },
           "role": {
             "type": "string",
-            "const": "key_owner"
+            "enum": [
+              "platform_admin",
+              "key_owner"
+            ]
           },
           "temporary_password": {
             "type": "string",
             "minLength": 14,
             "maxLength": 128,
             "writeOnly": true
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "rpm": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "balance_amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"
           }
         },
         "additionalProperties": false,
@@ -12168,16 +11235,15 @@
           "display_name",
           "email",
           "role",
-          "temporary_password"
+          "temporary_password",
+          "max_concurrency",
+          "rpm"
         ]
       },
       "PlatformKeyCreateCommand": {
         "type": "object",
         "properties": {
           "name": {
-            "type": "string"
-          },
-          "owner_user_id": {
             "type": "string"
           },
           "group_id": {
@@ -12202,35 +11268,6 @@
             "minItems": 1,
             "uniqueItems": true
           },
-          "body_limit_bytes": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "messages_rate": {
-            "$ref": "#/components/schemas/RateLimit"
-          },
-          "models_rate": {
-            "$ref": "#/components/schemas/RateLimit"
-          },
-          "concurrency": {
-            "type": "object",
-            "properties": {
-              "limit": {
-                "type": "integer",
-                "minimum": 1,
-                "default": 5
-              },
-              "retry_after_ms": {
-                "type": "integer",
-                "minimum": 1
-              }
-            },
-            "additionalProperties": false,
-            "required": [
-              "limit",
-              "retry_after_ms"
-            ]
-          },
           "requested_content_audit": {
             "type": "string",
             "enum": [
@@ -12252,18 +11289,20 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "spend_limit_amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"
           }
         },
         "additionalProperties": false,
         "required": [
           "name",
-          "owner_user_id",
           "group_id",
           "endpoint_permissions",
-          "body_limit_bytes",
-          "messages_rate",
-          "models_rate",
-          "concurrency",
           "requested_content_audit"
         ]
       },
@@ -12275,7 +11314,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -12294,7 +11332,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -12486,6 +11523,69 @@
               "policy",
               "retention_days"
             ]
+          },
+          "governance": {
+            "type": "object",
+            "properties": {
+              "system_prompt_mode": {
+                "type": "string",
+                "enum": [
+                  "preserve",
+                  "strip_client",
+                  "replace",
+                  "strip_all"
+                ]
+              },
+              "system_prompt_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "system_prompt_content": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 65536
+              },
+              "console_business_fallback_enabled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "required": [
+              "system_prompt_mode",
+              "console_business_fallback_enabled"
+            ]
+          },
+          "model_scope": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "all_published",
+                  "allowlist"
+                ]
+              },
+              "model_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "maxItems": 100,
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": true,
+            "required": [
+              "scope"
+            ]
           }
         },
         "additionalProperties": true,
@@ -12509,19 +11609,11 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
             "type": "integer",
             "minimum": 1
-          },
-          "approval_case_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
           }
         },
         "additionalProperties": false,
@@ -12657,7 +11749,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -12684,7 +11775,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -12721,7 +11811,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -12790,6 +11879,14 @@
               "null"
             ]
           },
+          "exclusive_maximum_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1024
+          },
           "required_children": {
             "type": "array",
             "uniqueItems": true,
@@ -12845,7 +11942,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -12883,7 +11979,6 @@
         "properties": {
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -12967,7 +12062,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -12976,119 +12070,6 @@
           "effective_from",
           "currency",
           "entries",
-          "reason"
-        ]
-      },
-      "TypedArtifactCreateCommand": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "schema_version": {
-            "type": "integer",
-            "const": 1
-          },
-          "payload": {
-            "type": "object",
-            "additionalProperties": true
-          },
-          "source_refs": {
-            "type": "array",
-            "maxItems": 128,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 2048
-            }
-          },
-          "reason": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2048
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "schema_version",
-          "payload",
-          "reason"
-        ]
-      },
-      "BackgroundCatalogSample": {
-        "type": "object",
-        "properties": {
-          "headers": {
-            "type": "object",
-            "maxProperties": 32,
-            "propertyNames": {
-              "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$"
-            },
-            "additionalProperties": {
-              "type": "string",
-              "maxLength": 1024
-            }
-          },
-          "body": {
-            "type": "object",
-            "additionalProperties": true
-          },
-          "client_class": {
-            "type": "string",
-            "enum": [
-              "claude_code_cli",
-              "non_claude_code_cli"
-            ],
-            "x-enum-registry": "client_class"
-          },
-          "expected_entry_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "body",
-          "client_class",
-          "expected_entry_id"
-        ]
-      },
-      "PolicyArtifactActionCommand": {
-        "type": "object",
-        "properties": {
-          "reason": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2048
-          },
-          "expected_revision": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 1
-          },
-          "approval_case_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "samples": {
-            "type": "array",
-            "maxItems": 10000,
-            "items": {
-              "$ref": "#/components/schemas/BackgroundCatalogSample"
-            }
-          }
-        },
-        "additionalProperties": false,
-        "required": [
           "reason"
         ]
       },
@@ -13287,7 +12268,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -13306,7 +12286,6 @@
         "properties": {
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -13337,24 +12316,6 @@
             ],
             "x-enum-registry": "client_class"
           },
-          "traffic_class": {
-            "type": "object",
-            "required": [
-              "kind"
-            ],
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "normal",
-                  "explicit_probe",
-                  "suspected_probe",
-                  "internal_upstream_probe"
-                ]
-              }
-            },
-            "additionalProperties": true
-          },
           "protocol_headers": {
             "type": "object",
             "propertyNames": {
@@ -13374,18 +12335,13 @@
         "additionalProperties": false,
         "required": [
           "request",
-          "client_class",
-          "traffic_class"
+          "client_class"
         ]
       },
       "EnvironmentArchetypeCapacity": {
         "type": "object",
         "properties": {
           "max_credentials": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "max_connections": {
             "type": "integer",
             "minimum": 1
           },
@@ -13402,7 +12358,6 @@
         "additionalProperties": false,
         "required": [
           "max_credentials",
-          "max_connections",
           "allocation_weight",
           "allocation_cohort"
         ]
@@ -13522,7 +12477,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -13561,7 +12515,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -13576,17 +12529,8 @@
       "TransportBundleActivateCommand": {
         "type": "object",
         "properties": {
-          "approval_case_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "step_up_grant_id": {
-            "type": "string",
-            "format": "uuid"
-          },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -13599,8 +12543,6 @@
         },
         "additionalProperties": false,
         "required": [
-          "approval_case_id",
-          "step_up_grant_id",
           "reason"
         ]
       },
@@ -13637,8 +12579,6 @@
               "key_provider_change",
               "legal_hold",
               "manual_delete",
-              "background_catalog_activate",
-              "background_catalog_risk_acceptance",
               "enforcement_activate"
             ],
             "x-enum-registry": "approval_kind"
@@ -13648,8 +12588,7 @@
             "additionalProperties": true
           },
           "reason": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           },
           "action_snapshot_digest": {
             "type": "string",
@@ -13674,7 +12613,6 @@
         "properties": {
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "step_up_grant_id": {
@@ -13759,7 +12697,6 @@
         "properties": {
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -13781,7 +12718,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "filters": {
@@ -13813,7 +12749,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -13891,7 +12826,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "approval_case_id": {
@@ -13941,7 +12875,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -13965,7 +12898,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "object_ids": {
@@ -13999,7 +12931,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_key_version": {
@@ -14035,7 +12966,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "key_version": {
@@ -14083,7 +13013,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -14098,7 +13027,6 @@
         "properties": {
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "release_manifest": {
@@ -14131,7 +13059,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           }
         },
@@ -14152,7 +13079,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "starts_at": {
@@ -14260,7 +13186,6 @@
         "properties": {
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -14279,7 +13204,6 @@
         "properties": {
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -14301,7 +13225,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_revision": {
@@ -14353,7 +13276,6 @@
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 2048
           },
           "expected_profile_epoch": {
@@ -14451,120 +13373,123 @@
           "to"
         ]
       },
+      "UsageExportResource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "dataset": {
+            "type": "string",
+            "const": "usage_requests_v1"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "jsonl",
+              "csv"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "own",
+              "all"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "expired"
+            ]
+          },
+          "row_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "content_length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 33554432
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "download_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "downloaded_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "download_available": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "dataset",
+          "format",
+          "scope",
+          "state",
+          "revision"
+        ]
+      },
       "UsageExportEnvelope": {
         "type": "object",
         "properties": {
           "data": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "format": "uuid"
-              },
-              "job_id": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "format": "uuid"
-              },
-              "dataset": {
-                "type": "string",
-                "const": "usage_requests_v1"
-              },
-              "format": {
-                "type": "string",
-                "enum": [
-                  "jsonl",
-                  "csv"
-                ]
-              },
-              "scope": {
-                "type": "string",
-                "enum": [
-                  "own",
-                  "all"
-                ]
-              },
-              "state": {
-                "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "succeeded",
-                  "failed",
-                  "expired"
-                ]
-              },
-              "row_count": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "minimum": 0,
-                "maximum": 10000
-              },
-              "content_length": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "minimum": 0,
-                "maximum": 33554432
-              },
-              "created_at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "completed_at": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "format": "date-time"
-              },
-              "expires_at": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "format": "date-time"
-              },
-              "download_count": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 1
-              },
-              "downloaded_at": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "format": "date-time"
-              },
-              "error_code": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "download_available": {
-                "type": "boolean"
-              },
-              "revision": {
-                "type": "integer",
-                "minimum": 1
-              }
-            },
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "dataset",
-              "format",
-              "scope",
-              "state",
-              "revision"
-            ]
+            "$ref": "#/components/schemas/UsageExportResource"
           },
           "meta": {
             "$ref": "../schemas/common.schema.json#/$defs/Meta"
@@ -14573,6 +13498,29 @@
         "additionalProperties": false,
         "required": [
           "data",
+          "meta"
+        ]
+      },
+      "UsageExportListEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageExportResource"
+            }
+          },
+          "page": {
+            "$ref": "../schemas/common.schema.json#/$defs/Page"
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "page",
           "meta"
         ]
       },
@@ -14595,6 +13543,41 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "platform_admin",
+              "key_owner"
+            ]
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "rpm": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "balance_amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"
+          },
+          "group_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "spend_limit_amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"
           },
           "priority": {
             "type": "integer"
@@ -14838,5 +13821,5 @@
     }
   },
   "x-generated-from": "planning/api-contract.md",
-  "x-route-count": 196
+  "x-route-count": 181
 }

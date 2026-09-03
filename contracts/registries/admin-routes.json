@@ -96,7 +96,7 @@
       "method": "get",
       "path": "/admin/v1/artifacts/{id}",
       "description": "统一只读 Artifact 元数据、hash 和 provenance",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
@@ -175,48 +175,6 @@
       "description": "获取短时高风险授权",
       "tag": "路径",
       "explicit_role": "本人"
-    },
-    {
-      "method": "get",
-      "path": "/admin/v1/background-catalog-versions",
-      "description": "测活与背景流量特征版本",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/background-catalog-versions",
-      "description": "测活与背景流量特征版本",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/background-catalog-versions/{id}:activate",
-      "description": "按证据门槛及双人审批激活",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/background-catalog-versions/{id}:publish-shadow",
-      "description": "开始不少于 7 天的 Shadow 窗口",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/background-catalog-versions/{id}:rollback",
-      "description": "回滚历史不可变 Catalog",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/background-catalog-versions/{id}:validate",
-      "description": "编译强结构模板并由平台运行确定性样本",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
     },
     {
       "method": "get",
@@ -542,48 +500,6 @@
     },
     {
       "method": "get",
-      "path": "/admin/v1/enforcement-versions",
-      "description": "安全强制版本",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/enforcement-versions",
-      "description": "安全强制版本",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/enforcement-versions/{id}:activate",
-      "description": "双人审批后激活并原子生成 Group Config snapshot",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/enforcement-versions/{id}:publish-shadow",
-      "description": "发布 Shadow 候选并冻结证据窗口",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/enforcement-versions/{id}:rollback",
-      "description": "双人审批后回滚历史不可变版本",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/enforcement-versions/{id}:validate",
-      "description": "typed 编译与不可放宽校验",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
-      "explicit_role": ""
-    },
-    {
-      "method": "get",
       "path": "/admin/v1/environment-archetypes",
       "description": "类别模板",
       "tag": "Archetype 与 Transport Bundle",
@@ -612,13 +528,6 @@
     },
     {
       "method": "post",
-      "path": "/admin/v1/environment-archetypes/{id}:promote-canary",
-      "description": "进入 Canary",
-      "tag": "Archetype 与 Transport Bundle",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
       "path": "/admin/v1/environment-archetypes/{id}:retire",
       "description": "退休",
       "tag": "Archetype 与 Transport Bundle",
@@ -629,6 +538,13 @@
       "path": "/admin/v1/environment-archetypes/{id}:verify",
       "description": "运行自动证据门禁",
       "tag": "Archetype 与 Transport Bundle",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/exports",
+      "description": "本人导出任务列表",
+      "tag": "查询",
       "explicit_role": ""
     },
     {
@@ -711,21 +627,7 @@
     {
       "method": "post",
       "path": "/admin/v1/groups/{id}/config-versions/{version}:activate",
-      "description": "激活",
-      "tag": "路径与配置发布",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/groups/{id}/config-versions/{version}:promote-canary",
-      "description": "推进 Canary",
-      "tag": "路径与配置发布",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/groups/{id}/config-versions/{version}:publish-shadow",
-      "description": "发布 Shadow",
+      "description": "激活（新建版本可直接激活，无需 Shadow/Canary 与双人审批）",
       "tag": "路径与配置发布",
       "explicit_role": ""
     },
@@ -781,14 +683,14 @@
     {
       "method": "get",
       "path": "/admin/v1/models",
-      "description": "模型目录与发布状态",
+      "description": "模型目录、发布状态、公开 token limits 与 provider capabilities",
       "tag": "模型与能力",
       "explicit_role": ""
     },
     {
       "method": "get",
       "path": "/admin/v1/models/{id}",
-      "description": "详情、能力版本和定价引用",
+      "description": "详情、公开能力、能力版本和定价引用",
       "tag": "模型与能力",
       "explicit_role": ""
     },
@@ -816,7 +718,7 @@
     {
       "method": "post",
       "path": "/admin/v1/models:refresh",
-      "description": "自动发现 Job",
+      "description": "无凭据同步 Anthropic 当前及 still-available legacy 模型 Job；公开源异常时使用内置快照。管理页面用固定机器原因直接提交，无人工确认步骤",
       "tag": "模型与能力",
       "explicit_role": ""
     },
@@ -978,49 +880,49 @@
       "method": "get",
       "path": "/admin/v1/plan-mapping-versions",
       "description": "PLAN Mapping typed candidate",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/plan-mapping-versions",
       "description": "PLAN Mapping typed candidate",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "get",
       "path": "/admin/v1/plan-mapping-versions/{id}",
       "description": "版本、来源、mapping、diff 与影响摘要",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/plan-mapping-versions/{id}:activate",
       "description": "激活并创建重算 Job，返回标准 `202 JobEnvelope`",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/plan-mapping-versions/{id}:recompute",
       "description": "显式重算已保存 raw，202",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/plan-mapping-versions/{id}:rollback",
       "description": "切回历史版本并创建重算 Job，返回标准 `202 JobEnvelope`",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/plan-mapping-versions/{id}:validate",
       "description": "对已保存 raw corpus 验证",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
@@ -1104,14 +1006,14 @@
       "method": "get",
       "path": "/admin/v1/price-versions",
       "description": "模型价格版本",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/price-versions",
       "description": "模型价格版本",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
@@ -1209,35 +1111,35 @@
       "method": "get",
       "path": "/admin/v1/rulesets",
       "description": "规则候选",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/rulesets",
       "description": "规则候选",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/rulesets/{id}:activate",
       "description": "激活",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/rulesets/{id}:simulate",
       "description": "输入样本模拟",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
       "method": "post",
       "path": "/admin/v1/rulesets/{id}:validate",
       "description": "静态验证",
-      "tag": "RuleSet、Enforcement、Catalog 与 Price",
+      "tag": "RuleSet 与 Price",
       "explicit_role": ""
     },
     {
@@ -1264,14 +1166,7 @@
     {
       "method": "post",
       "path": "/admin/v1/transport-bundles/{id}:activate",
-      "description": "双人审批后激活",
-      "tag": "Archetype 与 Transport Bundle",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/transport-bundles/{id}:promote-canary",
-      "description": "绑定至少 20 次 fresh、零硬失配的机器证据后进入 Canary",
+      "description": "`verified` 且证据门禁通过、runtime 可加载即可激活（无双人审批与 canary 段）",
       "tag": "Archetype 与 Transport Bundle",
       "explicit_role": ""
     },
@@ -1320,14 +1215,14 @@
     {
       "method": "get",
       "path": "/admin/v1/users/{id}",
-      "description": "查看或修改显示名、邮箱",
+      "description": "查看或修改显示名、邮箱、角色、Key 上限和余额",
       "tag": "路径",
       "explicit_role": "Admin"
     },
     {
       "method": "patch",
       "path": "/admin/v1/users/{id}",
-      "description": "查看或修改显示名、邮箱",
+      "description": "查看或修改显示名、邮箱、角色、Key 上限和余额",
       "tag": "路径",
       "explicit_role": "Admin"
     },

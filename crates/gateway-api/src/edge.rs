@@ -17,7 +17,7 @@ use axum::{
 use bytes::Bytes;
 use futures_core::Stream;
 use gateway_domain::{
-    AgentId, ClientClass, Clock, Digest, PlatformKeyId, RequestId, SecretValue, SessionId, SystemClock, TrafficClass,
+    AgentId, ClientClass, Clock, Digest, PlatformKeyId, RequestId, SecretValue, SessionId, SystemClock,
 };
 use gateway_policy::{PolicyContext, PolicyError};
 use ipnet::IpNet;
@@ -27,7 +27,7 @@ use subtle::ConstantTimeEq as _;
 
 use crate::{
     AccessGrant, AccessResolver, DataPlaneState, DispatchError, DispatchRequest, EndpointPermission, ModelCatalog,
-    ProbeAction, RateLimit, data::ModelRecord, probes::probe_router,
+    RateLimit, data::ModelRecord, probes::probe_router,
 };
 
 const DEFAULT_PEER: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -226,10 +226,6 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
     if !grant.accepted_client_classes.contains(&client_class) {
         return GatewayError::permission().response(&request_id);
     }
-    let traffic_class = classify_traffic(&classification_headers, &classification_tree, &grant, client_class);
-    if let Some(error) = probe_gate(&state, &grant, &traffic_class) {
-        return error.response(&request_id);
-    }
     let Some(model) = classification_tree.get("model").and_then(Value::as_str) else {
         return GatewayError::invalid_body().response(&request_id);
     };
@@ -238,7 +234,6 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
     }
     let context = PolicyContext {
         client_class,
-        traffic_class,
         protocol_headers,
         affinity_credential: None,
     };
@@ -247,6 +242,9 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
         Ok(generic) => Arc::new(generic),
         Err(error) => return map_policy_error(error).response(&request_id),
     };
+    if let Err(error) = authorize_spend(&state, &grant).await {
+        return error.response(&request_id);
+    }
     let rate_key = format!("messages:{}", grant.platform_key_id).into_boxed_str();
     if let RateDecision::Limited { retry_after } = state.business_rates.allow(rate_key, grant.messages_rate) {
         return GatewayError::rate_limited(retry_after).response(&request_id);
@@ -265,7 +263,6 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
         base_session_id: classified_client.base_session,
         agent_id: classified_client.agent,
         client_class,
-        traffic_class: context.traffic_class,
         identity_conflict: classified_client.identity_conflict,
         accepted_at,
         pre_upstream_deadline: accepted_at.saturating_add(Duration::from_secs(30)),
@@ -296,6 +293,18 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
             GatewayError::unavailable_without_retry().response(&request_id)
         }
         Err(DispatchError::DeadlineExceeded) => GatewayError::timeout().response(&request_id),
+    }
+}
+
+async fn authorize_spend(state: &DataPlaneState, grant: &AccessGrant) -> Result<(), GatewayError> {
+    match state
+        .spend_authorizer
+        .authorize(&grant.owner_user_id, &grant.platform_key_id)
+        .await
+    {
+        crate::SpendDecision::Allowed => Ok(()),
+        crate::SpendDecision::Limited => Err(GatewayError::rate_limited(60)),
+        crate::SpendDecision::Unavailable => Err(GatewayError::unavailable(1)),
     }
 }
 
@@ -612,111 +621,6 @@ fn unreachable_agent(value: &str) -> AgentId {
 
 fn unreachable_request(value: &str) -> RequestId {
     RequestId::new(value).unwrap_or_else(|_| std::process::abort())
-}
-
-fn classify_traffic(headers: &HeaderMap, tree: &Value, grant: &AccessGrant, client_class: ClientClass) -> TrafficClass {
-    if let Some(template_id) = grant.background_catalog.classify(headers, tree, client_class) {
-        return TrafficClass::ExplicitProbe {
-            template_id: Box::from(template_id),
-        };
-    }
-    if grant.allow_explicit_probe_marker && header_string(headers, "x-gateway-probe").as_deref() == Some("explicit") {
-        return TrafficClass::ExplicitProbe {
-            template_id: Box::from("authorized-marker-v1"),
-        };
-    }
-    let mut score = 0_u8;
-    let mut signals = Vec::new();
-    if tree
-        .get("max_tokens")
-        .and_then(Value::as_u64)
-        .is_some_and(|value| value <= 8)
-    {
-        score += 1;
-        signals.push(Box::<str>::from("low_max_tokens"));
-    }
-    if first_user_text(tree).is_some_and(|text| {
-        let normalized = text.trim().to_ascii_lowercase();
-        normalized.len() <= 16 && matches!(normalized.as_str(), "ping" | "hi" | "hello" | "health" | "test")
-    }) {
-        score += 1;
-        signals.push(Box::<str>::from("short_probe_like_text"));
-    }
-    if score == 0 {
-        TrafficClass::Normal
-    } else {
-        TrafficClass::SuspectedProbe { score, signals }
-    }
-}
-
-fn first_user_text(tree: &Value) -> Option<&str> {
-    let messages = tree.get("messages")?.as_array()?;
-    for message in messages {
-        if message.get("role").and_then(Value::as_str) != Some("user") {
-            continue;
-        }
-        let content = message.get("content")?;
-        if let Some(text) = content.as_str() {
-            return Some(text);
-        }
-        if let Some(blocks) = content.as_array() {
-            for block in blocks {
-                if block.get("type").and_then(Value::as_str) == Some("text") {
-                    return block.get("text").and_then(Value::as_str);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn probe_gate(state: &DataPlaneState, grant: &AccessGrant, traffic: &TrafficClass) -> Option<GatewayError> {
-    let TrafficClass::ExplicitProbe { template_id } = traffic else {
-        return None;
-    };
-    let action = grant.background_catalog.action(template_id);
-    let action = if action == ProbeAction::Observe {
-        // Preserve the old Group-level switch only for the explicitly
-        // authorized legacy marker. Published catalog entries own their action.
-        if template_id.as_ref() == "authorized-marker-v1" {
-            grant.probe_action
-        } else {
-            action
-        }
-    } else {
-        action
-    };
-    match action {
-        ProbeAction::Observe => None,
-        ProbeAction::Reject => Some(GatewayError::permission()),
-        ProbeAction::Throttle => {
-            let key_bucket = format!("probe:key:{}:{template_id}", grant.platform_key_id).into_boxed_str();
-            let group_bucket = format!("probe:group:{}", grant.group_id).into_boxed_str();
-            let first = state.business_rates.allow(
-                key_bucket,
-                RateLimit {
-                    requests_per_minute: 2,
-                    burst: 2,
-                },
-            );
-            let second = state.business_rates.allow(
-                group_bucket,
-                RateLimit {
-                    requests_per_minute: 30,
-                    burst: 10,
-                },
-            );
-            match (first, second) {
-                (RateDecision::Allowed, RateDecision::Allowed) => None,
-                (RateDecision::Limited { retry_after: left }, RateDecision::Limited { retry_after: right }) => {
-                    Some(GatewayError::rate_limited(left.max(right)))
-                }
-                (RateDecision::Limited { retry_after }, _) | (_, RateDecision::Limited { retry_after }) => {
-                    Some(GatewayError::rate_limited(retry_after))
-                }
-            }
-        }
-    }
 }
 
 fn protocol_headers(headers: &HeaderMap) -> std::collections::BTreeMap<Box<str>, Value> {
@@ -1194,9 +1098,9 @@ mod tests {
 
     use super::{BusinessRateLimiter, KeyConcurrencyLimiter, TrustedProxyConfig, classify_client, data_plane_router};
     use crate::{
-        AccessGrant, BackgroundCatalog, DataPlaneState, DispatchError, DispatchRequest, EndpointPermission,
-        InMemoryAccessResolver, MessageDispatcher, ModelRecord, ProbeAction, ProbeRateLimit, ProbeRateLimiter,
-        ProbeState, RateLimit, StaticModelCatalog, UpstreamResponse,
+        AccessGrant, DataPlaneState, DispatchError, DispatchRequest, EndpointPermission, InMemoryAccessResolver,
+        MessageDispatcher, ModelRecord, ProbeRateLimit, ProbeRateLimiter, ProbeState, RateLimit, StaticModelCatalog,
+        UpstreamResponse,
     };
 
     #[derive(Default)]
@@ -1242,7 +1146,6 @@ mod tests {
             enforcement: v(),
             ruleset: None,
             capability: v(),
-            background_catalog: v(),
             client_profile_catalog: v(),
             price: v(),
             serializer: v(),
@@ -1250,14 +1153,6 @@ mod tests {
     }
 
     fn test_app(dispatcher: Arc<CapturingDispatcher>) -> axum::Router {
-        test_app_with_background(dispatcher, Arc::new(BackgroundCatalog::default()), ProbeAction::Observe)
-    }
-
-    fn test_app_with_background(
-        dispatcher: Arc<CapturingDispatcher>,
-        background_catalog: Arc<BackgroundCatalog>,
-        probe_action: ProbeAction,
-    ) -> axum::Router {
         let policy = Arc::new(
             RequestPolicy::base_for_models(["model-a", "model-b"], snapshots())
                 .unwrap_or_else(|error| panic!("test policy must compile: {error}")),
@@ -1278,9 +1173,6 @@ mod tests {
             concurrency_limit: 5,
             ip_allowlist: Vec::new(),
             accepted_client_classes: BTreeSet::from([ClientClass::ClaudeCodeCli, ClientClass::NonClaudeCodeCli]),
-            background_catalog,
-            probe_action,
-            allow_explicit_probe_marker: false,
             content_audit: crate::ContentAuditMode::MetadataOnly,
             content_audit_expires_at_unix_seconds: None,
             policy,
@@ -1328,6 +1220,7 @@ mod tests {
             observability: gateway_services::observability::DataPlaneObservability::default(),
             business_rates: BusinessRateLimiter::new(clock),
             concurrency: KeyConcurrencyLimiter::default(),
+            spend_authorizer: Arc::new(crate::AllowAllSpendAuthorizer),
             trusted_proxies: TrustedProxyConfig::default(),
             platform_body_limit_bytes: 64 * 1024 * 1024,
         })
@@ -1343,47 +1236,6 @@ mod tests {
                 br#"{"model":"model-a","max_tokens":32,"messages":[{"role":"user","content":"hello"}]}"#.as_slice(),
             ))
             .unwrap_or_else(|error| panic!("request: {error}"))
-    }
-
-    #[tokio::test]
-    async fn published_background_action_applies_only_to_explicit_matches_and_suspected_stays_observe()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let catalog = BackgroundCatalog::compile(crate::BackgroundCatalogDocument {
-            entries: vec![crate::BackgroundCatalogEntry {
-                id: "health-v1".into(),
-                action: ProbeAction::Reject,
-                client_classes: BTreeSet::new(),
-                match_all: vec![crate::BackgroundSignal::BodyEquals {
-                    pointer: "/max_tokens".into(),
-                    value: serde_json::json!(32),
-                }],
-            }],
-        })?;
-        let explicit = test_app_with_background(
-            Arc::new(CapturingDispatcher::default()),
-            Arc::new(catalog),
-            ProbeAction::Observe,
-        )
-        .oneshot(messages_request(Some("platform-secret")))
-        .await?;
-        assert_eq!(explicit.status(), StatusCode::FORBIDDEN);
-
-        let suspected = test_app_with_background(
-            Arc::new(CapturingDispatcher::default()),
-            Arc::new(BackgroundCatalog::default()),
-            ProbeAction::Reject,
-        )
-        .oneshot(
-            Request::post("/v1/messages")
-                .header("content-type", "application/json")
-                .header("x-api-key", "platform-secret")
-                .body(Body::from(
-                    br#"{"model":"model-a","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}"#.as_slice(),
-                ))?,
-        )
-        .await?;
-        assert_eq!(suspected.status(), StatusCode::OK);
-        Ok(())
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "postgres_minimum_major": 16,
   "minimum_compatible_version": 20260824000100,
-  "current_version": 20260824003800,
+  "current_version": 20260901000100,
   "migrations": [
     {
       "version": 20260824000100,
@@ -267,6 +267,48 @@
       "version": 20260824003800,
       "name": "20260824003800_r7_cancel_estimate_hardening.sql",
       "sha256": "1cb6a0e6aba4eb657b249099a716ad1e9d66ad3b026c06eb3a8e29ce1dc626a9",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824003900,
+      "name": "20260824003900_user_key_limits.sql",
+      "sha256": "81a8589fd9d5f72dc4419f2e3b888925ee0b03c079bf1be1b5576811a42daa65",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824004000,
+      "name": "20260824004000_remove_archetype_max_connections.sql",
+      "sha256": "a4d5a4aee9f8412e19712c90654b9891183a8c3341f2c24ca35fe8b32249bbf0",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824004100,
+      "name": "20260824004100_public_model_directory.sql",
+      "sha256": "a6615121f0aa27769b295af5d467f75e3bdadc1d117e12eb90ede1927721d579",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824004200,
+      "name": "20260824004200_model_provider_capabilities.sql",
+      "sha256": "4308f001609c2144b1a17a00dc81dd8bbbb313ebe6c872194d5987d1479aa577",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260824004300,
+      "name": "20260824004300_model_capability_origin.sql",
+      "sha256": "c98e8784c591cea8ed0c179320f8775fe8eb795facebbbcf9607689d0cc05fd8",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260901000100,
+      "name": "20260901000100_retire_enforcement_and_background.sql",
+      "sha256": "2affb81393c6c4d61ca7aee940039b1571c63c29f86386884166750babe9f458",
       "direction": "forward_only",
       "transactional": true
     }

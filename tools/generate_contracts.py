@@ -83,8 +83,7 @@ ENUMS: dict[str, list[str]] = {
     ],
     "approval_kind": [
         "key_full_audit", "group_audit_policy", "content_read", "content_export", "device_rebuild",
-        "key_provider_change", "legal_hold", "manual_delete", "background_catalog_activate",
-        "background_catalog_risk_acceptance", "enforcement_activate",
+        "key_provider_change", "legal_hold", "manual_delete", "enforcement_activate",
     ],
     "approval_state": ["pending", "approved", "rejected", "expired", "revoked"],
     "content_audit_requested_mode": ["metadata_only", "full_encrypted"],
@@ -224,7 +223,7 @@ def generate_common_schema() -> None:
             "page": {"$ref": "#/$defs/Page"}, "meta": {"$ref": "#/$defs/Meta"},
         }, ["data", "page", "meta"]),
         "ActionCommand": object_schema({
-            "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "reason": {"type": "string", "maxLength": 2048},
             "expected_revision": {"type": "integer", "minimum": 1},
             "approval_case_id": {"type": ["string", "null"]},
             "payload": {"type": "object", "additionalProperties": True},
@@ -485,7 +484,7 @@ def generate_audit_schema() -> None:
         "id": {"type": "string"}, "kind": {"$ref": "#/$defs/ApprovalKind"},
         "scope": {"type": "object", "additionalProperties": True},
         "requested_by": {"type": "string"}, "request_step_up_grant_id": {"type": "string"},
-        "reason": {"type": "string", "minLength": 1}, "action_snapshot_digest": {"type": "string"},
+        "reason": {"type": "string"}, "action_snapshot_digest": {"type": "string"},
         "requested_at": {"type": "string", "format": "date-time"},
         "expires_at": {"type": "string", "format": "date-time"},
         "state": {"$ref": "#/$defs/ApprovalState"}, "decided_by": {"type": ["string", "null"]},
@@ -1039,7 +1038,7 @@ def roles_for(path: str, method: str, explicit: str) -> list[str]:
     if path.startswith("/admin/v1/auth/"):
         return ["platform_admin", "key_owner"]
     if path == "/admin/v1/platform-keys" and method == "post":
-        return ["platform_admin"]
+        return ["platform_admin", "key_owner"]
     if any(path.startswith(prefix) for prefix in [
         "/admin/v1/platform-keys", "/admin/v1/requests", "/admin/v1/usage/", "/admin/v1/exports",
         "/admin/v1/notifications", "/admin/v1/dashboard/summary", "/admin/v1/audit-events",
@@ -1099,13 +1098,6 @@ def request_ref(path: str, method: str) -> str:
         return "#/components/schemas/ModelRefreshCommand"
     if path == "/admin/v1/price-versions" and method == "post":
         return "#/components/schemas/PriceVersionCreateCommand"
-    if path in {"/admin/v1/background-catalog-versions", "/admin/v1/enforcement-versions"} and method == "post":
-        return "#/components/schemas/TypedArtifactCreateCommand"
-    if (
-        path.startswith("/admin/v1/background-catalog-versions/{id}:")
-        or path.startswith("/admin/v1/enforcement-versions/{id}:")
-    ) and method == "post":
-        return "#/components/schemas/PolicyArtifactActionCommand"
     if path == "/admin/v1/rulesets" and method == "post":
         return "#/components/schemas/RuleSetCreateCommand"
     if path == "/admin/v1/rulesets/{id}:simulate" and method == "post":
@@ -1118,7 +1110,7 @@ def request_ref(path: str, method: str) -> str:
         return "#/components/schemas/ReasonActionCommand"
     if path == "/admin/v1/transport-bundles" and method == "post":
         return "#/components/schemas/TransportBundleCreateCommand"
-    if path in {"/admin/v1/transport-bundles/{id}:verify", "/admin/v1/transport-bundles/{id}:promote-canary"} and method == "post":
+    if path == "/admin/v1/transport-bundles/{id}:verify" and method == "post":
         return "#/components/schemas/ReasonActionCommand"
     if path in {"/admin/v1/transport-bundles/{id}:activate", "/admin/v1/transport-bundles/{id}:rollback"} and method == "post":
         return "#/components/schemas/TransportBundleActivateCommand"
@@ -1187,6 +1179,8 @@ def request_ref(path: str, method: str) -> str:
 
 
 def response_ref(path: str, method: str) -> str:
+    if path == "/admin/v1/exports" and method == "get":
+        return "#/components/schemas/UsageExportListEnvelope"
     if path.startswith("/admin/v1/exports"):
         return "#/components/schemas/UsageExportEnvelope"
     if path.startswith("/admin/v1/credential-enrollments") and method in {"get", "post"}:
@@ -1199,6 +1193,10 @@ def response_ref(path: str, method: str) -> str:
         return "#/components/schemas/UsageObservationListEnvelope"
     if path == "/admin/v1/system/status" and method == "get":
         return "#/components/schemas/SystemStatusEnvelope"
+    if path == "/admin/v1/models" and method == "get":
+        return "#/components/schemas/ModelListEnvelope"
+    if path == "/admin/v1/models/{id}" and method == "get":
+        return "#/components/schemas/ModelEnvelope"
     if path == "/admin/v1/platform-keys/{id}/client-config" and method == "get":
         return "../schemas/common.schema.json#/$defs/SingleEnvelope"
     if method == "get" and not (path.endswith("/{id}") or re.search(r"\{[^}]+\}$", path)):
@@ -1255,6 +1253,21 @@ def admin_components() -> dict[str, Any]:
         },
         "schemas": {
             "EmptyCommand": object_schema({}),
+            "ModelResource": object_schema({
+                "id": {"type": "string", "format": "uuid"},
+                "upstream_model_id": {"type": "string"},
+                "display_name": {"type": "string"},
+                "released_at": {"type": ["string", "null"], "format": "date-time"},
+            }, ["id", "upstream_model_id", "display_name"], additional=True),
+            "ModelEnvelope": object_schema({
+                "data": {"$ref": "#/components/schemas/ModelResource"},
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "meta"]),
+            "ModelListEnvelope": object_schema({
+                "data": {"type": "array", "items": {"$ref": "#/components/schemas/ModelResource"}},
+                "page": {"$ref": "../schemas/common.schema.json#/$defs/Page"},
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "page", "meta"]),
             "LoginCommand": object_schema({
                 "username": {"type": "string", "minLength": 1, "maxLength": 128},
                 "password": {"type": "string", "minLength": 1, "maxLength": 128, "writeOnly": True},
@@ -1270,30 +1283,31 @@ def admin_components() -> dict[str, Any]:
                 "purpose": enum_schema("step_up_purpose"),
                 "current_password": {"type": "string", "minLength": 1, "maxLength": 128, "writeOnly": True},
                 "totp_code": {"type": "string", "pattern": "^[0-9]{6}$", "writeOnly": True},
-            }, ["purpose", "current_password", "totp_code"]),
+            }, ["purpose", "current_password"]),
             "UserCreateCommand": object_schema({
                 "username": {"type": "string", "minLength": 1}, "display_name": {"type": "string", "minLength": 1},
-                "email": {"type": "string", "format": "email"}, "role": {"type": "string", "const": "key_owner"},
+                "email": {"type": "string", "format": "email"}, "role": {"type": "string", "enum": ["platform_admin", "key_owner"]},
                 "temporary_password": {"type": "string", "minLength": 14, "maxLength": 128, "writeOnly": True},
-            }, ["username", "display_name", "email", "role", "temporary_password"]),
+                "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 1000000},
+                "rpm": {"type": "integer", "minimum": 1, "maximum": 1000000},
+                "balance_amount": {"type": ["string", "null"], "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"},
+            }, ["username", "display_name", "email", "role", "temporary_password", "max_concurrency", "rpm"]),
             "PlatformKeyCreateCommand": object_schema({
-                "name": {"type": "string"}, "owner_user_id": {"type": "string"}, "group_id": {"type": "string"},
+                "name": {"type": "string"}, "group_id": {"type": "string"},
                 "expires_at": {"type": ["string", "null"], "format": "date-time"},
                 "endpoint_permissions": {"type": "array", "items": {"type": "string", "enum": ["messages", "models"]}, "minItems": 1, "uniqueItems": True},
-                "body_limit_bytes": {"type": "integer", "minimum": 1},
-                "messages_rate": {"$ref": "#/components/schemas/RateLimit"}, "models_rate": {"$ref": "#/components/schemas/RateLimit"},
-                "concurrency": object_schema({"limit": {"type": "integer", "minimum": 1, "default": 5}, "retry_after_ms": {"type": "integer", "minimum": 1}}, ["limit", "retry_after_ms"]),
                 "requested_content_audit": enum_schema("content_audit_requested_mode"),
                 "content_audit_approval_case_id": {"type": ["string", "null"], "format": "uuid"},
                 "content_audit_expires_at": {"type": ["string", "null"], "format": "date-time"},
-            }, ["name", "owner_user_id", "group_id", "endpoint_permissions", "body_limit_bytes", "messages_rate", "models_rate", "concurrency", "requested_content_audit"]),
+                "spend_limit_amount": {"type": ["string", "null"], "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"},
+            }, ["name", "group_id", "endpoint_permissions", "requested_content_audit"]),
             "PlatformKeyRevealCommand": object_schema({
                 "step_up_grant_id": {"type": "string"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["step_up_grant_id", "reason"]),
             "PlatformKeyRevokeCommand": object_schema({
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": "integer", "minimum": 1},
             }, ["step_up_grant_id", "reason"]),
             "GroupCreateCommand": object_schema({
@@ -1316,12 +1330,22 @@ def admin_components() -> dict[str, Any]:
                     "upstream_stream_idle_ms": {"type": "integer", "minimum": 5000, "maximum": 600000, "default": 30000},
                 }, ["upstream_connect_ms", "upstream_non_stream_total_ms", "upstream_stream_idle_ms"], additional=True),
                 "content_audit": object_schema({"policy": enum_schema("content_audit_group_policy"), "retention_days": {"type": "integer", "minimum": 1, "maximum": 365, "default": 7}}, ["policy", "retention_days"], additional=True),
+                # 可选治理与模型范围:缺省继承当前生效版本
+                "governance": object_schema({
+                    "system_prompt_mode": {"type": "string", "enum": ["preserve", "strip_client", "replace", "strip_all"]},
+                    "system_prompt_ref": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
+                    "system_prompt_content": {"type": ["string", "null"], "minLength": 1, "maxLength": 65536},
+                    "console_business_fallback_enabled": {"type": "boolean"},
+                }, ["system_prompt_mode", "console_business_fallback_enabled"], additional=True),
+                "model_scope": object_schema({
+                    "scope": {"type": "string", "enum": ["all_published", "allowlist"]},
+                    "model_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}, "maxItems": 100, "uniqueItems": True},
+                }, ["scope"], additional=True),
             }, ["accepted_client_classes", "fully_managed_required", "egress_mode", "limits", "credential_defaults", "queue", "timeouts", "content_audit"], additional=True),
             "GroupConfigRollbackCommand": object_schema({
                 "target_version": {"type": "integer", "minimum": 1},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": "integer", "minimum": 1},
-                "approval_case_id": {"type": ["string", "null"], "format": "uuid"},
             }, ["target_version", "reason"]),
             "ProxyCreateCommand": object_schema({
                 "name": {"type": "string"}, "type": enum_schema("proxy_type"), "host": {"type": "string"},
@@ -1343,19 +1367,19 @@ def admin_components() -> dict[str, Any]:
                 "target_archetype_version_id": {"type": "string", "format": "uuid"},
                 "target_capture_cohort": {"type": "string", "minLength": 1, "maxLength": 128},
                 "allow_explicit_rollback": {"type": "boolean", "default": False},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": ["integer", "null"], "minimum": 1},
             }, ["target_archetype_version_id", "target_capture_cohort", "reason"]),
             "DeviceIdentityRebuildCommand": object_schema({
                 "approval_case_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": ["integer", "null"], "minimum": 1},
             }, ["approval_case_id", "reason"]),
             "ProxyReplaceSecretCommand": object_schema({
                 "username": {"type": "string", "minLength": 1, "maxLength": 1024},
                 "password": {"type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": True},
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": "integer", "minimum": 1},
             }, ["username", "password", "step_up_grant_id", "reason"]),
             "CapabilityRule": object_schema({
@@ -1365,6 +1389,7 @@ def admin_components() -> dict[str, Any]:
                 "types": {"type": "array", "uniqueItems": True, "items": {"type": "string", "enum": ["null", "boolean", "integer", "number", "string", "array", "object"]}},
                 "enum_values": {"type": "array", "maxItems": 1024},
                 "minimum": {"type": ["number", "null"]}, "maximum": {"type": ["number", "null"]},
+                "exclusive_maximum_path": {"type": ["string", "null"], "minLength": 1, "maxLength": 1024},
                 "required_children": {"type": "array", "uniqueItems": True, "maxItems": 32, "items": {"type": "string"}},
                 "when": {"type": "object", "required": ["op"], "properties": {"op": {"type": "string"}}, "additionalProperties": True},
             }, ["id", "path", "action", "types", "enum_values", "minimum", "maximum", "required_children", "when"]),
@@ -1372,14 +1397,14 @@ def admin_components() -> dict[str, Any]:
                 "model_id": {"type": "string", "format": "uuid"},
                 "schema_version": {"type": "integer", "const": 1},
                 "rules": {"type": "array", "minItems": 1, "maxItems": 4096, "items": {"$ref": "#/components/schemas/CapabilityRule"}},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["model_id", "schema_version", "rules", "reason"]),
             "CapabilityActionCommand": object_schema({
                 "reason": {"type": ["string", "null"], "minLength": 1, "maxLength": 2048},
                 "expected_revision": {"type": ["integer", "null"], "minimum": 1},
             }),
             "ModelLifecycleCommand": object_schema({
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": ["integer", "null"], "minimum": 1},
             }, ["reason"]),
             "PriceEntryCommand": object_schema({
@@ -1395,36 +1420,8 @@ def admin_components() -> dict[str, Any]:
                 "currency": {"type": "string", "const": "USD"},
                 "source_uri": {"type": ["string", "null"], "maxLength": 2048},
                 "entries": {"type": "array", "minItems": 1, "maxItems": 1000, "items": {"$ref": "#/components/schemas/PriceEntryCommand"}},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["effective_from", "currency", "entries", "reason"]),
-            "TypedArtifactCreateCommand": object_schema({
-                "name": {"type": "string", "minLength": 1, "maxLength": 128},
-                "schema_version": {"type": "integer", "const": 1},
-                "payload": {"type": "object", "additionalProperties": True},
-                "source_refs": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
-            }, ["name", "schema_version", "payload", "reason"]),
-            "BackgroundCatalogSample": object_schema({
-                "headers": {
-                    "type": "object",
-                    "maxProperties": 32,
-                    "propertyNames": {"pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$"},
-                    "additionalProperties": {"type": "string", "maxLength": 1024},
-                },
-                "body": {"type": "object", "additionalProperties": True},
-                "client_class": enum_schema("client_class"),
-                "expected_entry_id": {"type": "string", "minLength": 1, "maxLength": 128},
-            }, ["body", "client_class", "expected_entry_id"]),
-            "PolicyArtifactActionCommand": object_schema({
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
-                "expected_revision": {"type": ["integer", "null"], "minimum": 1},
-                "approval_case_id": {"type": ["string", "null"], "format": "uuid"},
-                "samples": {
-                    "type": "array",
-                    "maxItems": 10000,
-                    "items": {"$ref": "#/components/schemas/BackgroundCatalogSample"},
-                },
-            }, ["reason"]),
             "RuleAction": {
                 "oneOf": [
                     object_schema({
@@ -1464,24 +1461,22 @@ def admin_components() -> dict[str, Any]:
                 "scope_id": {"type": "string", "format": "uuid"},
                 "rules": {"type": "array", "minItems": 1, "maxItems": 1024, "items": {"$ref": "#/components/schemas/RuleDefinition"}},
                 "source_refs": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["name", "schema_version", "scope_type", "scope_id", "rules", "reason"]),
             "RuleSetActionCommand": object_schema({
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": ["integer", "null"], "minimum": 1},
             }, ["reason"]),
             "RuleSetSimulationCommand": object_schema({
                 "request": {"type": "object", "additionalProperties": True},
                 "client_class": enum_schema("client_class"),
-                "traffic_class": {"type": "object", "required": ["kind"], "properties": {"kind": {"type": "string", "enum": ["normal", "explicit_probe", "suspected_probe", "internal_upstream_probe"]}}, "additionalProperties": True},
                 "protocol_headers": {"type": "object", "propertyNames": {"enum": ["anthropic-version", "anthropic-beta"]}, "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 1024}, "maxProperties": 2},
-            }, ["request", "client_class", "traffic_class"]),
+            }, ["request", "client_class"]),
             "EnvironmentArchetypeCapacity": object_schema({
                 "max_credentials": {"type": "integer", "minimum": 1},
-                "max_connections": {"type": "integer", "minimum": 1},
                 "allocation_weight": {"type": "integer", "minimum": 1},
                 "allocation_cohort": {"type": "string", "minLength": 1, "maxLength": 256},
-            }, ["max_credentials", "max_connections", "allocation_weight", "allocation_cohort"]),
+            }, ["max_credentials", "allocation_weight", "allocation_cohort"]),
             "EnvironmentArchetypePayload": object_schema({
                 "os_family": {"type": "string", "enum": ["windows", "macos", "linux"]},
                 "architecture": {"type": "string", "enum": ["x86_64", "aarch64"]},
@@ -1502,25 +1497,23 @@ def admin_components() -> dict[str, Any]:
                 "archetype_id": {"type": ["string", "null"], "format": "uuid"},
                 "payload": {"$ref": "#/components/schemas/EnvironmentArchetypePayload"},
                 "source_refs": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["name", "schema_version", "payload", "reason"]),
             "TransportBundleCreateCommand": object_schema({
                 "name": {"type": "string", "minLength": 1, "maxLength": 128},
                 "schema_version": {"type": "integer", "const": 1},
                 "signed_envelope": {"type": "object", "additionalProperties": True},
                 "source_refs": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["name", "schema_version", "signed_envelope", "reason"]),
             "TransportBundleActivateCommand": object_schema({
-                "approval_case_id": {"type": "string", "format": "uuid"},
-                "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": ["integer", "null"], "minimum": 1},
-            }, ["approval_case_id", "step_up_grant_id", "reason"]),
+            }, ["reason"]),
             "PlanMappingCreateCommand": object_schema({"mapping": {"type": "object", "additionalProperties": {"type": "string"}}, "reason": {"type": "string"}}, ["mapping", "reason"]),
             "ApprovalCreateCommand": object_schema({
                 "kind": enum_schema("approval_kind"), "scope": {"type": "object", "additionalProperties": True},
-                "reason": {"type": "string", "minLength": 1},
+                "reason": {"type": "string"},
                 "action_snapshot_digest": {
                     "type": "string",
                     "pattern": "^[0-9a-f]{64}$",
@@ -1529,7 +1522,7 @@ def admin_components() -> dict[str, Any]:
                 "step_up_grant_id": {"type": "string"},
             }, ["kind", "scope", "reason", "action_snapshot_digest", "step_up_grant_id"]),
             "ApprovalDecisionCommand": object_schema({
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "step_up_grant_id": {"type": "string"},
             }, ["reason", "step_up_grant_id"]),
             "ContentAuditSearchFilters": object_schema({
@@ -1543,19 +1536,19 @@ def admin_components() -> dict[str, Any]:
                 "created_to": {"type": ["string", "null"], "format": "date-time"},
             }),
             "ModelRefreshCommand": object_schema({
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["reason"]),
             "ContentAuditSearchCommand": object_schema({
                 "approval_case_id": {"type": "string", "format": "uuid"},
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "filters": {"$ref": "#/components/schemas/ContentAuditSearchFilters"},
             }, ["approval_case_id", "step_up_grant_id", "reason", "filters"]),
             "ContentAuditExportCommand": object_schema({
                 "search_session_id": {"type": "string", "format": "uuid"},
                 "approval_case_id": {"type": "string", "format": "uuid"},
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["search_session_id", "approval_case_id", "step_up_grant_id", "reason"]),
             "ContentAuditExportEnvelope": object_schema({
                 "data": object_schema({
@@ -1571,7 +1564,7 @@ def admin_components() -> dict[str, Any]:
             }, ["data", "meta"]),
             "LegalHoldCreateCommand": object_schema({
                 "name": {"type": "string", "minLength": 1, "maxLength": 256},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "approval_case_id": {"type": "string", "format": "uuid"},
                 "review_due_at": {"type": ["string", "null"], "format": "date-time"},
                 "objects": {"type": "array", "minItems": 1, "maxItems": 10000, "items": object_schema({
@@ -1580,26 +1573,26 @@ def admin_components() -> dict[str, Any]:
             }, ["name", "reason", "approval_case_id", "objects"]),
             "LegalHoldActionCommand": object_schema({
                 "approval_case_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": "integer", "minimum": 1},
             }, ["approval_case_id", "reason", "expected_revision"]),
             "ContentPurgeCommand": object_schema({
                 "approval_case_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "object_ids": {"type": "array", "minItems": 1, "maxItems": 10000, "uniqueItems": True,
                                "items": {"type": "string", "format": "uuid"}},
             }, ["approval_case_id", "reason", "object_ids"]),
             "KeyRotationCommand": object_schema({
                 "approval_case_id": {"type": "string", "format": "uuid"},
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_key_version": {"type": "integer", "minimum": 1},
                 "batch_size": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 256},
             }, ["approval_case_id", "step_up_grant_id", "reason", "expected_key_version", "batch_size"]),
             "KeyLifecycleCommand": object_schema({
                 "approval_case_id": {"type": "string", "format": "uuid"},
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "key_version": {"type": "integer", "minimum": 1},
                 "target_state": {"type": "string", "enum": ["retired", "destroyed"]},
                 "rotation_job_id": {"type": "string", "format": "uuid"},
@@ -1609,21 +1602,21 @@ def admin_components() -> dict[str, Any]:
                 "rotation_job_id", "backup_run_id", "restore_drill_id"]),
             "BackupJobCommand": object_schema({
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["step_up_grant_id", "reason"]),
             "UpgradeCheckCommand": object_schema({
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "release_manifest": {"$ref": "../schemas/release-evidence.schema.json#/$defs/ReleaseManifest"},
             }, ["reason", "release_manifest"]),
             "RestoreOperationCommand": object_schema({
                 "backup_run_id": {"type": "string", "format": "uuid"},
                 "recovery_point": {"type": ["string", "null"], "format": "date-time"},
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
             }, ["backup_run_id", "step_up_grant_id", "reason"]),
             "AlertSilenceCreateCommand": object_schema({
                 "fingerprint_pattern": {"type": "string", "minLength": 1, "maxLength": 512},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "starts_at": {"type": ["string", "null"], "format": "date-time"},
                 "expires_at": {"type": "string", "format": "date-time"},
             }, ["fingerprint_pattern", "reason", "expires_at"]),
@@ -1643,16 +1636,16 @@ def admin_components() -> dict[str, Any]:
                 }, ["kind", "send_key"]),
             }, ["name", "enabled", "severities", "alert_types", "group_ids", "send_recovery", "provider"]),
             "NotificationChannelTestCommand": object_schema({
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": "integer", "minimum": 1},
             }, ["reason", "expected_revision"]),
             "ReasonActionCommand": object_schema({
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": "integer", "minimum": 1},
             }, ["reason"]),
             "CredentialGroupMigrationCommand": object_schema({
                 "target_group_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_revision": {"type": "integer", "minimum": 1},
             }, ["target_group_id", "reason"]),
             "EgressRebindCommand": object_schema({
@@ -1663,7 +1656,7 @@ def admin_components() -> dict[str, Any]:
                         "proxy_id": {"type": "string", "format": "uuid"},
                     }, ["mode", "proxy_id"]),
                 ]},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "reason": {"type": "string", "maxLength": 2048},
                 "expected_profile_epoch": {"type": "integer", "minimum": 1},
                 "expected_egress_epoch": {"type": "integer", "minimum": 1},
             }, ["target", "reason", "expected_profile_epoch", "expected_egress_epoch"]),
@@ -1680,30 +1673,42 @@ def admin_components() -> dict[str, Any]:
                     "completeness": {"type": ["string", "null"], "enum": ["complete", "partial", "unknown", None]},
                 }),
             }, ["dataset", "format", "scope", "from", "to"]),
+            "UsageExportResource": object_schema({
+                "id": {"type": "string", "format": "uuid"},
+                "job_id": {"type": ["string", "null"], "format": "uuid"},
+                "dataset": {"type": "string", "const": "usage_requests_v1"},
+                "format": {"type": "string", "enum": ["jsonl", "csv"]},
+                "scope": {"type": "string", "enum": ["own", "all"]},
+                "state": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "expired"]},
+                "row_count": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000},
+                "content_length": {"type": ["integer", "null"], "minimum": 0, "maximum": 33554432},
+                "created_at": {"type": "string", "format": "date-time"},
+                "completed_at": {"type": ["string", "null"], "format": "date-time"},
+                "expires_at": {"type": ["string", "null"], "format": "date-time"},
+                "download_count": {"type": "integer", "minimum": 0, "maximum": 1},
+                "downloaded_at": {"type": ["string", "null"], "format": "date-time"},
+                "error_code": {"type": ["string", "null"]},
+                "download_available": {"type": "boolean"},
+                "revision": {"type": "integer", "minimum": 1},
+            }, ["id", "dataset", "format", "scope", "state", "revision"]),
             "UsageExportEnvelope": object_schema({
-                "data": object_schema({
-                    "id": {"type": "string", "format": "uuid"},
-                    "job_id": {"type": ["string", "null"], "format": "uuid"},
-                    "dataset": {"type": "string", "const": "usage_requests_v1"},
-                    "format": {"type": "string", "enum": ["jsonl", "csv"]},
-                    "scope": {"type": "string", "enum": ["own", "all"]},
-                    "state": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "expired"]},
-                    "row_count": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000},
-                    "content_length": {"type": ["integer", "null"], "minimum": 0, "maximum": 33554432},
-                    "created_at": {"type": "string", "format": "date-time"},
-                    "completed_at": {"type": ["string", "null"], "format": "date-time"},
-                    "expires_at": {"type": ["string", "null"], "format": "date-time"},
-                    "download_count": {"type": "integer", "minimum": 0, "maximum": 1},
-                    "downloaded_at": {"type": ["string", "null"], "format": "date-time"},
-                    "error_code": {"type": ["string", "null"]},
-                    "download_available": {"type": "boolean"},
-                    "revision": {"type": "integer", "minimum": 1},
-                }, ["id", "dataset", "format", "scope", "state", "revision"]),
+                "data": {"$ref": "#/components/schemas/UsageExportResource"},
                 "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
             }, ["data", "meta"]),
+            "UsageExportListEnvelope": object_schema({
+                "data": {"type": "array", "items": {"$ref": "#/components/schemas/UsageExportResource"}},
+                "page": {"$ref": "../schemas/common.schema.json#/$defs/Page"},
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "page", "meta"]),
             "ResourcePatchCommand": object_schema({
                 "name": {"type": "string"}, "display_name": {"type": "string"}, "email": {"type": "string", "format": "email"},
                 "expires_at": {"type": ["string", "null"], "format": "date-time"},
+                "role": {"type": "string", "enum": ["platform_admin", "key_owner"]},
+                "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 1000000},
+                "rpm": {"type": "integer", "minimum": 1, "maximum": 1000000},
+                "balance_amount": {"type": ["string", "null"], "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"},
+                "group_id": {"type": "string", "format": "uuid"},
+                "spend_limit_amount": {"type": ["string", "null"], "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"},
                 "priority": {"type": "integer"}, "weight": {"type": "integer", "minimum": 1},
                 "concurrency": {"type": ["integer", "null"], "minimum": 1}, "messages_rpm": {"type": ["integer", "null"], "minimum": 1},
             }),
@@ -1759,7 +1764,7 @@ def generate_admin_openapi() -> list[dict[str, Any]]:
             parameters.append({"$ref": "#/components/parameters/IdempotencyKey"})
         status = "202" if is_async(path, method) else ("201" if method == "post" and ":" not in path else ("204" if method == "delete" else "200"))
         success_schema = ({"$ref": "#/components/schemas/UsageExportEnvelope"}
-                          if path == "/admin/v1/exports"
+                          if path == "/admin/v1/exports" and method == "post"
                           else ({"$ref": "#/components/schemas/ContentAuditExportEnvelope"}
                                 if path == "/admin/v1/content-audit/records/{id}:export"
                           else ({"$ref": "../schemas/common.schema.json#/$defs/JobEnvelope"}

@@ -10,10 +10,10 @@ use std::{
 
 use anyhow::Context as _;
 use gateway_api::{
-    AccessGrant, AccessResolver, BackgroundCatalog, BackgroundCatalogDocument, BusinessRateLimiter, ContentAuditMode,
-    DataPlaneState, EndpointPermission, KeyConcurrencyLimiter, ManagementRuntimeBridge, ManagementState,
-    MessageDispatcher, ModelCatalog, ModelRecord, ProbeAction, ProbeRateLimit, ProbeRateLimiter, ProbeState, RateLimit,
-    StaticModelCatalog, TrustedProxyConfig, VersionedDigestAccessResolver, data_plane_router, management_router,
+    AccessGrant, AccessResolver, BusinessRateLimiter, ContentAuditMode, DataPlaneState, EndpointPermission,
+    KeyConcurrencyLimiter, ManagementRuntimeBridge, ManagementState, MessageDispatcher, ModelCatalog, ModelRecord,
+    ProbeRateLimit, ProbeRateLimiter, ProbeState, RateLimit, SpendAuthorizer, SpendDecision, StaticModelCatalog,
+    TrustedProxyConfig, VersionedDigestAccessResolver, data_plane_router, management_router,
 };
 use gateway_domain::{
     ClientClass, Clock, Digest, GroupId, InternalReadiness, PlatformKeyId, RequestSnapshotSet, SecretBytes,
@@ -36,17 +36,55 @@ use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    admin_backend::PgManagementBackend,
+    admin_backend::{ManagementAuthMode, PgManagementBackend},
     config::{BusinessKeyProvider, GatewayConfig, read_secret_file},
     production_dispatcher::ProductionDispatcher,
 };
 
+#[derive(Clone, Copy)]
+enum RuntimeProfile {
+    Production,
+    Local,
+}
+
+impl RuntimeProfile {
+    fn database_role_policy(self) -> RuntimeRolePolicy {
+        match self {
+            Self::Production => RuntimeRolePolicy::Enforce,
+            Self::Local => RuntimeRolePolicy::AllowPrivilegedLocal,
+        }
+    }
+
+    fn allow_empty_transport_catalog(self) -> bool {
+        matches!(self, Self::Local)
+    }
+
+    fn management_auth_mode(self) -> ManagementAuthMode {
+        match self {
+            Self::Production => ManagementAuthMode::Strict,
+            Self::Local => ManagementAuthMode::LocalPasswordOnly,
+        }
+    }
+}
+
 /// Assemble and serve both listeners until a process shutdown signal.
+pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
+    run_with_options(config, RuntimeProfile::Production).await
+}
+
+/// Assemble the loopback-only local runtime with its isolated privileged database connection.
+pub async fn run_local(config: GatewayConfig) -> anyhow::Result<()> {
+    if !config.data_bind.ip().is_loopback() || !config.admin_bind.ip().is_loopback() {
+        anyhow::bail!("local runtime listeners must use loopback addresses")
+    }
+    run_with_options(config, RuntimeProfile::Local).await
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "startup keeps readiness transitions in dependency order"
 )]
-pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
+async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.response_tmp_dir).context("response temporary directory initialization failed")?;
 
     let readiness = ReadinessCoordinator::new(InternalReadiness {
@@ -55,7 +93,7 @@ pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
     });
     let database_url = read_secret_file(&config.database_url_file).context("runtime database reference is invalid")?;
     let storage = Arc::new(
-        PgStorage::connect(&database_url, RuntimeRolePolicy::Enforce)
+        PgStorage::connect(&database_url, profile.database_role_policy())
             .await
             .context("runtime database startup check failed")?,
     );
@@ -172,9 +210,12 @@ pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
         .sweep_unreferenced_finalized(&referenced_exports)
         .await
         .context("Usage Export finalized-object reconciliation failed")?;
-    let (transport_catalog, bundle_trust_store) =
-        load_transport_catalog(&config.bundle_trust_store, &config.bundle_dir)
-            .context("transport Bundle catalog startup failed")?;
+    let (transport_catalog, bundle_trust_store) = load_transport_catalog(
+        &config.bundle_trust_store,
+        &config.bundle_dir,
+        profile.allow_empty_transport_catalog(),
+    )
+    .context("transport Bundle catalog startup failed")?;
     let active_bundle_ids = storage
         .active_transport_bundle_ids()
         .await
@@ -187,7 +228,7 @@ pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
         state.active_configuration_ready = true;
         state.required_bundles_ready = required_bundles_ready;
     });
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let transport_core: Arc<dyn TransportCore> = {
         use gateway_transport::{ProductionTransportCore, TransportCore as _, TransportCoreState};
 
@@ -195,7 +236,7 @@ pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
         readiness.update(|state| state.transport_core_ready = core.state() == TransportCoreState::Ready);
         core
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let transport_core: Arc<dyn TransportCore> = {
         readiness.update(|state| state.transport_core_ready = false);
         Arc::new(gateway_transport::NoopTransportCore)
@@ -232,7 +273,7 @@ pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
         }
     });
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let provider_http = crate::provider_http::PgProviderHttpPort::new(storage.clone());
     #[cfg(target_os = "linux")]
     let credential_maintainer: Option<Arc<dyn gateway_services::credential::CredentialMaintainer>> = {
@@ -266,12 +307,13 @@ pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
     ));
     #[cfg(not(target_os = "linux"))]
     let plan_collector: Option<Arc<gateway_services::plan::PgPlanCollector>> = None;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let model_catalog_collector = Some(gateway_services::model_discovery::PgModelCatalogCollector::new(
         storage.clone(),
         provider_http.clone(),
+        provider_http.clone(),
     ));
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let model_catalog_collector: Option<Arc<gateway_services::model_discovery::PgModelCatalogCollector>> = None;
     #[cfg(target_os = "linux")]
     let managed_browser_executor = config.managed_browser.as_ref().map(|browser| {
@@ -313,6 +355,7 @@ pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
         management_runtime.clone(),
         dispatcher,
         clock,
+        storage.clone(),
     );
     let data_listener = TcpListener::bind(config.data_bind)
         .await
@@ -376,6 +419,7 @@ pub async fn run(config: GatewayConfig) -> anyhow::Result<()> {
         management_runtime.clone(),
         Some(production_dispatcher.clone()),
         Some(transport_management_runtime),
+        profile.management_auth_mode(),
         cfg!(target_os = "linux") && config.managed_browser.is_some(),
     )
     .context("management backend startup failed")?;
@@ -445,10 +489,21 @@ async fn wait_for_operations(tasks: Vec<JoinHandle<()>>) {
 fn load_transport_catalog(
     trust_store_path: &Path,
     bundle_dir: &Path,
+    allow_empty: bool,
 ) -> anyhow::Result<(Arc<EngineCatalogHandle>, Arc<BundleTrustStore>)> {
-    let trust_bytes = std::fs::read(trust_store_path).context("Bundle TrustStore is unreadable")?;
-    let trust_store: BundleTrustStore =
-        serde_json::from_slice(&trust_bytes).context("Bundle TrustStore schema is invalid")?;
+    let trust_store: BundleTrustStore = if allow_empty && !trust_store_path.exists() {
+        BundleTrustStore {
+            format_version: "1.0.0".into(),
+            domain: "transport_bundle_v1".into(),
+            keys: Vec::new(),
+        }
+    } else {
+        let trust_bytes = std::fs::read(trust_store_path).context("Bundle TrustStore is unreadable")?;
+        serde_json::from_slice(&trust_bytes).context("Bundle TrustStore schema is invalid")?
+    };
+    if allow_empty {
+        std::fs::create_dir_all(bundle_dir).context("Bundle directory initialization failed")?;
+    }
     let mut paths = std::fs::read_dir(bundle_dir)
         .context("Bundle directory is unreadable")?
         .collect::<Result<Vec<_>, _>>()
@@ -477,8 +532,12 @@ fn load_transport_catalog(
             .context("Bundle artifact verification failed")?;
         engines.push(CompiledTransportEngine::compile(verified).context("Bundle engine compilation failed")?);
     }
-    let catalog = EngineCatalog::build(ActivationGeneration::INITIAL, engines)
-        .context("no verified Transport Bundle is loadable")?;
+    let catalog = if allow_empty && engines.is_empty() {
+        EngineCatalog::empty_for_local(ActivationGeneration::INITIAL)
+    } else {
+        EngineCatalog::build(ActivationGeneration::INITIAL, engines)
+            .context("no verified Transport Bundle is loadable")?
+    };
     Ok((Arc::new(EngineCatalogHandle::new(catalog)), Arc::new(trust_store)))
 }
 
@@ -528,6 +587,9 @@ pub(crate) async fn load_access_snapshot(
             .ok_or_else(|| anyhow::anyhow!("published model {model_id} has no active capability payload"))?;
         let envelope: CapabilityArtifactPayload =
             serde_json::from_value(payload).with_context(|| format!("capability payload for {model_id} is invalid"))?;
+        if envelope.schema_version.unwrap_or(1) != 1 {
+            anyhow::bail!("capability payload for {model_id} uses an unsupported schema version");
+        }
         capabilities.push(
             CompiledCapabilitySnapshot::compile(capability_id.to_string(), model_id.clone(), envelope.rules)
                 .with_context(|| format!("capability for {model_id} did not compile"))?,
@@ -545,7 +607,6 @@ pub(crate) async fn load_access_snapshot(
     let capability_catalog = CapabilityCatalog::new(capabilities).context("active capability catalog is invalid")?;
     let capability_snapshot =
         SnapshotVersion::new(format!("capability-set:{}", Digest::of(&capability_identity).as_str()));
-    let (background_catalog_snapshot, background_catalog) = load_background_catalog(storage).await?;
     let model_catalog: Arc<dyn ModelCatalog> = Arc::new(StaticModelCatalog::new(models));
     if model_ids.is_empty() {
         return Ok((
@@ -556,10 +617,11 @@ pub(crate) async fn load_access_snapshot(
 
     let rows = sqlx::query(
         "SELECT k.id,k.owner_user_id,k.group_id,s.lookup_digest,c.config_version,c.messages_enabled,c.models_enabled, \
-                c.max_body_bytes,c.messages_rpm,c.messages_burst,c.models_rpm,c.models_burst,c.max_concurrency, \
+                c.max_body_bytes,LEAST(c.messages_rpm,u.key_max_rpm) AS messages_rpm, \
+                LEAST(c.messages_burst,u.key_max_rpm) AS messages_burst,c.models_rpm,c.models_burst, \
+                LEAST(c.max_concurrency,u.key_max_concurrency) AS max_concurrency, \
                 c.ruleset_artifact_id AS key_ruleset_artifact_id, \
                 gc.config_version AS group_config_version,gc.ruleset_artifact_id AS group_ruleset_artifact_id, \
-                gc.enforcement_artifact_id, \
                 gc.system_prompt_mode_code,gc.system_prompt_ref,gc.system_prompt_content, \
                 gc.content_audit_retention_days, \
                 CASE WHEN gc.content_audit_policy_code='allow' \
@@ -585,7 +647,6 @@ pub(crate) async fn load_access_snapshot(
     .context("active Platform Key projection query failed")?;
     let mut entries = Vec::with_capacity(rows.len());
     let mut rule_artifacts = BTreeMap::new();
-    let mut enforcement_artifacts = BTreeMap::new();
     for row in rows {
         let key_id: uuid::Uuid = row.try_get("id")?;
         let group_id: uuid::Uuid = row.try_get("group_id")?;
@@ -656,30 +717,14 @@ pub(crate) async fn load_access_snapshot(
         .await?;
         let effective_ruleset = compile_effective_ruleset(group_id, key_id, group_rules.as_ref(), key_rules.as_ref())?;
         let ruleset_snapshot = ruleset_snapshot(group_rules.as_ref(), key_rules.as_ref());
-        let enforcement = load_enforcement_artifact(
-            storage,
-            &mut enforcement_artifacts,
-            row.try_get("enforcement_artifact_id")?,
-            group_id,
-        )
-        .await?;
-        let enforcement_snapshot = enforcement.as_ref().map_or_else(
-            || SnapshotVersion::new(format!("group:{group_id}:enforcement:{group_config_version}")),
-            |artifact| {
-                SnapshotVersion::new(format!(
-                    "enforcement:{}:{}",
-                    artifact.version,
-                    Digest::of(&artifact.content_hash).as_str()
-                ))
-            },
-        );
+        let enforcement_snapshot =
+            SnapshotVersion::new(format!("group:{group_id}:enforcement:{group_config_version}"));
         let snapshots = Arc::new(RequestSnapshotSet {
             access_policy: SnapshotVersion::new(format!("key:{key_id}:config:{config_version}")),
             group_config: SnapshotVersion::new(format!("group:{group_id}:config:{group_config_version}")),
             enforcement: enforcement_snapshot,
             ruleset: ruleset_snapshot,
             capability: capability_snapshot.clone(),
-            background_catalog: background_catalog_snapshot.clone(),
             client_profile_catalog: SnapshotVersion::new("client-profile-v1"),
             price: SnapshotVersion::new("price-catalog-current"),
             serializer: SnapshotVersion::new("json-preserve-v1"),
@@ -687,8 +732,7 @@ pub(crate) async fn load_access_snapshot(
         let mut policy = RequestPolicy::base_for_models(model_ids.clone(), snapshots)?;
         policy.capabilities = capability_catalog.clone();
         policy.ruleset = effective_ruleset;
-        policy.enforcement.system =
-            enforcement.map_or_else(|| load_system_policy(&row), |artifact| Ok(artifact.system))?;
+        policy.enforcement.system = load_system_policy(&row)?;
         let mut permissions = BTreeSet::new();
         if row.try_get::<bool, _>("messages_enabled")? {
             permissions.insert(EndpointPermission::Messages);
@@ -715,9 +759,6 @@ pub(crate) async fn load_access_snapshot(
             concurrency_limit: u32::try_from(row.try_get::<i32, _>("max_concurrency")?)?,
             ip_allowlist,
             accepted_client_classes,
-            background_catalog: background_catalog.clone(),
-            probe_action: ProbeAction::Observe,
-            allow_explicit_probe_marker: false,
             content_audit: effective_content_audit(&row)?,
             content_audit_expires_at_unix_seconds: row
                 .try_get::<Option<i64>, _>("content_audit_expires_at_unix_seconds")?
@@ -736,7 +777,12 @@ pub(crate) async fn load_access_snapshot(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CapabilityArtifactPayload {
+    #[serde(default)]
+    schema_version: Option<i64>,
     rules: Vec<CapabilityRule>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    metadata: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -882,116 +928,6 @@ fn load_system_policy(row: &sqlx::postgres::PgRow) -> anyhow::Result<SystemPolic
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StoredTypedArtifactEnvelope {
-    #[allow(dead_code)]
-    name: String,
-    payload: Value,
-    #[serde(default)]
-    #[allow(dead_code)]
-    source_refs: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeEnforcementPayload {
-    group_id: String,
-    system: SystemPolicy,
-}
-
-#[derive(Clone)]
-struct LoadedEnforcementArtifact {
-    group_id: uuid::Uuid,
-    version: i64,
-    content_hash: Vec<u8>,
-    system: SystemPolicy,
-}
-
-async fn load_enforcement_artifact(
-    storage: &PgStorage,
-    cache: &mut BTreeMap<uuid::Uuid, LoadedEnforcementArtifact>,
-    artifact_id: Option<uuid::Uuid>,
-    expected_group_id: uuid::Uuid,
-) -> anyhow::Result<Option<LoadedEnforcementArtifact>> {
-    let Some(artifact_id) = artifact_id else {
-        return Ok(None);
-    };
-    if let Some(artifact) = cache.get(&artifact_id) {
-        if artifact.group_id != expected_group_id {
-            anyhow::bail!("Enforcement artifact cache scope does not match its Group config");
-        }
-        return Ok(Some(artifact.clone()));
-    }
-    let row = sqlx::query(
-        "SELECT artifact_kind_code,scope_type_code,scope_id,artifact_version,lifecycle_code,payload,content_hash,schema_version \
-         FROM catalog.versioned_artifact WHERE id=$1",
-    )
-    .bind(artifact_id)
-    .fetch_optional(&storage.pool())
-    .await?
-    .ok_or_else(|| anyhow::anyhow!("Enforcement artifact {artifact_id} is missing"))?;
-    if row.try_get::<String, _>("artifact_kind_code")? != "enforcement"
-        || row.try_get::<String, _>("lifecycle_code")? != "active"
-        || row.try_get::<i64, _>("schema_version")? != 1
-        || row.try_get::<Option<String>, _>("scope_type_code")?.as_deref() != Some("group")
-        || row.try_get::<Option<uuid::Uuid>, _>("scope_id")? != Some(expected_group_id)
-    {
-        anyhow::bail!("Enforcement artifact {artifact_id} does not match its active Group config");
-    }
-    let envelope: StoredTypedArtifactEnvelope = serde_json::from_value(
-        row.try_get::<Option<Value>, _>("payload")?
-            .ok_or_else(|| anyhow::anyhow!("Enforcement artifact {artifact_id} must be inline"))?,
-    )
-    .with_context(|| format!("Enforcement artifact {artifact_id} envelope is invalid"))?;
-    let payload: RuntimeEnforcementPayload = serde_json::from_value(envelope.payload)
-        .with_context(|| format!("Enforcement artifact {artifact_id} payload is invalid"))?;
-    if uuid::Uuid::parse_str(&payload.group_id)? != expected_group_id {
-        anyhow::bail!("Enforcement artifact payload Group does not match its scope");
-    }
-    let artifact = LoadedEnforcementArtifact {
-        group_id: expected_group_id,
-        version: row.try_get("artifact_version")?,
-        content_hash: row.try_get("content_hash")?,
-        system: payload.system,
-    };
-    cache.insert(artifact_id, artifact.clone());
-    Ok(Some(artifact))
-}
-
-async fn load_background_catalog(storage: &PgStorage) -> anyhow::Result<(SnapshotVersion, Arc<BackgroundCatalog>)> {
-    let row = sqlx::query(
-        "SELECT a.artifact_version,a.content_hash,a.schema_version,a.lifecycle_code,a.payload \
-         FROM catalog.active_artifact_pointer p JOIN catalog.versioned_artifact a ON a.id=p.artifact_id \
-         WHERE p.artifact_kind_code='background_catalog' AND p.scope_type_code IS NULL AND p.scope_id IS NULL",
-    )
-    .fetch_optional(&storage.pool())
-    .await?;
-    let Some(row) = row else {
-        return Ok((
-            SnapshotVersion::new("background-catalog-disabled"),
-            Arc::new(BackgroundCatalog::default()),
-        ));
-    };
-    if row.try_get::<String, _>("lifecycle_code")? != "active" || row.try_get::<i64, _>("schema_version")? != 1 {
-        anyhow::bail!("active Background Catalog artifact is invalid");
-    }
-    let envelope: StoredTypedArtifactEnvelope = serde_json::from_value(
-        row.try_get::<Option<Value>, _>("payload")?
-            .ok_or_else(|| anyhow::anyhow!("active Background Catalog must be inline"))?,
-    )
-    .context("active Background Catalog envelope is invalid")?;
-    let document: BackgroundCatalogDocument =
-        serde_json::from_value(envelope.payload).context("active Background Catalog payload is invalid")?;
-    let catalog = BackgroundCatalog::compile(document).context("active Background Catalog did not compile")?;
-    let version: i64 = row.try_get("artifact_version")?;
-    let hash: Vec<u8> = row.try_get("content_hash")?;
-    Ok((
-        SnapshotVersion::new(format!("background-catalog:{version}:{}", Digest::of(&hash).as_str())),
-        Arc::new(catalog),
-    ))
-}
-
 fn effective_content_audit(row: &sqlx::postgres::PgRow) -> anyhow::Result<ContentAuditMode> {
     if !row.try_get::<bool, _>("full_content_audit")? {
         return Ok(ContentAuditMode::MetadataOnly);
@@ -1036,6 +972,7 @@ fn initial_data_state(
     runtime: ManagementRuntimeBridge,
     dispatcher: Arc<dyn MessageDispatcher>,
     clock: Arc<dyn Clock>,
+    storage: Arc<PgStorage>,
 ) -> DataPlaneState {
     let limiter = Arc::new(ProbeRateLimiter::new(ProbeRateLimit::default(), clock.clone()));
     DataPlaneState {
@@ -1045,8 +982,53 @@ fn initial_data_state(
         observability,
         business_rates: BusinessRateLimiter::new(clock),
         concurrency: KeyConcurrencyLimiter::default(),
+        spend_authorizer: Arc::new(PostgresSpendAuthorizer { storage }),
         trusted_proxies: TrustedProxyConfig::default(),
         platform_body_limit_bytes: 64 * 1024 * 1024,
+    }
+}
+
+#[derive(Debug)]
+struct PostgresSpendAuthorizer {
+    storage: Arc<PgStorage>,
+}
+
+#[async_trait::async_trait]
+impl SpendAuthorizer for PostgresSpendAuthorizer {
+    async fn authorize(&self, owner_user_id: &UserId, platform_key_id: &PlatformKeyId) -> SpendDecision {
+        let Ok(owner_id) = uuid::Uuid::parse_str(owner_user_id.as_str()) else {
+            return SpendDecision::Unavailable;
+        };
+        let Ok(key_id) = uuid::Uuid::parse_str(platform_key_id.as_str()) else {
+            return SpendDecision::Unavailable;
+        };
+        let result = sqlx::query_scalar::<_, bool>(
+            "WITH key_spend AS ( \
+               SELECT COALESCE(SUM(estimated_amount),0) AS amount \
+               FROM telemetry.usage_aggregate_contribution WHERE platform_key_id=$1 \
+             ), user_spend AS ( \
+               SELECT COALESCE(SUM(usage.estimated_amount),0) AS amount \
+               FROM iam.platform_key key JOIN telemetry.usage_aggregate_contribution usage ON usage.platform_key_id=key.id \
+               WHERE key.owner_user_id=$2 \
+             ) \
+             SELECT NOT ((key.spend_limit_amount IS NOT NULL AND key_spend.amount>=key.spend_limit_amount) OR \
+                         (account.credit_limit_amount IS NOT NULL AND user_spend.amount>=account.credit_limit_amount)) \
+             FROM iam.platform_key key JOIN iam.user_account account ON account.id=key.owner_user_id \
+             CROSS JOIN key_spend CROSS JOIN user_spend WHERE key.id=$1 AND account.id=$2",
+        )
+        .bind(key_id)
+        .bind(owner_id)
+        .fetch_optional(&self.storage.pool())
+        .await;
+        match result {
+            Ok(Some(true)) => SpendDecision::Allowed,
+            Ok(Some(false)) => SpendDecision::Limited,
+            Ok(None) => SpendDecision::Unavailable,
+            Err(error) => {
+                tracing::error!(error = %error, platform_key_id = %platform_key_id, "spend admission check failed");
+                SpendDecision::Unavailable
+            }
+        }
     }
 }
 

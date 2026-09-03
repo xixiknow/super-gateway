@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -386,6 +386,36 @@ pub enum BundleLoadError {
 }
 
 impl SignedBundleEnvelope {
+    /// Canonicalize and sign a Bundle payload with an Ed25519 key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BundleLoadError::Schema`] if the payload cannot be represented as canonical JSON.
+    pub fn sign(
+        payload: TransportBundlePayload,
+        key_id: impl Into<Box<str>>,
+        signing_key: &SigningKey,
+    ) -> Result<Self, BundleLoadError> {
+        let canonical_payload = serde_jcs::to_vec(&payload).map_err(|_| BundleLoadError::Schema)?;
+        let canonical_hash = sha256_hex(&canonical_payload);
+        let signature = signing_key.sign(&signature_preimage(&canonical_hash, &canonical_payload));
+        Ok(Self {
+            envelope_version: ENVELOPE_VERSION.into(),
+            payload,
+            canonicalization: BundleCanonicalization {
+                algorithm: "jcs_rfc8785".into(),
+                hash_algorithm: "sha256".into(),
+                canonical_hash: canonical_hash.into_boxed_str(),
+            },
+            signature: BundleSignature {
+                domain: SIGNATURE_DOMAIN.into(),
+                algorithm: "ed25519".into(),
+                key_id: key_id.into(),
+                detached_signature_base64: STANDARD.encode(signature.to_bytes()).into_boxed_str(),
+            },
+        })
+    }
+
     /// Decode a strict JSON envelope and verify all cryptographic/runtime gates.
     ///
     /// # Errors

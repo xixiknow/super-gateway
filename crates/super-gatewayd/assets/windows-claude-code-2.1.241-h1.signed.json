@@ -1,0 +1,235 @@
+{
+  "envelope_version": "1.0.0",
+  "payload": {
+    "schema_version": "1.0.0",
+    "engine_abi_version": "1.0",
+    "bundle_id": "claude_code_windows_x64_2_1_241_h1",
+    "artifact_version": 2001241,
+    "lifecycle": "active",
+    "evidence_gate": "passed",
+    "runtime_state": "loadable",
+    "backend_id": "gateway-transport-boringssl-h1-v1",
+    "required_capabilities": [
+      "tls_client_hello",
+      "ordered_http1"
+    ],
+    "source_archetype_version_id": "019c8a24-1000-7000-8000-000000000003",
+    "capture_cohort": "windows-x86_64-claude-code-native-2.1.241-c49a05922a787c33",
+    "application": {
+      "protocol": "h1",
+      "authority": "api.anthropic.com",
+      "tls": {
+        "client_hello_profile": "claude-code-claude-code/windows/x86_64/claude-code-native/2.1.241--claude-code-",
+        "alpn": [
+          "http/1.1"
+        ],
+        "cipher_suite_ids": [
+          4865,
+          4866,
+          4867,
+          49195,
+          49199,
+          49196,
+          49200,
+          52393,
+          52392,
+          49161,
+          49171,
+          49162,
+          49172,
+          156,
+          157,
+          47,
+          53
+        ],
+        "supported_group_ids": [
+          29,
+          23,
+          24
+        ],
+        "key_share_group_ids": [
+          29
+        ],
+        "extension_order": [
+          0,
+          23,
+          65281,
+          10,
+          11,
+          35,
+          16,
+          5,
+          13,
+          18,
+          51,
+          45,
+          43,
+          21
+        ],
+        "grease_enabled": false,
+        "permute_extensions": false,
+        "session_resumption": false
+      },
+      "http1": {
+        "request_line_form": "origin",
+        "header_order": [
+          {
+            "name": "Accept",
+            "value_template": "application/json",
+            "sensitive": false
+          },
+          {
+            "name": "Authorization",
+            "value_template": "{authorization}",
+            "sensitive": true
+          },
+          {
+            "name": "Content-Type",
+            "value_template": "application/json",
+            "sensitive": false
+          },
+          {
+            "name": "User-Agent",
+            "value_template": "claude-cli/2.1.241 (external, sdk-cli)",
+            "sensitive": false
+          },
+          {
+            "name": "X-Claude-Code-Session-Id",
+            "value_template": "{session_id}",
+            "sensitive": true
+          },
+          {
+            "name": "X-Stainless-Arch",
+            "value_template": "x64",
+            "sensitive": false
+          },
+          {
+            "name": "X-Stainless-Lang",
+            "value_template": "js",
+            "sensitive": false
+          },
+          {
+            "name": "X-Stainless-OS",
+            "value_template": "Windows",
+            "sensitive": false
+          },
+          {
+            "name": "X-Stainless-Package-Version",
+            "value_template": "0.112.1",
+            "sensitive": false
+          },
+          {
+            "name": "X-Stainless-Retry-Count",
+            "value_template": "0",
+            "sensitive": false
+          },
+          {
+            "name": "X-Stainless-Runtime",
+            "value_template": "node",
+            "sensitive": false
+          },
+          {
+            "name": "X-Stainless-Runtime-Version",
+            "value_template": "v26.3.0",
+            "sensitive": false
+          },
+          {
+            "name": "X-Stainless-Timeout",
+            "value_template": "600",
+            "sensitive": false
+          },
+          {
+            "name": "anthropic-beta",
+            "value_template": "claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24",
+            "sensitive": false
+          },
+          {
+            "name": "anthropic-dangerous-direct-browser-access",
+            "value_template": "true",
+            "sensitive": false
+          },
+          {
+            "name": "anthropic-version",
+            "value_template": "2023-06-01",
+            "sensitive": false
+          },
+          {
+            "name": "x-app",
+            "value_template": "cli",
+            "sensitive": false
+          },
+          {
+            "name": "Connection",
+            "value_template": "keep-alive",
+            "sensitive": false
+          },
+          {
+            "name": "Host",
+            "value_template": "{authority}",
+            "sensitive": false
+          },
+          {
+            "name": "Accept-Encoding",
+            "value_template": "gzip, deflate, br, zstd",
+            "sensitive": false
+          },
+          {
+            "name": "Content-Length",
+            "value_template": "{content_length}",
+            "sensitive": false
+          }
+        ],
+        "framing": "content-length"
+      },
+      "connection": {
+        "pool_key_fields": [
+          "credential_id",
+          "profile_epoch",
+          "bundle_id",
+          "bundle_version",
+          "egress_binding_id",
+          "egress_epoch",
+          "authority",
+          "sni",
+          "protocol"
+        ],
+        "reuse_policy": "exact_pool_key",
+        "resumption_cache_scope": "disabled"
+      }
+    },
+    "min_engine_build": "0.1.0",
+    "max_engine_build": null,
+    "engine_builds": [
+      {
+        "target": "x86_64-pc-windows-msvc",
+        "artifact_digest": "5878150ad8d48c10f2c9c347e21bd174a36cc3a86b5ff4d327770e57e5191763",
+        "boringssl_revision": "cloudflare-boring-5.2",
+        "compiler": "rustc 1.95.0 msvc"
+      }
+    ],
+    "supported_targets": [
+      "x86_64-pc-windows-msvc"
+    ],
+    "evidence_hashes": [
+      "478d00018c76b966e51cbf23a8dbdaa0114e892ff257b78f0e5171b90ee38aa7",
+      "4a1daa2597ba151dab84caa72ea96c17f5cf295846f6ec19a8c26b512eb24b75",
+      "4f5470b9cecad370a1f3e60d4dae0d63c324aa54857838fe9a05c649b2e2763a",
+      "510101a4add04a5412e20edc8e8f85f994637ab3e7d5d674278984c5e29ef6a4",
+      "6f1f0b8c9d1bb712c326f77ba0f9c2dd09d0c3228f97b20e0a736d825c5bebe7",
+      "a5444c88e7f595de259158f3f508953e9c8d5aba863aab56bf0f89bfb4ad0254",
+      "e0a373cf42b3d0a23d920338cc97a6adf3b01ce5eda7f41cd5ed4db57fa1d6b1"
+    ],
+    "created_at": "unix-ms:1787504048128"
+  },
+  "canonicalization": {
+    "algorithm": "jcs_rfc8785",
+    "hash_algorithm": "sha256",
+    "canonical_hash": "a335d1982717468ae55f26503d84c637e8070db9ce056b9cb19cd3515c05aa33"
+  },
+  "signature": {
+    "domain": "transport_bundle_v1",
+    "algorithm": "ed25519",
+    "key_id": "builtin-windows-claude-code-2.1.241-v1",
+    "detached_signature_base64": "mnK72RYvPpxmNfmHaUxyhNA9aKcOnAeCdQpk4/RVXKFB9R7sKCLduwyAHIEdmOc2H+GnCVgoW0Y/hTaqaT42AA=="
+  }
+}

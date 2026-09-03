@@ -78,28 +78,6 @@ pub enum ClientClass {
     NonClaudeCodeCli,
 }
 
-/// Business traffic classification. Suspected probes always keep business semantics.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum TrafficClass {
-    /// Ordinary business traffic.
-    Normal,
-    /// A deterministically authorized/published probe template.
-    ExplicitProbe {
-        /// Published template or authorized marker identity.
-        template_id: Box<str>,
-    },
-    /// Heuristic signals used only for telemetry and alerts.
-    SuspectedProbe {
-        /// Heuristic score; it never changes request admission semantics.
-        score: u8,
-        /// Stable non-secret telemetry signal names.
-        signals: Vec<Box<str>>,
-    },
-    /// A gateway-owned upstream reachability probe.
-    InternalUpstreamProbe,
-}
-
 /// Immutable artifact/config version selected before the first business mutation.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -126,8 +104,6 @@ pub struct RequestSnapshotSet {
     pub ruleset: Option<SnapshotVersion>,
     /// Model capability version.
     pub capability: SnapshotVersion,
-    /// Background/probe catalog version.
-    pub background_catalog: SnapshotVersion,
     /// Client-profile classifier catalog version.
     pub client_profile_catalog: SnapshotVersion,
     /// Price catalog version recorded for downstream usage accounting.

@@ -1,6 +1,15 @@
 //! Static deployment configuration and secret-reference parsing.
 
-use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt,
+    fmt::Write as _,
+    io::Write as _,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
+};
 
 use gateway_domain::SecretValue;
 use thiserror::Error;
@@ -143,6 +152,62 @@ impl GatewayConfig {
     pub fn load() -> Result<Self, ConfigError> {
         let _dotenv_result = dotenvy::dotenv();
         let values = std::env::vars().collect();
+        Self::from_map(&values)
+    }
+
+    /// Build a loopback-only configuration backed by generated files in a private local state directory.
+    pub fn load_local(state_dir: &Path, database_url: &SecretValue) -> Result<Self, ConfigError> {
+        let _dotenv_result = dotenvy::dotenv();
+        std::fs::create_dir_all(state_dir).map_err(|_| ConfigError::LocalStateUnavailable)?;
+        let state_dir = state_dir.to_path_buf();
+        let bundle_dir = state_dir.join("bundles");
+        let response_tmp_dir = state_dir.join("response-tmp");
+        std::fs::create_dir_all(&bundle_dir).map_err(|_| ConfigError::LocalStateUnavailable)?;
+        std::fs::create_dir_all(&response_tmp_dir).map_err(|_| ConfigError::LocalStateUnavailable)?;
+
+        let database_url_file = state_dir.join("database-url");
+        std::fs::write(&database_url_file, database_url.expose()).map_err(|_| ConfigError::LocalStateUnavailable)?;
+        let digest_key_file = state_dir.join("digest-key");
+        let audit_integrity_key_file = state_dir.join("audit-integrity-key");
+        ensure_local_secret(&digest_key_file)?;
+        ensure_local_secret(&audit_integrity_key_file)?;
+
+        let mut values = HashMap::new();
+        copy_environment_value(&mut values, DRAIN_DEADLINE);
+        copy_environment_value(&mut values, BOOTSTRAP_USERNAME);
+        copy_environment_value(&mut values, BOOTSTRAP_PASSWORD);
+        copy_environment_value(&mut values, BOOTSTRAP_EMAIL);
+        copy_environment_value(&mut values, BOOTSTRAP_DISPLAY_NAME);
+        values.insert(DATA_BIND.to_owned(), "127.0.0.1:8080".to_owned());
+        values.insert(ADMIN_BIND.to_owned(), "127.0.0.1:8081".to_owned());
+        values.insert(
+            DATABASE_URL_FILE.to_owned(),
+            database_url_file.to_string_lossy().into_owned(),
+        );
+        values.insert(BUSINESS_KEY_PROVIDER.to_owned(), "database".to_owned());
+        values.insert(
+            DIGEST_KEY_FILE.to_owned(),
+            digest_key_file.to_string_lossy().into_owned(),
+        );
+        values.insert(
+            AUDIT_INTEGRITY_KEY_FILE.to_owned(),
+            audit_integrity_key_file.to_string_lossy().into_owned(),
+        );
+        values.insert(
+            BUNDLE_TRUST_STORE.to_owned(),
+            state_dir.join("bundle-trust-store.json").to_string_lossy().into_owned(),
+        );
+        values.insert(BUNDLE_DIR.to_owned(), bundle_dir.to_string_lossy().into_owned());
+        values.insert(
+            RESPONSE_TMP_DIR.to_owned(),
+            response_tmp_dir.to_string_lossy().into_owned(),
+        );
+        if !values.contains_key(BOOTSTRAP_USERNAME) && !values.contains_key(BOOTSTRAP_PASSWORD) {
+            let admin_password_file = state_dir.join("admin-password");
+            let admin_password = ensure_local_secret(&admin_password_file)?;
+            values.insert(BOOTSTRAP_USERNAME.to_owned(), "admin".to_owned());
+            values.insert(BOOTSTRAP_PASSWORD.to_owned(), admin_password.expose().to_owned());
+        }
         Self::from_map(&values)
     }
 
@@ -310,6 +375,34 @@ pub fn read_secret_file(path: &std::path::Path) -> Result<SecretValue, ConfigErr
     Ok(SecretValue::new(trimmed.to_owned()))
 }
 
+pub(crate) fn ensure_local_secret(path: &Path) -> Result<SecretValue, ConfigError> {
+    if path.exists() {
+        return read_secret_file(path);
+    }
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|_| ConfigError::LocalStateUnavailable)?;
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").map_err(|_| ConfigError::LocalStateUnavailable)?;
+    }
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(mut file) => file
+            .write_all(encoded.as_bytes())
+            .map_err(|_| ConfigError::LocalStateUnavailable)?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return read_secret_file(path),
+        Err(_) => return Err(ConfigError::LocalStateUnavailable),
+    }
+    Ok(SecretValue::new(encoded))
+}
+
+fn copy_environment_value(values: &mut HashMap<String, String>, name: &'static str) {
+    if let Ok(value) = std::env::var(name)
+        && !value.trim().is_empty()
+    {
+        values.insert(name.to_owned(), value);
+    }
+}
+
 fn parse_business_key_provider(values: &HashMap<String, String>) -> Result<BusinessKeyProvider, ConfigError> {
     let mode = non_empty(values, BUSINESS_KEY_PROVIDER).unwrap_or("database");
     let uri = non_empty(values, KEY_PROVIDER_URI);
@@ -416,6 +509,8 @@ pub enum ConfigError {
     IncompleteBootstrap,
     #[error("secret reference file is unreadable or empty")]
     SecretFileUnreadable,
+    #[error("local state directory initialization failed")]
+    LocalStateUnavailable,
 }
 
 #[cfg(test)]

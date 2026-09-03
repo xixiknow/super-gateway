@@ -175,7 +175,7 @@ impl ManagementState {
     }
 }
 
-/// Build the R8 management router from the embedded 196-operation contract.
+/// Build the R8 management router from the embedded 197-operation contract.
 pub fn management_router(state: ManagementState) -> Router {
     Router::new()
         .route("/admin/v1/{*path}", any(dispatch_management))
@@ -832,7 +832,7 @@ mod tests {
             Some("no-cache")
         );
         let body = index.into_body().collect().await?.to_bytes();
-        assert!(String::from_utf8_lossy(&body).contains("Claude Gateway"));
+        assert!(String::from_utf8_lossy(&body).contains("Super Gateway"));
 
         let icons = app
             .oneshot(Request::get("/admin/public-icons.js").body(Body::empty())?)

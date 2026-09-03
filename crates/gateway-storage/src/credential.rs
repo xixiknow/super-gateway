@@ -687,12 +687,11 @@ impl PgStorage {
         }
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
         require_durable_job_fence(&mut transaction, durable_job_fence).await?;
+        // Postgres 不允许对外连接可空侧 FOR UPDATE:先锁登记单,凭据行存在时再单独加锁
         let row = sqlx::query(
             "SELECT e.revision,e.kind_code,e.state_code,e.pending_credential_id,e.material_secret_refs, \
-                    e.pkce_verifier_secret_id,c.revision AS credential_revision \
-             FROM gateway.credential_enrollment e \
-             LEFT JOIN gateway.anthropic_credential c ON c.id=e.pending_credential_id \
-             WHERE e.id=$1 FOR UPDATE OF e,c",
+                    e.pkce_verifier_secret_id \
+             FROM gateway.credential_enrollment e WHERE e.id=$1 FOR UPDATE",
         )
         .bind(enrollment_id)
         .fetch_optional(&mut *transaction)
@@ -705,6 +704,16 @@ impl PgStorage {
             return Err(StorageError::RevisionConflict);
         }
         let credential_id: Option<Uuid> = row.try_get("pending_credential_id").map_err(transaction_error)?;
+        let credential_revision: Option<i64> = match credential_id {
+            Some(credential_id) => {
+                sqlx::query_scalar("SELECT revision FROM gateway.anthropic_credential WHERE id=$1 FOR UPDATE")
+                    .bind(credential_id)
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(transaction_error)?
+            }
+            None => None,
+        };
         let mode: String = row.try_get("kind_code").map_err(transaction_error)?;
         let mut secret_ids = row
             .try_get::<Vec<Uuid>, _>("material_secret_refs")
@@ -728,9 +737,7 @@ impl PgStorage {
                     "expired" => "enrollment_expired",
                     _ => return Err(StorageError::InvalidLifecycle),
                 },
-                row.try_get::<Option<i64>, _>("credential_revision")
-                    .map_err(transaction_error)?
-                    .unwrap_or(1),
+                credential_revision.unwrap_or(1),
                 json!({"error_code": error_code}),
             )
             .await?;

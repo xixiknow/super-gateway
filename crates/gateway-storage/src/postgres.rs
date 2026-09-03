@@ -19,6 +19,7 @@ use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use sqlx::{
     PgPool, Postgres, Row, Transaction,
+    migrate::MigrateDatabase as _,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 use uuid::Uuid;
@@ -29,7 +30,7 @@ use crate::{StorageError, StorageHealth, StorageState};
 /// First schema version accepted by this binary.
 pub const MINIMUM_SCHEMA_VERSION: i64 = 20_260_824_000_100;
 /// Latest schema version understood by this binary.
-pub const CURRENT_SCHEMA_VERSION: i64 = 20_260_824_003_800;
+pub const CURRENT_SCHEMA_VERSION: i64 = 20_260_824_004_300;
 const BOOTSTRAP_ADVISORY_LOCK: i64 = 0x4757_4254_5354_5250;
 const BUSINESS_KEY_ADVISORY_LOCK: i64 = 0x4757_4255_534b_4559;
 const AUDIT_SEAL_ADVISORY_LOCK: i64 = 0x4757_4155_4453_454c;
@@ -49,6 +50,8 @@ pub fn embedded_migration_count() -> i64 {
 pub enum RuntimeRolePolicy {
     /// Production serving contract.
     Enforce,
+    /// Explicit local mode may use its isolated cluster superuser.
+    AllowPrivilegedLocal,
     /// Integration harness may use a privileged disposable role.
     AllowPrivilegedTest,
 }
@@ -185,6 +188,28 @@ pub struct PgStorage {
 }
 
 impl PgStorage {
+    /// Create a missing local database and apply every migration embedded in this binary.
+    ///
+    /// The supplied connection must be able to connect to the `PostgreSQL` maintenance database
+    /// and create the target database. Production deployments should continue to use the
+    /// dedicated `migrate` command with a pre-provisioned database.
+    pub async fn provision_and_migrate(database_url: &SecretValue) -> Result<MigrationReport, StorageError> {
+        let exists = Postgres::database_exists(database_url.expose())
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "database provisioning check failed");
+                StorageError::DatabaseProvisioningFailed
+            })?;
+        if !exists && let Err(error) = Postgres::create_database(database_url.expose()).await {
+            let appeared_concurrently = Postgres::database_exists(database_url.expose()).await.unwrap_or(false);
+            if !appeared_concurrently {
+                tracing::error!(error = %error, "database creation failed");
+                return Err(StorageError::DatabaseProvisioningFailed);
+            }
+        }
+        Self::migrate(database_url).await
+    }
+
     /// Connect using a plaintext DSN exposed only at this final adapter boundary.
     pub async fn connect(database_url: &SecretValue, role_policy: RuntimeRolePolicy) -> Result<Self, StorageError> {
         let options =
@@ -1888,7 +1913,7 @@ impl PgStorage {
     }
 
     async fn validate_role(&self, policy: RuntimeRolePolicy) -> Result<(), StorageError> {
-        if policy == RuntimeRolePolicy::AllowPrivilegedTest {
+        if policy != RuntimeRolePolicy::Enforce {
             return Ok(());
         }
         let role: String = sqlx::query_scalar("SELECT current_user")

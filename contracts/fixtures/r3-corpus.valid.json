@@ -6,7 +6,7 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/edge.rs": "4b340798aa70c1debacf38cd86781090e1fbd6273bbdf865e01fd31667f48c3e"
+      "crates/gateway-api/src/edge.rs": "d2fb1aef4f8bb9edf6e7e754a6d65c7658c68eb16a5b60e1c96dd47c4fe10417"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -22,8 +22,8 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/data.rs": "08c946841563aa10c52012acbdc156d432f1fa139d23300e56df36971f21cbce",
-      "crates/gateway-api/src/edge.rs": "4b340798aa70c1debacf38cd86781090e1fbd6273bbdf865e01fd31667f48c3e"
+      "crates/gateway-api/src/data.rs": "7408ecd79e8d696aca20908be845e93a9a7e490dae75e89d818e29500dcd5b1a",
+      "crates/gateway-api/src/edge.rs": "d2fb1aef4f8bb9edf6e7e754a6d65c7658c68eb16a5b60e1c96dd47c4fe10417"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -40,7 +40,7 @@
     ],
     "source_sha256": {
       "crates/gateway-policy/src/parser.rs": "38e73073e208a6fc5d92753f8be0bf06c159143b90cf78342ae22f288042a522",
-      "crates/gateway-api/src/edge.rs": "4b340798aa70c1debacf38cd86781090e1fbd6273bbdf865e01fd31667f48c3e"
+      "crates/gateway-api/src/edge.rs": "d2fb1aef4f8bb9edf6e7e754a6d65c7658c68eb16a5b60e1c96dd47c4fe10417"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -55,7 +55,7 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/edge.rs": "4b340798aa70c1debacf38cd86781090e1fbd6273bbdf865e01fd31667f48c3e"
+      "crates/gateway-api/src/edge.rs": "d2fb1aef4f8bb9edf6e7e754a6d65c7658c68eb16a5b60e1c96dd47c4fe10417"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -70,7 +70,7 @@
       "crates/gateway-policy/src/capability.rs"
     ],
     "source_sha256": {
-      "crates/gateway-policy/src/capability.rs": "478f73e1e5408c8c162273870dc60efd90bc713ed1f8dee336d6526a346b44ef"
+      "crates/gateway-policy/src/capability.rs": "18265ef4878006bd322ad60ed411b417ff2501168216b459152e071b1d14f07a"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -85,7 +85,7 @@
       "crates/gateway-policy/src/engine.rs"
     ],
     "source_sha256": {
-      "crates/gateway-policy/src/engine.rs": "aea4e3859fb28701d54da9bce79d576a6535cacd821566037dc555150693e972"
+      "crates/gateway-policy/src/engine.rs": "9625983e8c679657ed3c588e7706b3b7e4048ace055b7093eabd4801bed58f12"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -100,7 +100,7 @@
       "crates/gateway-policy/src/engine.rs"
     ],
     "source_sha256": {
-      "crates/gateway-policy/src/engine.rs": "aea4e3859fb28701d54da9bce79d576a6535cacd821566037dc555150693e972"
+      "crates/gateway-policy/src/engine.rs": "9625983e8c679657ed3c588e7706b3b7e4048ace055b7093eabd4801bed58f12"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -117,7 +117,7 @@
     ],
     "source_sha256": {
       "crates/gateway-policy/src/parser.rs": "38e73073e208a6fc5d92753f8be0bf06c159143b90cf78342ae22f288042a522",
-      "crates/gateway-policy/src/engine.rs": "aea4e3859fb28701d54da9bce79d576a6535cacd821566037dc555150693e972"
+      "crates/gateway-policy/src/engine.rs": "9625983e8c679657ed3c588e7706b3b7e4048ace055b7093eabd4801bed58f12"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -133,8 +133,8 @@
       "crates/gateway-policy/src/engine.rs"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/request.rs": "d713558b3c81e00920cc33ae516021ac4bc225ce8d75834aea43ecd6c37a70ac",
-      "crates/gateway-policy/src/engine.rs": "aea4e3859fb28701d54da9bce79d576a6535cacd821566037dc555150693e972"
+      "crates/gateway-domain/src/request.rs": "fc1c830b933ae07801e1292825cc2eba69fe823b214f44a6907fe2ae29979aea",
+      "crates/gateway-policy/src/engine.rs": "9625983e8c679657ed3c588e7706b3b7e4048ace055b7093eabd4801bed58f12"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -149,7 +149,7 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/edge.rs": "4b340798aa70c1debacf38cd86781090e1fbd6273bbdf865e01fd31667f48c3e"
+      "crates/gateway-api/src/edge.rs": "d2fb1aef4f8bb9edf6e7e754a6d65c7658c68eb16a5b60e1c96dd47c4fe10417"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -166,7 +166,7 @@
     ],
     "source_sha256": {
       "crates/gateway-policy/src/parser.rs": "38e73073e208a6fc5d92753f8be0bf06c159143b90cf78342ae22f288042a522",
-      "crates/gateway-policy/src/capability.rs": "478f73e1e5408c8c162273870dc60efd90bc713ed1f8dee336d6526a346b44ef"
+      "crates/gateway-policy/src/capability.rs": "18265ef4878006bd322ad60ed411b417ff2501168216b459152e071b1d14f07a"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -182,8 +182,8 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/data.rs": "08c946841563aa10c52012acbdc156d432f1fa139d23300e56df36971f21cbce",
-      "crates/gateway-api/src/edge.rs": "4b340798aa70c1debacf38cd86781090e1fbd6273bbdf865e01fd31667f48c3e"
+      "crates/gateway-api/src/data.rs": "7408ecd79e8d696aca20908be845e93a9a7e490dae75e89d818e29500dcd5b1a",
+      "crates/gateway-api/src/edge.rs": "d2fb1aef4f8bb9edf6e7e754a6d65c7658c68eb16a5b60e1c96dd47c4fe10417"
     },
     "privacy_canaries": [
       "synthetic-platform-key",

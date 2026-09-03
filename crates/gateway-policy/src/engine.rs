@@ -5,7 +5,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use gateway_domain::{
     AppliedChange, ChangeRisk, ClientClass, CredentialId, Digest, GenericAdjustedRequest, PinReason, Portability,
-    RequestReplayBody, RequestSnapshotSet, TrafficClass,
+    RequestReplayBody, RequestSnapshotSet,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -231,7 +231,6 @@ impl CompiledRuleSet {
 #[derive(Clone, Debug)]
 pub struct PolicyContext {
     pub client_class: ClientClass,
-    pub traffic_class: TrafficClass,
     pub protocol_headers: std::collections::BTreeMap<Box<str>, Value>,
     pub affinity_credential: Option<CredentialId>,
 }
@@ -251,18 +250,6 @@ impl PolicyContext {
         );
         request.insert(Box::<str>::from("model"), Value::String(model.to_owned()));
         request.insert(Box::<str>::from("stream"), Value::Bool(stream));
-        request.insert(
-            Box::<str>::from("traffic_class"),
-            Value::String(
-                match self.traffic_class {
-                    TrafficClass::Normal => "normal",
-                    TrafficClass::ExplicitProbe { .. } => "explicit_probe",
-                    TrafficClass::SuspectedProbe { .. } => "suspected_probe",
-                    TrafficClass::InternalUpstreamProbe => "internal_upstream_probe",
-                }
-                .to_owned(),
-            ),
-        );
         EvaluationContext {
             headers: self.protocol_headers.clone(),
             request,
@@ -400,6 +387,7 @@ fn capability_rule(id: &str, path: &str, kind: JsonType) -> crate::CapabilityRul
         enum_values: Vec::new(),
         minimum: if path == "body:/max_tokens" { Some(1.0) } else { None },
         maximum: None,
+        exclusive_maximum_path: None,
         required_children: BTreeSet::new(),
         when: CapabilityCondition::Always,
     }
@@ -414,6 +402,7 @@ fn allowed_rule(id: &str, path: &str, kinds: &[JsonType]) -> crate::CapabilityRu
         enum_values: Vec::new(),
         minimum: None,
         maximum: None,
+        exclusive_maximum_path: None,
         required_children: BTreeSet::new(),
         when: CapabilityCondition::Always,
     }
@@ -681,7 +670,7 @@ fn map_runtime_error(error: RuntimeCapabilityError) -> PolicyError {
 mod tests {
     use std::sync::Arc;
 
-    use gateway_domain::{ChangeRisk, ClientClass, Portability, RequestSnapshotSet, SnapshotVersion, TrafficClass};
+    use gateway_domain::{ChangeRisk, ClientClass, Portability, RequestSnapshotSet, SnapshotVersion};
     use serde_json::{Value, json};
 
     use super::{
@@ -698,7 +687,6 @@ mod tests {
             enforcement: version(),
             ruleset: None,
             capability: version(),
-            background_catalog: version(),
             client_profile_catalog: version(),
             price: version(),
             serializer: version(),
@@ -708,7 +696,6 @@ mod tests {
     fn context() -> PolicyContext {
         PolicyContext {
             client_class: ClientClass::NonClaudeCodeCli,
-            traffic_class: TrafficClass::Normal,
             protocol_headers: std::collections::BTreeMap::default(),
             affinity_credential: None,
         }

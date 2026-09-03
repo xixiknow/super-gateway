@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "profile_version": "2026-08-28.1",
+  "reviewed_at": "2026-08-28",
+  "source_urls": [
+    "https://platform.claude.com/docs/en/models/overview",
+    "https://platform.claude.com/docs/en/build-with-claude/thinking",
+    "https://platform.claude.com/docs/en/build-with-claude/effort",
+    "https://platform.claude.com/docs/en/api/messages/create"
+  ],
+  "profiles": {
+    "claude-fable-5": {
+      "thinking_modes": ["adaptive"],
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+      "sampling_profile": "default_only",
+      "profile_completeness": "complete"
+    },
+    "claude-opus-5": {
+      "thinking_modes": ["adaptive", "disabled"],
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+      "sampling_profile": "default_only",
+      "profile_completeness": "complete"
+    },
+    "claude-sonnet-5": {
+      "thinking_modes": ["adaptive", "disabled"],
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+      "sampling_profile": "default_only",
+      "profile_completeness": "complete"
+    },
+    "claude-opus-4-8": {
+      "thinking_modes": ["adaptive", "disabled"],
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+      "sampling_profile": "default_only",
+      "profile_completeness": "complete"
+    },
+    "claude-opus-4-7": {
+      "thinking_modes": ["adaptive", "disabled"],
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+      "sampling_profile": "default_only",
+      "profile_completeness": "complete"
+    },
+    "claude-opus-4-6": {
+      "thinking_modes": ["adaptive", "enabled", "disabled"],
+      "effort_levels": ["low", "medium", "high", "max"],
+      "sampling_profile": "thinking_sensitive",
+      "profile_completeness": "complete"
+    },
+    "claude-sonnet-4-6": {
+      "thinking_modes": ["adaptive", "enabled", "disabled"],
+      "effort_levels": ["low", "medium", "high", "max"],
+      "sampling_profile": "thinking_sensitive",
+      "profile_completeness": "complete"
+    },
+    "claude-opus-4-5-20251101": {
+      "thinking_modes": ["enabled", "disabled"],
+      "effort_levels": ["low", "medium", "high"],
+      "sampling_profile": "thinking_sensitive",
+      "profile_completeness": "complete"
+    },
+    "claude-sonnet-4-5-20250929": {
+      "thinking_modes": ["enabled", "disabled"],
+      "effort_levels": [],
+      "sampling_profile": "thinking_sensitive",
+      "profile_completeness": "complete"
+    },
+    "claude-haiku-4-5-20251001": {
+      "thinking_modes": ["enabled", "disabled"],
+      "effort_levels": [],
+      "sampling_profile": "thinking_sensitive",
+      "profile_completeness": "complete"
+    }
+  }
+}

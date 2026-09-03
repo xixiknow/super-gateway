@@ -28,8 +28,6 @@
         "key_provider_change",
         "legal_hold",
         "manual_delete",
-        "background_catalog_activate",
-        "background_catalog_risk_acceptance",
         "enforcement_activate"
       ],
       "x-enum-registry": "approval_kind"
@@ -131,8 +129,7 @@
           "type": "string"
         },
         "reason": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "action_snapshot_digest": {
           "type": "string"

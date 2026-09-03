@@ -228,8 +228,6 @@
       "key_provider_change",
       "legal_hold",
       "manual_delete",
-      "background_catalog_activate",
-      "background_catalog_risk_acceptance",
       "enforcement_activate"
     ],
     "approval_state": [

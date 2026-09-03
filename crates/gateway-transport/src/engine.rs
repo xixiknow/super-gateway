@@ -181,6 +181,17 @@ pub struct EngineCatalog {
 }
 
 impl EngineCatalog {
+    /// Construct an empty catalog for an explicitly unavailable local transport runtime.
+    ///
+    /// Production loaders must continue to use [`Self::build`], which rejects an empty catalog.
+    #[must_use]
+    pub fn empty_for_local(generation: ActivationGeneration) -> Self {
+        Self {
+            generation,
+            entries: BTreeMap::new(),
+        }
+    }
+
     /// Build a complete catalog before publication.
     ///
     /// # Errors

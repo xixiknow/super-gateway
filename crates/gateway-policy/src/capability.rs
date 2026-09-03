@@ -12,7 +12,7 @@ const MAX_CONDITION_NODES: usize = 128;
 const MAX_DIRECT_CHILDREN: usize = 32;
 const MAX_WILDCARDS: usize = 3;
 const MAX_PATH_EXPANSIONS: usize = 1_024;
-const REQUEST_FACTS: &[&str] = &["client_class", "model", "stream", "traffic_class"];
+const REQUEST_FACTS: &[&str] = &["client_class", "model", "stream"];
 
 /// Capability presence action. Capability validates; it never mutates requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -91,6 +91,9 @@ pub struct CapabilityRule {
     pub enum_values: Vec<Value>,
     pub minimum: Option<f64>,
     pub maximum: Option<f64>,
+    /// Optional single-valued path whose numeric value is an exclusive upper bound.
+    #[serde(default)]
+    pub exclusive_maximum_path: Option<Box<str>>,
     #[serde(default)]
     pub required_children: BTreeSet<Box<str>>,
     pub when: CapabilityCondition,
@@ -165,6 +168,9 @@ impl CompiledCapabilitySnapshot {
         }
         for rule in &rules {
             validate_path(&rule.path)?;
+            if let Some(path) = rule.exclusive_maximum_path.as_deref() {
+                validate_relative_path(path)?;
+            }
             validate_condition(&rule.when)?;
             if rule.minimum.zip(rule.maximum).is_some_and(|(min, max)| min > max) {
                 return Err(CapabilityCompileError::EmptyRange);
@@ -246,6 +252,21 @@ impl CompiledCapabilitySnapshot {
                 {
                     diagnostics.push(diagnostic(path, "out_of_range"));
                 }
+                if let Some(relative_path) = constraints.exclusive_maximum_path.as_deref()
+                    && let Some(number) = value.as_f64()
+                {
+                    let relative_values = expand_path(relative_path, tree, context)?;
+                    if relative_values.len() > 1 {
+                        return Err(RuntimeCapabilityError::Conflict);
+                    }
+                    if relative_values
+                        .first()
+                        .and_then(|value| value.as_f64())
+                        .is_some_and(|maximum| number >= maximum)
+                    {
+                        diagnostics.push(diagnostic(path, "exclusive_maximum"));
+                    }
+                }
                 if let Some(object) = value.as_object() {
                     for child in &constraints.required_children {
                         if !object.contains_key(child.as_ref()) {
@@ -299,6 +320,7 @@ struct EffectiveConstraints {
     enum_values: Vec<Value>,
     minimum: Option<f64>,
     maximum: Option<f64>,
+    exclusive_maximum_path: Option<Box<str>>,
     required_children: BTreeSet<Box<str>>,
 }
 
@@ -316,14 +338,18 @@ fn validate_unconditional_intersections(rules: &[CapabilityRule]) -> Result<(), 
 }
 
 fn merge_rules(rules: &[&CapabilityRule]) -> Result<EffectiveConstraints, ()> {
-    let mut action = CapabilityAction::Allowed;
+    let mut action: Option<CapabilityAction> = None;
     let mut types: Option<BTreeSet<JsonType>> = None;
     let mut enum_values: Option<Vec<Value>> = None;
     let mut minimum: Option<f64> = None;
     let mut maximum: Option<f64> = None;
+    let mut exclusive_maximum_path: Option<Box<str>> = None;
     let mut required_children = BTreeSet::new();
     for rule in rules {
-        action = merge_action(action, rule.action)?;
+        action = Some(match action {
+            None => rule.action,
+            Some(current) => merge_action(current, rule.action)?,
+        });
         if !rule.types.is_empty() {
             types = Some(match types {
                 None => rule.types.clone(),
@@ -347,6 +373,15 @@ fn merge_rules(rules: &[&CapabilityRule]) -> Result<EffectiveConstraints, ()> {
             (Some(left), Some(right)) => Some(left.min(right)),
             (left, right) => left.or(right),
         };
+        if let Some(path) = rule.exclusive_maximum_path.as_ref() {
+            if exclusive_maximum_path
+                .as_deref()
+                .is_some_and(|current| current != path.as_ref())
+            {
+                return Err(());
+            }
+            exclusive_maximum_path = Some(path.clone());
+        }
         required_children.extend(rule.required_children.iter().cloned());
     }
     let types = types.unwrap_or_default();
@@ -358,11 +393,12 @@ fn merge_rules(rules: &[&CapabilityRule]) -> Result<EffectiveConstraints, ()> {
         return Err(());
     }
     Ok(EffectiveConstraints {
-        action,
+        action: action.unwrap_or(CapabilityAction::Allowed),
         types,
         enum_values,
         minimum,
         maximum,
+        exclusive_maximum_path,
         required_children,
     })
 }
@@ -397,6 +433,14 @@ fn validate_path(path: &str) -> Result<(), CapabilityCompileError> {
     } else {
         Err(CapabilityCompileError::InvalidPath)
     }
+}
+
+fn validate_relative_path(path: &str) -> Result<(), CapabilityCompileError> {
+    validate_path(path)?;
+    if !path.starts_with("body:/") || path.contains('*') {
+        return Err(CapabilityCompileError::InvalidPath);
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_condition(condition: &CapabilityCondition) -> Result<(), CapabilityCompileError> {
@@ -586,6 +630,7 @@ mod tests {
             enum_values: Vec::new(),
             minimum: None,
             maximum: None,
+            exclusive_maximum_path: None,
             required_children: BTreeSet::new(),
             when: CapabilityCondition::Always,
         }
@@ -624,6 +669,18 @@ mod tests {
     }
 
     #[test]
+    fn a_single_unconditional_forbidden_rule_is_enforceable() -> Result<(), Box<dyn std::error::Error>> {
+        let snapshot = CompiledCapabilitySnapshot::compile(
+            "cap-v1",
+            "model-a",
+            vec![rule("top-k", "body:/top_k", CapabilityAction::Forbidden, &[])],
+        )?;
+        let diagnostics = snapshot.validate(&json!({"top_k":10}), &EvaluationContext::default(), true)?;
+        assert_eq!(diagnostics[0].code.as_ref(), "forbidden");
+        Ok(())
+    }
+
+    #[test]
     fn wildcard_expansion_is_bounded() -> Result<(), Box<dyn std::error::Error>> {
         let snapshot = CompiledCapabilitySnapshot::compile(
             "cap-v1",
@@ -638,5 +695,47 @@ mod tests {
         let body = json!({"messages": (0..1025).map(|_| json!({"content":[{"text":"x"}]})).collect::<Vec<_>>()});
         assert!(snapshot.validate(&body, &EvaluationContext::default(), true).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn relative_exclusive_maximum_rejects_equal_or_larger_values() -> Result<(), Box<dyn std::error::Error>> {
+        let mut budget = rule(
+            "thinking-budget",
+            "body:/thinking/budget_tokens",
+            CapabilityAction::Required,
+            &[JsonType::Integer],
+        );
+        budget.minimum = Some(1_024.0);
+        budget.exclusive_maximum_path = Some("body:/max_tokens".into());
+        let snapshot = CompiledCapabilitySnapshot::compile("cap-v1", "model-a", vec![budget])?;
+
+        let valid = snapshot.validate(
+            &json!({"max_tokens":4096,"thinking":{"budget_tokens":2048}}),
+            &EvaluationContext::default(),
+            true,
+        )?;
+        let invalid = snapshot.validate(
+            &json!({"max_tokens":2048,"thinking":{"budget_tokens":2048}}),
+            &EvaluationContext::default(),
+            true,
+        )?;
+        assert!(valid.is_empty());
+        assert_eq!(invalid[0].code.as_ref(), "exclusive_maximum");
+        Ok(())
+    }
+
+    #[test]
+    fn conflicting_relative_maximum_paths_fail_compile() {
+        let mut first = rule(
+            "a",
+            "body:/thinking/budget_tokens",
+            CapabilityAction::Allowed,
+            &[JsonType::Integer],
+        );
+        first.exclusive_maximum_path = Some("body:/max_tokens".into());
+        let mut second = first.clone();
+        second.id = "b".into();
+        second.exclusive_maximum_path = Some("body:/other_limit".into());
+        assert!(CompiledCapabilitySnapshot::compile("cap-v1", "model-a", vec![first, second]).is_err());
     }
 }

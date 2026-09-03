@@ -24,7 +24,7 @@ pub use credential::{
 pub use egress_rebind::EgressRebindCommit;
 pub use export::{UsageExportArtifactCommit, UsageExportDataRow, UsageExportDownload, UsageExportWork};
 pub use group_migration::{CredentialGroupMigrationCommit, CredentialGroupMigrationWork};
-pub use model_discovery::{DiscoveredModel, ModelDiscoveryCommit};
+pub use model_discovery::{DiscoveredCapabilityCandidate, DiscoveredModel, ModelDiscoveryCommit, ModelDiscoverySource};
 pub use postgres::{
     AuditOutboxRecord, AuditVerificationReport, BootstrapAdminRecord, BootstrapOutcome, CURRENT_SCHEMA_VERSION,
     GroupOwnerClaim, JobLease, MINIMUM_SCHEMA_VERSION, MigrationReport, OutboxLease, PgStorage, RuntimeRolePolicy,
@@ -78,6 +78,9 @@ pub enum StorageError {
     /// A forward migration failed.
     #[error("database migration failed")]
     MigrationFailed,
+    /// The local target database could not be created or inspected.
+    #[error("database provisioning failed")]
+    DatabaseProvisioningFailed,
     /// The database schema is outside this binary's supported range or has a failed migration.
     #[error("database schema is incompatible")]
     SchemaIncompatible,

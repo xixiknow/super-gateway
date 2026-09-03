@@ -10,7 +10,7 @@
   "testkit_abi_version": "gateway-testkit-r1-v1",
   "schema_compatibility": {
     "minimum": 20260824000100,
-    "maximum": 20260824003800
+    "maximum": 20260901000100
   },
   "cargo_lock_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "contract_tree_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -52,7 +52,13 @@
     "20260824003500_r3_policy_artifact_release.sql": "db8115ff0af4da397cb9f08a71b2f2c3e1526edefa7394796479a78cc51febb8",
     "20260824003600_r2_business_key_retirement.sql": "915bf255c96bdb844d88895cb8d36e020add88430a1ae126d7aaab8316e292ee",
     "20260824003700_r9_alert_notification_fanout.sql": "88c188a3e9b743558848b688b9059e82ef68ed2efce3ac7e9d84c489b3e55cd5",
-    "20260824003800_r7_cancel_estimate_hardening.sql": "1cb6a0e6aba4eb657b249099a716ad1e9d66ad3b026c06eb3a8e29ce1dc626a9"
+    "20260824003800_r7_cancel_estimate_hardening.sql": "1cb6a0e6aba4eb657b249099a716ad1e9d66ad3b026c06eb3a8e29ce1dc626a9",
+    "20260824003900_user_key_limits.sql": "81a8589fd9d5f72dc4419f2e3b888925ee0b03c079bf1be1b5576811a42daa65",
+    "20260824004000_remove_archetype_max_connections.sql": "a4d5a4aee9f8412e19712c90654b9891183a8c3341f2c24ca35fe8b32249bbf0",
+    "20260824004100_public_model_directory.sql": "a6615121f0aa27769b295af5d467f75e3bdadc1d117e12eb90ede1927721d579",
+    "20260824004200_model_provider_capabilities.sql": "4308f001609c2144b1a17a00dc81dd8bbbb313ebe6c872194d5987d1479aa577",
+    "20260824004300_model_capability_origin.sql": "c98e8784c591cea8ed0c179320f8775fe8eb795facebbbcf9607689d0cc05fd8",
+    "20260901000100_retire_enforcement_and_background.sql": "2affb81393c6c4d61ca7aee940039b1571c63c29f86386884166750babe9f458"
   },
   "artifacts": [
     {

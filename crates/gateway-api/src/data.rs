@@ -2,7 +2,7 @@
 #![allow(missing_docs, clippy::doc_markdown)]
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -11,13 +11,11 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use gateway_domain::{
     AgentId, ClientClass, GenericAdjustedRequest, GroupId, PlatformKeyId, RequestId, SecretBytes, SecretValue,
-    SessionId, TrafficClass, UserId,
+    SessionId, UserId,
 };
 use gateway_policy::RequestPolicy;
 use gateway_services::security::lookup_digest;
 use ipnet::IpNet;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 
@@ -47,208 +45,6 @@ impl RateLimit {
         requests_per_minute: 60,
         burst: 10,
     };
-}
-
-/// Explicit-probe action configured at Group scope.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProbeAction {
-    #[default]
-    Observe,
-    Throttle,
-    Reject,
-}
-
-/// One strong, deterministic Background Catalog signal. All signals in an
-/// entry must match before the request can be classified as explicit
-/// background traffic.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum BackgroundSignal {
-    HeaderEquals { name: Box<str>, value: Box<str> },
-    HeaderContains { name: Box<str>, value: Box<str> },
-    BodyEquals { pointer: Box<str>, value: Value },
-    BodyPresent { pointer: Box<str> },
-}
-
-/// A published, deterministic Background Catalog entry.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BackgroundCatalogEntry {
-    pub id: Box<str>,
-    pub action: ProbeAction,
-    #[serde(default)]
-    pub client_classes: BTreeSet<ClientClass>,
-    pub match_all: Vec<BackgroundSignal>,
-}
-
-/// Versioned Background Catalog payload stored inside the generic Artifact
-/// envelope.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BackgroundCatalogDocument {
-    pub entries: Vec<BackgroundCatalogEntry>,
-}
-
-/// Immutable, validated Background Catalog shared by every AccessGrant in one
-/// management-runtime generation.
-#[derive(Clone, Debug, Default)]
-pub struct BackgroundCatalog {
-    entries: Arc<[BackgroundCatalogEntry]>,
-    action_by_id: Arc<BTreeMap<Box<str>, ProbeAction>>,
-}
-
-impl BackgroundCatalog {
-    /// Compile a catalog and reject ambiguous duplicate match definitions.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BackgroundCatalogError`] when the catalog is empty, exceeds
-    /// its bounds, contains an invalid signal, or has ambiguous identities or
-    /// match definitions.
-    pub fn compile(mut document: BackgroundCatalogDocument) -> Result<Self, BackgroundCatalogError> {
-        if document.entries.is_empty() || document.entries.len() > 10_000 {
-            return Err(BackgroundCatalogError::EntryCount);
-        }
-        let mut ids = BTreeSet::new();
-        let mut signatures = BTreeSet::new();
-        for entry in &document.entries {
-            if entry.id.is_empty()
-                || entry.id.len() > 128
-                || !entry
-                    .id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
-            {
-                return Err(BackgroundCatalogError::EntryId);
-            }
-            if !ids.insert(entry.id.clone()) {
-                return Err(BackgroundCatalogError::DuplicateEntryId);
-            }
-            if entry.match_all.is_empty() || entry.match_all.len() > 16 {
-                return Err(BackgroundCatalogError::SignalCount);
-            }
-            for signal in &entry.match_all {
-                validate_background_signal(signal)?;
-            }
-            let signature = serde_json::to_vec(&(entry.client_classes.clone(), entry.match_all.clone()))
-                .map_err(|_| BackgroundCatalogError::InvalidSignal)?;
-            if !signatures.insert(signature) {
-                return Err(BackgroundCatalogError::DuplicateMatch);
-            }
-        }
-        // More-specific templates win, while ID supplies a deterministic tie
-        // breaker that is independent from JSON array order.
-        document.entries.sort_by(|left, right| {
-            right
-                .match_all
-                .len()
-                .cmp(&left.match_all.len())
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        let action_by_id = document
-            .entries
-            .iter()
-            .map(|entry| (entry.id.clone(), entry.action))
-            .collect();
-        Ok(Self {
-            entries: document.entries.into(),
-            action_by_id: Arc::new(action_by_id),
-        })
-    }
-
-    #[must_use]
-    pub fn classify(&self, headers: &http::HeaderMap, body: &Value, client_class: ClientClass) -> Option<&str> {
-        self.entries
-            .iter()
-            .find(|entry| {
-                (entry.client_classes.is_empty() || entry.client_classes.contains(&client_class))
-                    && entry
-                        .match_all
-                        .iter()
-                        .all(|signal| background_signal_matches(signal, headers, body))
-            })
-            .map(|entry| entry.id.as_ref())
-    }
-
-    #[must_use]
-    pub fn action(&self, entry_id: &str) -> ProbeAction {
-        self.action_by_id.get(entry_id).copied().unwrap_or(ProbeAction::Observe)
-    }
-
-    #[must_use]
-    pub fn entries(&self) -> &[BackgroundCatalogEntry] {
-        &self.entries
-    }
-}
-
-#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
-pub enum BackgroundCatalogError {
-    #[error("Background Catalog must contain between 1 and 10000 entries")]
-    EntryCount,
-    #[error("Background Catalog entry id is invalid")]
-    EntryId,
-    #[error("Background Catalog entry id is duplicated")]
-    DuplicateEntryId,
-    #[error("Background Catalog entry must contain between 1 and 16 strong signals")]
-    SignalCount,
-    #[error("Background Catalog signal is invalid")]
-    InvalidSignal,
-    #[error("Background Catalog contains an ambiguous duplicate match")]
-    DuplicateMatch,
-}
-
-fn validate_background_signal(signal: &BackgroundSignal) -> Result<(), BackgroundCatalogError> {
-    match signal {
-        BackgroundSignal::HeaderEquals { name, value } | BackgroundSignal::HeaderContains { name, value } => {
-            if name.len() > 128
-                || http::header::HeaderName::from_bytes(name.as_bytes()).is_err()
-                || value.is_empty()
-                || value.len() > 1_024
-                || value.contains(['\r', '\n'])
-            {
-                return Err(BackgroundCatalogError::InvalidSignal);
-            }
-        }
-        BackgroundSignal::BodyEquals { pointer, value } => {
-            if !valid_catalog_pointer(pointer)
-                || matches!(value, Value::Array(_) | Value::Object(_))
-                || value.to_string().len() > 1_024
-            {
-                return Err(BackgroundCatalogError::InvalidSignal);
-            }
-        }
-        BackgroundSignal::BodyPresent { pointer } => {
-            if !valid_catalog_pointer(pointer) {
-                return Err(BackgroundCatalogError::InvalidSignal);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn valid_catalog_pointer(pointer: &str) -> bool {
-    pointer.starts_with('/') && pointer.len() <= 256 && !pointer.contains("//") && !pointer.contains(['\r', '\n'])
-}
-
-fn background_signal_matches(signal: &BackgroundSignal, headers: &http::HeaderMap, body: &Value) -> bool {
-    match signal {
-        BackgroundSignal::HeaderEquals { name, value } => {
-            unique_catalog_header(headers, name).is_some_and(|candidate| candidate == value.as_ref())
-        }
-        BackgroundSignal::HeaderContains { name, value } => unique_catalog_header(headers, name)
-            .is_some_and(|candidate| candidate.to_ascii_lowercase().contains(&value.to_ascii_lowercase())),
-        BackgroundSignal::BodyEquals { pointer, value } => {
-            body.pointer(pointer).is_some_and(|candidate| candidate == value)
-        }
-        BackgroundSignal::BodyPresent { pointer } => body.pointer(pointer).is_some(),
-    }
-}
-
-fn unique_catalog_header<'a>(headers: &'a http::HeaderMap, name: &str) -> Option<&'a str> {
-    let mut values = headers.get_all(name).iter();
-    let first = values.next()?.to_str().ok()?;
-    values.next().is_none().then_some(first)
 }
 
 /// Effective request-frozen Content Audit decision. Group policy and a valid
@@ -283,11 +79,6 @@ pub struct AccessGrant {
     /// Empty means no source-IP restriction.
     pub ip_allowlist: Vec<IpNet>,
     pub accepted_client_classes: BTreeSet<ClientClass>,
-    /// Compiled global Background Catalog frozen with this access generation.
-    pub background_catalog: Arc<BackgroundCatalog>,
-    pub probe_action: ProbeAction,
-    /// Whether the special explicit-probe marker is authorized for this key/group.
-    pub allow_explicit_probe_marker: bool,
     pub content_audit: ContentAuditMode,
     /// Key-scoped approval expiry. Group-required full audit has no expiry.
     pub content_audit_expires_at_unix_seconds: Option<u64>,
@@ -299,6 +90,31 @@ pub struct AccessGrant {
 pub trait AccessResolver: Send + Sync {
     /// Resolve by plaintext at the shortest possible boundary.
     fn resolve(&self, secret: &SecretValue) -> Option<Arc<AccessGrant>>;
+}
+
+/// Result of the durable user/key spend-cap admission check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpendDecision {
+    Allowed,
+    Limited,
+    Unavailable,
+}
+
+/// Durable spend admission boundary evaluated before a message enters scheduling.
+#[async_trait]
+pub trait SpendAuthorizer: Send + Sync {
+    async fn authorize(&self, owner_user_id: &UserId, platform_key_id: &PlatformKeyId) -> SpendDecision;
+}
+
+/// Development/test default when no durable spend caps are configured.
+#[derive(Debug, Default)]
+pub struct AllowAllSpendAuthorizer;
+
+#[async_trait]
+impl SpendAuthorizer for AllowAllSpendAuthorizer {
+    async fn authorize(&self, _owner_user_id: &UserId, _platform_key_id: &PlatformKeyId) -> SpendDecision {
+        SpendDecision::Allowed
+    }
 }
 
 /// Production-safe empty resolver used until an active access snapshot is published.
@@ -511,7 +327,6 @@ pub struct DispatchRequest {
     pub base_session_id: SessionId,
     pub agent_id: AgentId,
     pub client_class: ClientClass,
-    pub traffic_class: TrafficClass,
     pub identity_conflict: bool,
     pub accepted_at: Duration,
     pub pre_upstream_deadline: Duration,
@@ -585,6 +400,7 @@ pub struct DataPlaneState {
     pub observability: gateway_services::observability::DataPlaneObservability,
     pub business_rates: crate::BusinessRateLimiter,
     pub concurrency: crate::KeyConcurrencyLimiter,
+    pub spend_authorizer: Arc<dyn SpendAuthorizer>,
     pub trusted_proxies: crate::TrustedProxyConfig,
     pub platform_body_limit_bytes: usize,
 }
@@ -600,16 +416,9 @@ impl std::fmt::Debug for DataPlaneState {
 
 #[cfg(test)]
 mod runtime_tests {
-    use std::{collections::BTreeSet, sync::Arc};
+    use std::sync::Arc;
 
-    use gateway_domain::ClientClass;
-    use http::{HeaderMap, HeaderValue};
-    use serde_json::json;
-
-    use super::{
-        BackgroundCatalog, BackgroundCatalogDocument, BackgroundCatalogEntry, BackgroundCatalogError, BackgroundSignal,
-        DenyAllAccessResolver, ManagementRuntimeBridge, ModelRecord, ProbeAction, StaticModelCatalog,
-    };
+    use super::{DenyAllAccessResolver, ManagementRuntimeBridge, ModelRecord, StaticModelCatalog};
 
     #[test]
     fn runtime_publish_is_atomic_and_existing_request_snapshot_stays_frozen() {
@@ -626,67 +435,6 @@ mod runtime_tests {
         assert!(!Arc::ptr_eq(&frozen, &current));
         assert_eq!(frozen.models.published()[0].id.as_ref(), "old");
         assert_eq!(current.models.published()[0].id.as_ref(), "new");
-    }
-
-    #[test]
-    fn background_catalog_uses_strong_all_match_signals_and_owns_the_action() -> Result<(), BackgroundCatalogError> {
-        let catalog = BackgroundCatalog::compile(BackgroundCatalogDocument {
-            entries: vec![BackgroundCatalogEntry {
-                id: "claude-code-heartbeat-v1".into(),
-                action: ProbeAction::Reject,
-                client_classes: BTreeSet::from([ClientClass::ClaudeCodeCli]),
-                match_all: vec![
-                    BackgroundSignal::HeaderContains {
-                        name: "user-agent".into(),
-                        value: "claude-code".into(),
-                    },
-                    BackgroundSignal::BodyEquals {
-                        pointer: "/max_tokens".into(),
-                        value: json!(1),
-                    },
-                ],
-            }],
-        })?;
-        let mut headers = HeaderMap::new();
-        headers.insert("user-agent", HeaderValue::from_static("Claude-Code/2.1.220"));
-        let request = json!({"max_tokens":1,"messages":[]});
-        assert_eq!(
-            catalog.classify(&headers, &request, ClientClass::ClaudeCodeCli),
-            Some("claude-code-heartbeat-v1")
-        );
-        assert_eq!(catalog.action("claude-code-heartbeat-v1"), ProbeAction::Reject);
-        assert_eq!(
-            catalog.classify(&headers, &request, ClientClass::NonClaudeCodeCli),
-            None
-        );
-        assert_eq!(
-            catalog.classify(&headers, &json!({"max_tokens":8}), ClientClass::ClaudeCodeCli),
-            None
-        );
-        headers.append("user-agent", HeaderValue::from_static("claude-code/duplicate"));
-        assert_eq!(catalog.classify(&headers, &request, ClientClass::ClaudeCodeCli), None);
-        Ok(())
-    }
-
-    #[test]
-    fn background_catalog_rejects_ambiguous_duplicate_matches() {
-        let entry = BackgroundCatalogEntry {
-            id: "one".into(),
-            action: ProbeAction::Observe,
-            client_classes: BTreeSet::new(),
-            match_all: vec![BackgroundSignal::BodyPresent {
-                pointer: "/metadata".into(),
-            }],
-        };
-        let mut duplicate = entry.clone();
-        duplicate.id = "two".into();
-        duplicate.action = ProbeAction::Throttle;
-        assert!(matches!(
-            BackgroundCatalog::compile(BackgroundCatalogDocument {
-                entries: vec![entry, duplicate]
-            }),
-            Err(BackgroundCatalogError::DuplicateMatch)
-        ));
     }
 
     fn model(id: &str) -> ModelRecord {

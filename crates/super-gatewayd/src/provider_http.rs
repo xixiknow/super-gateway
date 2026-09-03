@@ -8,6 +8,7 @@ use gateway_domain::{EgressMode, EgressRouteSnapshot, ProxyCredentials, SecretBy
 use gateway_services::{
     credential::CredentialServiceError,
     credential_provider::{ProviderHttpPort, ProviderHttpRequest, ProviderHttpResponse},
+    model_discovery::PublicModelDirectoryHttpPort,
     security::{EnvelopeAad, EnvelopeService, LocalAesKeyProvider, SecretEnvelope},
 };
 use gateway_storage::PgStorage;
@@ -101,6 +102,63 @@ impl ProviderHttpPort for PgProviderHttpPort {
             body: response.body,
         })
     }
+}
+
+#[async_trait]
+impl PublicModelDirectoryHttpPort for PgProviderHttpPort {
+    async fn execute_public(
+        &self,
+        endpoint: http::Uri,
+        response_limit: usize,
+    ) -> Result<ProviderHttpResponse, CredentialServiceError> {
+        if endpoint.scheme_str() != Some("https")
+            || endpoint.host() != Some("platform.claude.com")
+            || endpoint.port_u16().is_some_and(|port| port != 443)
+            || !is_allowed_public_model_document(endpoint.path())
+            || endpoint.query().is_some()
+        {
+            return Err(CredentialServiceError::EvidencePending);
+        }
+        let path_and_query = endpoint.path_and_query().map_or("/", http::uri::PathAndQuery::as_str);
+        let response = self
+            .client
+            .execute(ProviderHttpsRequest {
+                method: http::Method::GET,
+                host: "platform.claude.com".into(),
+                port: 443,
+                host_header: "platform.claude.com".into(),
+                path_and_query: SecretValue::new(path_and_query.to_owned()),
+                headers: Vec::new(),
+                body: SecretBytes::new(Vec::new()),
+                response_limit,
+                egress: EgressRouteSnapshot::Direct,
+                cancellation: CancellationToken::new(),
+            })
+            .await
+            .map_err(|_| CredentialServiceError::Transient)?;
+        Ok(ProviderHttpResponse {
+            status: response.status,
+            headers: response
+                .retry_after
+                .into_iter()
+                .map(|value| ("retry-after".into(), value))
+                .collect(),
+            body: response.body,
+        })
+    }
+}
+
+fn is_allowed_public_model_document(path: &str) -> bool {
+    if path == "/docs/en/models/overview.md" {
+        return true;
+    }
+    path.strip_prefix("/docs/en/models/")
+        .and_then(|value| value.strip_suffix("/overview.md"))
+        .is_some_and(|slug| {
+            !slug.is_empty()
+                && slug.len() <= 64
+                && slug.chars().all(|value| value.is_ascii_alphanumeric() || value == '-')
+        })
 }
 
 pub(crate) async fn resolve_egress(
@@ -282,6 +340,7 @@ async fn decrypt_secret(
         .map_err(|_| CredentialServiceError::WaitingEgress)
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) async fn resolve_proxy_route(
     storage: &PgStorage,
     proxy_id: Uuid,
@@ -359,4 +418,19 @@ fn parse_proxy_credentials(secret: &SecretBytes) -> Result<ProxyCredentials, Cre
         username: SecretValue::new(username),
         password: SecretValue::new(password),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_public_model_document;
+
+    #[test]
+    fn public_model_document_allowlist_accepts_overview_and_bounded_model_details() {
+        assert!(is_allowed_public_model_document("/docs/en/models/overview.md"));
+        assert!(is_allowed_public_model_document("/docs/en/models/opus-4-8/overview.md"));
+        assert!(!is_allowed_public_model_document(
+            "/docs/en/models/../about-claude/model-deprecations.md"
+        ));
+        assert!(!is_allowed_public_model_document("/docs/en/models/opus-4-8/pricing.md"));
+    }
 }

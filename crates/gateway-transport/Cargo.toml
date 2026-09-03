@@ -8,7 +8,7 @@ publish.workspace = true
 
 [features]
 default = []
-boring-backend = ["dep:boring", "dep:tokio-boring"]
+boring-backend = ["dep:boring", "dep:rustls-native-certs", "dep:tokio-boring"]
 
 [dependencies]
 arc-swap.workspace = true
@@ -21,6 +21,7 @@ futures-core.workspace = true
 gateway-domain = { path = "../gateway-domain" }
 http.workspace = true
 httparse.workspace = true
+rustls-native-certs = { workspace = true, optional = true }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

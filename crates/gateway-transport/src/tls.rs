@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use boring::{
     hash::MessageDigest,
-    ssl::{SslConnector, SslMethod, SslVerifyMode},
+    ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslVerifyMode},
+    x509::X509,
 };
 use tokio_boring::SslStream;
 use tokio_util::sync::CancellationToken;
@@ -205,15 +206,7 @@ impl BoringTlsConnector {
                 HealthEffect::TransientFailure,
             )
         })?;
-        builder.set_verify(SslVerifyMode::PEER);
-        builder.set_default_verify_paths().map_err(|_| {
-            tls_error(
-                TransportErrorCode::TlsCertificate,
-                "provider_tls_trust_store",
-                proxied,
-                HealthEffect::TransientFailure,
-            )
-        })?;
+        configure_platform_trust(&mut builder, proxied, "provider_tls_trust_store")?;
         builder.set_alpn_protos(b"\x08http/1.1").map_err(|_| {
             tls_error(
                 TransportErrorCode::TlsHandshake,
@@ -282,6 +275,7 @@ fn build_connector(profile: &TlsProfile, proxied: bool) -> Result<SslConnector, 
             HealthEffect::QuarantineBundle,
         )
     })?;
+    configure_platform_trust(&mut builder, proxied, "tls_trust_store")?;
     let alpn_wire = alpn_wire(&profile.alpn)?;
     builder.set_alpn_protos(&alpn_wire).map_err(|_| {
         tls_error(
@@ -347,6 +341,56 @@ fn build_connector(profile: &TlsProfile, proxied: bool) -> Result<SslConnector, 
     Ok(builder.build())
 }
 
+fn configure_platform_trust(
+    builder: &mut SslConnectorBuilder,
+    proxied: bool,
+    diagnostic: &'static str,
+) -> Result<(), TransportError> {
+    builder.set_verify(SslVerifyMode::PEER);
+    #[cfg(target_os = "windows")]
+    {
+        let native = rustls_native_certs::load_native_certs();
+        let mut added = 0_usize;
+        for certificate in native.certs {
+            let certificate = X509::from_der(certificate.as_ref()).map_err(|_| {
+                tls_error(
+                    TransportErrorCode::TlsCertificate,
+                    diagnostic,
+                    proxied,
+                    HealthEffect::TransientFailure,
+                )
+            })?;
+            builder.cert_store_mut().add_cert(certificate).map_err(|_| {
+                tls_error(
+                    TransportErrorCode::TlsCertificate,
+                    diagnostic,
+                    proxied,
+                    HealthEffect::TransientFailure,
+                )
+            })?;
+            added += 1;
+        }
+        if added == 0 {
+            return Err(tls_error(
+                TransportErrorCode::TlsCertificate,
+                diagnostic,
+                proxied,
+                HealthEffect::TransientFailure,
+            ));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    builder.set_default_verify_paths().map_err(|_| {
+        tls_error(
+            TransportErrorCode::TlsCertificate,
+            diagnostic,
+            proxied,
+            HealthEffect::TransientFailure,
+        )
+    })?;
+    Ok(())
+}
+
 fn alpn_wire(protocols: &[Box<str>]) -> Result<Vec<u8>, TransportError> {
     let mut wire = Vec::new();
     for protocol in protocols {
@@ -380,8 +424,14 @@ fn pre_tls13_cipher_name(id: u16) -> Option<&'static str> {
         0xc02c => Some("ECDHE-ECDSA-AES256-GCM-SHA384"),
         0xcca9 => Some("ECDHE-ECDSA-CHACHA20-POLY1305"),
         0xcca8 => Some("ECDHE-RSA-CHACHA20-POLY1305"),
+        0xc009 => Some("ECDHE-ECDSA-AES128-SHA"),
+        0xc013 => Some("ECDHE-RSA-AES128-SHA"),
+        0xc00a => Some("ECDHE-ECDSA-AES256-SHA"),
+        0xc014 => Some("ECDHE-RSA-AES256-SHA"),
         0x009c => Some("AES128-GCM-SHA256"),
         0x009d => Some("AES256-GCM-SHA384"),
+        0x002f => Some("AES128-SHA"),
+        0x0035 => Some("AES256-SHA"),
         _ => None,
     }
 }

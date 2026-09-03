@@ -1498,7 +1498,6 @@ mod tests {
                 enforcement: version(),
                 ruleset: None,
                 capability: version(),
-                background_catalog: version(),
                 client_profile_catalog: version(),
                 price: version(),
                 serializer: version(),

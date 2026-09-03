@@ -4,11 +4,13 @@
 mod admin_backend;
 mod app;
 mod config;
+mod local;
+mod local_bundle;
 mod managed_browser;
 mod observability;
 mod operations;
 mod production_dispatcher;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod provider_http;
 
 use anyhow::Context as _;
@@ -52,6 +54,17 @@ async fn main() -> anyhow::Result<()> {
             report.current_version, report.applied_count
         );
         return Ok(());
+    }
+
+    if command.as_deref() == Some("local") {
+        let mut local_runtime = local::LocalRuntime::prepare()
+            .await
+            .context("local runtime preparation failed")?;
+        local_runtime.print_summary();
+        let config = local_runtime.take_config()?;
+        let serve_result = app::run_local(config).await;
+        local_runtime.shutdown().await;
+        return serve_result;
     }
 
     let config = GatewayConfig::load().context("static gateway configuration is invalid")?;

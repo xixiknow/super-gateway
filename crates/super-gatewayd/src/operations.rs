@@ -1684,27 +1684,6 @@ async fn process_model_catalog_discovery(
     collector: Option<&PgModelCatalogCollector>,
     job: &JobLease,
 ) {
-    let uuid = |key: &str| {
-        job.payload
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .and_then(|value| Uuid::parse_str(value).ok())
-    };
-    let parsed = uuid("source_credential_id")
-        .zip(
-            job.payload
-                .get("credential_revision")
-                .and_then(serde_json::Value::as_i64),
-        )
-        .zip(job.payload.get("token_version").and_then(serde_json::Value::as_i64))
-        .zip(uuid("binding_id"))
-        .zip(job.payload.get("egress_epoch").and_then(serde_json::Value::as_i64));
-    let Some(((((credential_id, revision), token_version), binding_id), egress_epoch)) = parsed else {
-        let _ = storage
-            .dead_letter_job(job.job_id, job.generation, "model_discovery_payload_invalid", None)
-            .await;
-        return;
-    };
     let Some(collector) = collector else {
         let _ = storage
             .dead_letter_job(
@@ -1716,18 +1695,43 @@ async fn process_model_catalog_discovery(
             .await;
         return;
     };
-    match collector
-        .execute(
-            credential_id,
-            revision,
-            token_version,
-            binding_id,
-            egress_epoch,
-            job.job_id,
-            job.generation,
-        )
-        .await
-    {
+    let result = if job.payload.get("source").and_then(serde_json::Value::as_str) == Some("public_model_directory") {
+        collector.execute_public(job.job_id, job.generation).await
+    } else {
+        let uuid = |key: &str| {
+            job.payload
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+        };
+        let parsed = uuid("source_credential_id")
+            .zip(
+                job.payload
+                    .get("credential_revision")
+                    .and_then(serde_json::Value::as_i64),
+            )
+            .zip(job.payload.get("token_version").and_then(serde_json::Value::as_i64))
+            .zip(uuid("binding_id"))
+            .zip(job.payload.get("egress_epoch").and_then(serde_json::Value::as_i64));
+        let Some(((((credential_id, revision), token_version), binding_id), egress_epoch)) = parsed else {
+            let _ = storage
+                .dead_letter_job(job.job_id, job.generation, "model_discovery_payload_invalid", None)
+                .await;
+            return;
+        };
+        collector
+            .execute(
+                credential_id,
+                revision,
+                token_version,
+                binding_id,
+                egress_epoch,
+                job.job_id,
+                job.generation,
+            )
+            .await
+    };
+    match result {
         Ok(()) => {}
         Err(retry) if job.attempt < job.max_attempts => {
             let _ = storage
@@ -3388,6 +3392,9 @@ async fn upsert_critical_alert(storage: &PgStorage, fingerprint: &str, summary: 
     let alert_id = Uuid::now_v7();
     let event_id = Uuid::now_v7();
     let payload = json!({"severity":"critical","summary":summary});
+    // 通知事件只在告警"新打开"时发出一次;已打开告警的周期性重评估仅刷新
+    // last_seen_at/summary(xmax<>0 表示命中已有行),否则每轮评估都会给
+    // 收件箱和外部推送渠道重复投递同一告警(表现为已读通知不断变回未读)。
     if let Err(error) = sqlx::query(
         "WITH current_alert AS ( \
            INSERT INTO ops.alert \
@@ -3395,13 +3402,13 @@ async fn upsert_critical_alert(storage: &PgStorage, fingerprint: &str, summary: 
            VALUES ($1,$2,'critical',$2,'open',$3,'{}'::jsonb,clock_timestamp(),clock_timestamp(),1) \
            ON CONFLICT (fingerprint) WHERE state_code IN ('open','acknowledged','silenced') \
            DO UPDATE SET last_seen_at=clock_timestamp(),summary=EXCLUDED.summary,revision=ops.alert.revision+1 \
-           RETURNING id,revision \
+           RETURNING id,revision,(xmax=0) AS newly_opened \
          ) \
          INSERT INTO ops.outbox_message \
           (id,event_id,topic_code,aggregate_type,aggregate_id,aggregate_revision,payload_schema_version,payload, \
            state_code,lease_generation,attempt_count,available_at,created_at) \
          SELECT $4,$5,'alert.critical','alert',id,revision,1,$6,'pending',0,0,clock_timestamp(),clock_timestamp() \
-         FROM current_alert \
+         FROM current_alert WHERE newly_opened \
          ON CONFLICT (aggregate_type,aggregate_id,aggregate_revision,topic_code) DO NOTHING",
     )
     .bind(alert_id)
@@ -3481,7 +3488,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn critical_alert_upsert_emits_revisioned_outbox() -> Result<(), Box<dyn std::error::Error>> {
+    async fn critical_alert_upsert_emits_outbox_only_when_newly_opened() -> Result<(), Box<dyn std::error::Error>> {
         let Ok(database_url) = std::env::var("TEST_R9_OPERATIONS_DATABASE_ADMIN_URL") else {
             return Ok(());
         };
@@ -3504,6 +3511,7 @@ mod tests {
         assert_eq!(state, "open");
         assert_eq!(summary, "second fixture");
 
+        // 重评估仅刷新告警行,不重复投递事件:通知只随"新打开"这次转换发出
         let rows: Vec<(i64, serde_json::Value, String)> = sqlx::query_as(
             "SELECT aggregate_revision,payload,state_code FROM ops.outbox_message \
              WHERE topic_code='alert.critical' AND aggregate_type='alert' AND aggregate_id=$1 \
@@ -3512,15 +3520,26 @@ mod tests {
         .bind(alert_id)
         .fetch_all(&storage.pool())
         .await?;
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, 1);
-        assert_eq!(rows[1].0, 2);
         assert_eq!(rows[0].1["summary"], "first fixture");
-        assert_eq!(rows[1].1["summary"], "second fixture");
-        assert!(
-            rows.iter()
-                .all(|row| row.1["severity"] == "critical" && row.2 == "pending")
-        );
+        assert_eq!(rows[0].1["severity"], "critical");
+        assert_eq!(rows[0].2, "pending");
+
+        // 告警恢复(resolved)后再次触发属于新的转换,需要再次通知
+        sqlx::query("UPDATE ops.alert SET state_code='resolved',resolved_at=clock_timestamp() WHERE id=$1")
+            .bind(alert_id)
+            .execute(&storage.pool())
+            .await?;
+        upsert_critical_alert(&storage, &fingerprint, "reopened fixture").await;
+        let reopened_events: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM ops.outbox_message m JOIN ops.alert a ON a.id=m.aggregate_id \
+             WHERE m.topic_code='alert.critical' AND a.fingerprint=$1",
+        )
+        .bind(&fingerprint)
+        .fetch_one(&storage.pool())
+        .await?;
+        assert_eq!(reopened_events, 2);
         Ok(())
     }
 }

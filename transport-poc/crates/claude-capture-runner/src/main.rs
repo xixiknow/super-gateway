@@ -3,9 +3,8 @@
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use capture_schema::{
-    CAPTURE_SCHEMA_VERSION, CaptureBatch, CaptureEvent, CaptureLane, ConnectionPhase, Direction,
-    DnsMode, EnvironmentDescriptor, NetworkDescriptor, NetworkPath, ScenarioDescriptor,
-    TargetDescriptor,
+    CAPTURE_SCHEMA_VERSION, CaptureBatch, CaptureEvent, CaptureLane, ConnectionPhase, Direction, DnsMode,
+    EnvironmentDescriptor, NetworkDescriptor, NetworkPath, ScenarioDescriptor, TargetDescriptor,
 };
 use clap::{Parser, Subcommand};
 use controlled_h2_capture::{ControlledH2Result, ControlledH2Server};
@@ -21,10 +20,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tempfile::NamedTempFile;
-use tls_tap::{
-    ConnectTlsTapConfig, ConnectTlsTapListener, ParsedClientHello, UpstreamHttpProxy,
-    parse_client_hello,
-};
+use tls_tap::{ConnectTlsTapConfig, ConnectTlsTapListener, ParsedClientHello, UpstreamHttpProxy, parse_client_hello};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
@@ -198,15 +194,7 @@ async fn main() -> Result<()> {
     let environment = inspect_environment(&cli.claude_bin, timeout).await?;
     let (normalized, child) = match cli.command {
         CaptureCommand::Controlled { prompt, model } => {
-            run_controlled(
-                &cli.claude_bin,
-                &prompt,
-                &model,
-                capture_run_id,
-                environment,
-                timeout,
-            )
-            .await?
+            run_controlled(&cli.claude_bin, &prompt, &model, capture_run_id, environment, timeout).await?
         }
         CaptureCommand::ControlledBatch {
             iterations,
@@ -284,12 +272,8 @@ async fn run_controlled_batch(
         "batch report already exists: {}",
         options.report_path.display()
     );
-    std::fs::create_dir_all(options.output_dir).with_context(|| {
-        format!(
-            "create batch output directory {}",
-            options.output_dir.display()
-        )
-    })?;
+    std::fs::create_dir_all(options.output_dir)
+        .with_context(|| format!("create batch output directory {}", options.output_dir.display()))?;
     let mut artifacts = Vec::with_capacity(options.iterations);
     let mut failure_categories = BTreeMap::new();
     for iteration in 1..=options.iterations {
@@ -332,12 +316,7 @@ async fn run_controlled_batch(
         failed_iterations,
         failure_categories,
         artifacts,
-        decision: if failed_iterations == 0 {
-            "pass"
-        } else {
-            "fail"
-        }
-        .to_owned(),
+        decision: if failed_iterations == 0 { "pass" } else { "fail" }.to_owned(),
         report_sha256: String::new(),
     };
     report.report_sha256 = controlled_batch_report_sha256(&report)?;
@@ -371,10 +350,7 @@ fn controlled_batch_report_sha256(report: &ControlledBatchReport) -> Result<Stri
         .as_object()
         .cloned()
         .context("controlled batch report is not an object")?;
-    object.insert(
-        "report_sha256".to_owned(),
-        serde_json::Value::String(String::new()),
-    );
+    object.insert("report_sha256".to_owned(), serde_json::Value::String(String::new()));
     Ok(hex::encode(Sha256::digest(serde_json::to_vec(&object)?)))
 }
 
@@ -397,9 +373,7 @@ async fn run_controlled(
     )
     .await
     .context("bind controlled Claude Messages endpoint")?;
-    let endpoint = server
-        .local_addr()
-        .context("read controlled endpoint address")?;
+    let endpoint = server.local_addr().context("read controlled endpoint address")?;
     let temp = tempfile::tempdir().context("create isolated Claude workspace")?;
     let ca_path = temp.path().join("capture-ca.pem");
     tokio::fs::write(&ca_path, server.ca_pem())
@@ -538,7 +512,11 @@ async fn run_official_tls(
     .context("bind official TLS CONNECT capture")?;
     let proxy_addr = tap.local_addr().context("read CONNECT capture address")?;
     let temp = tempfile::tempdir().context("create isolated Claude workspace")?;
-    let capture_task = tokio::spawn(tap.capture_allowed(max_rejected_tunnels));
+    let config_dir = temp.path().join("claude-config");
+    tokio::fs::create_dir_all(&config_dir)
+        .await
+        .context("create isolated official Claude configuration")?;
+    let capture_task = tokio::spawn(tap.capture_allowed_client_hello(max_rejected_tunnels));
     let proxy_url = format!("http://{proxy_addr}");
     let settings_path = temp.path().join("official-capture-settings.json");
     let settings = official_proxy_settings(&proxy_url);
@@ -546,7 +524,7 @@ async fn run_official_tls(
         .await
         .context("write ephemeral official capture settings")?;
     let synthetic_token =
-        synthetic_auth.then(|| format!("{CONTROLLED_AUTH_PREFIX}official-{}", Uuid::new_v4()));
+        synthetic_auth.then(|| format!("sk-ant-api03-{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()));
     let child = run_claude(claude_bin, prompt, model, temp.path(), timeout, |command| {
         command
             .env_remove("ANTHROPIC_BASE_URL")
@@ -560,6 +538,8 @@ async fn run_official_tls(
             .env("HTTP_PROXY", &proxy_url)
             .env("https_proxy", &proxy_url)
             .env("http_proxy", &proxy_url)
+            .env("NODE_USE_ENV_PROXY", "1")
+            .env("CLAUDE_CONFIG_DIR", &config_dir)
             .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
             .arg("--settings")
             .arg(&settings_path);
@@ -572,11 +552,7 @@ async fn run_official_tls(
     if let Ok(summary) = &child {
         eprintln!(
             "privacy-safe official child summary: exit_code={:?}, timed_out={}, stdout_bytes={}, stderr_bytes={}, protocol={:?}",
-            summary.exit_code,
-            summary.timed_out,
-            summary.stdout_bytes,
-            summary.stderr_bytes,
-            summary.protocol
+            summary.exit_code, summary.timed_out, summary.stdout_bytes, summary.stderr_bytes, summary.protocol
         );
     }
     let captured = join_capture(capture_task).await?;
@@ -634,20 +610,14 @@ fn parse_upstream_http_proxy(value: &str) -> Result<UpstreamHttpProxy> {
     let (host, port) = parse_proxy_endpoint(endpoint)?;
     let authorization = if let Some(userinfo) = userinfo {
         let (username, password) = userinfo.split_once(':').unwrap_or((userinfo, ""));
-        ensure!(
-            !username.is_empty(),
-            "inherited upstream proxy username is empty"
-        );
+        ensure!(!username.is_empty(), "inherited upstream proxy username is empty");
         let username = percent_encoding::percent_decode_str(username)
             .decode_utf8()
             .context("decode inherited upstream proxy username")?;
         let password = percent_encoding::percent_decode_str(password)
             .decode_utf8()
             .context("decode inherited upstream proxy password")?;
-        Some(format!(
-            "Basic {}",
-            STANDARD.encode(format!("{username}:{password}"))
-        ))
+        Some(format!("Basic {}", STANDARD.encode(format!("{username}:{password}"))))
     } else {
         None
     };
@@ -689,8 +659,7 @@ fn parse_proxy_endpoint(endpoint: &str) -> Result<(String, u16)> {
         |(host, port)| {
             Ok((
                 host,
-                port.parse::<u16>()
-                    .context("parse inherited upstream proxy port")?,
+                port.parse::<u16>().context("parse inherited upstream proxy port")?,
             ))
         },
     )?;
@@ -710,17 +679,14 @@ fn official_proxy_settings(proxy_url: &str) -> serde_json::Value {
             "http_proxy": proxy_url,
             "NO_PROXY": "",
             "no_proxy": "",
+            "NODE_USE_ENV_PROXY": "1",
             "DISABLE_AUTOUPDATER": "1",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
         }
     })
 }
 
-fn official_batch(
-    capture_run_id: Uuid,
-    environment: EnvironmentDescriptor,
-    hello: ParsedClientHello,
-) -> CaptureBatch {
+fn official_batch(capture_run_id: Uuid, environment: EnvironmentDescriptor, hello: ParsedClientHello) -> CaptureBatch {
     CaptureBatch {
         schema_version: CAPTURE_SCHEMA_VERSION,
         capture_artifact_id: Uuid::new_v4(),
@@ -852,7 +818,6 @@ where
         .arg("--include-partial-messages")
         .arg("--verbose")
         .arg("--no-session-persistence")
-        .arg("--safe-mode")
         .arg("--tools")
         .arg("")
         .arg("--prompt-suggestions")
@@ -875,8 +840,7 @@ where
         .ok_or_else(|| anyhow!("Claude Code stderr pipe is unavailable"))?;
     let stdout_task = tokio::spawn(drain_output(stdout));
     let stderr_task = tokio::spawn(drain_output(stderr));
-    let (status, timed_out) = if let Ok(status) = tokio::time::timeout(timeout, child.wait()).await
-    {
+    let (status, timed_out) = if let Ok(status) = tokio::time::timeout(timeout, child.wait()).await {
         (status?, false)
     } else {
         let _ = child.kill().await;
@@ -932,15 +896,10 @@ fn summarize_child_protocol(output: &[u8]) -> ChildProtocolSummary {
             continue;
         };
         match value.get("type").and_then(serde_json::Value::as_str) {
-            Some("system")
-                if value.get("subtype").and_then(serde_json::Value::as_str) == Some("init") =>
-            {
+            Some("system") if value.get("subtype").and_then(serde_json::Value::as_str) == Some("init") => {
                 summary.init_events += 1;
             }
-            Some("system")
-                if value.get("subtype").and_then(serde_json::Value::as_str)
-                    == Some("api_retry") =>
-            {
+            Some("system") if value.get("subtype").and_then(serde_json::Value::as_str) == Some("api_retry") => {
                 record_api_retry(&mut summary, &value);
             }
             Some("assistant") => record_assistant(&mut summary, &value),
@@ -992,10 +951,7 @@ fn record_result(summary: &mut ChildProtocolSummary, value: &serde_json::Value) 
         .get("subtype")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("missing");
-    *summary
-        .result_subtypes
-        .entry(subtype.to_owned())
-        .or_default() += 1;
+    *summary.result_subtypes.entry(subtype.to_owned()).or_default() += 1;
     if is_error && let Some(error) = value.get("result").and_then(serde_json::Value::as_str) {
         let category = classify_protocol_error(error);
         *summary.result_error_categories.entry(category).or_default() += 1;
@@ -1026,10 +982,7 @@ fn record_assistant(summary: &mut ChildProtocolSummary, value: &serde_json::Valu
         .get("model")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("missing");
-    *summary
-        .assistant_models
-        .entry(model.to_owned())
-        .or_default() += 1;
+    *summary.assistant_models.entry(model.to_owned()).or_default() += 1;
     let stop_reason = message
         .get("stop_reason")
         .and_then(serde_json::Value::as_str)
@@ -1064,10 +1017,7 @@ fn record_stream_event(summary: &mut ChildProtocolSummary, value: &serde_json::V
         .and_then(|event| event.get("type"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or("missing");
-    *summary
-        .stream_event_types
-        .entry(event_type.to_owned())
-        .or_default() += 1;
+    *summary.stream_event_types.entry(event_type.to_owned()).or_default() += 1;
 }
 
 fn record_field_names(fields: &mut BTreeMap<String, usize>, value: &serde_json::Value) {
@@ -1079,10 +1029,7 @@ fn record_field_names(fields: &mut BTreeMap<String, usize>, value: &serde_json::
 }
 
 fn json_u64(value: &serde_json::Value, field: &str) -> u64 {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or_default()
+    value.get(field).and_then(serde_json::Value::as_u64).unwrap_or_default()
 }
 
 fn classify_protocol_error(error: &str) -> String {
@@ -1102,10 +1049,7 @@ fn classify_protocol_error(error: &str) -> String {
         "tls"
     } else if normalized.contains("timeout") || normalized.contains("timed out") {
         "timeout"
-    } else if normalized.contains("connection")
-        || normalized.contains("fetch failed")
-        || normalized.contains("econn")
-    {
+    } else if normalized.contains("connection") || normalized.contains("fetch failed") || normalized.contains("econn") {
         "connection"
     } else if normalized.contains("model") {
         "model"
@@ -1119,32 +1063,31 @@ fn classify_protocol_error(error: &str) -> String {
 
 fn classify_retry_error(error: &str) -> String {
     let normalized = error.to_ascii_lowercase();
-    let category =
-        if normalized.contains("econnrefused") || normalized.contains("connection refused") {
-            "connection_refused"
-        } else if normalized.contains("fetch failed") {
-            "fetch_failed"
-        } else if normalized.contains("terminated") || normalized.contains("closed") {
-            "connection_closed"
-        } else if normalized.contains("stream") || normalized.contains("sse") {
-            "stream_protocol"
-        } else if normalized.contains("json") || normalized.contains("parse") {
-            "response_parse"
-        } else if normalized.contains("server_error") {
-            "server_error"
-        } else if normalized.contains("timeout") || normalized.contains("timed out") {
-            "timeout"
-        } else if normalized.contains("certificate") || normalized.contains("tls") {
-            "tls"
-        } else if normalized.len() <= 80
-            && normalized.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'_' | b'-' | b'.' | b':')
-            })
-        {
-            return format!("literal:{normalized}");
-        } else {
-            "other"
-        };
+    let category = if normalized.contains("econnrefused") || normalized.contains("connection refused") {
+        "connection_refused"
+    } else if normalized.contains("fetch failed") {
+        "fetch_failed"
+    } else if normalized.contains("terminated") || normalized.contains("closed") {
+        "connection_closed"
+    } else if normalized.contains("stream") || normalized.contains("sse") {
+        "stream_protocol"
+    } else if normalized.contains("json") || normalized.contains("parse") {
+        "response_parse"
+    } else if normalized.contains("server_error") {
+        "server_error"
+    } else if normalized.contains("timeout") || normalized.contains("timed out") {
+        "timeout"
+    } else if normalized.contains("certificate") || normalized.contains("tls") {
+        "tls"
+    } else if normalized.len() <= 80
+        && normalized
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'_' | b'-' | b'.' | b':'))
+    {
+        return format!("literal:{normalized}");
+    } else {
+        "other"
+    };
     category.to_owned()
 }
 
@@ -1178,10 +1121,7 @@ where
     task.await.context("join capture task")?.map_err(Into::into)
 }
 
-async fn inspect_environment(
-    claude_bin: &Path,
-    timeout: Duration,
-) -> Result<EnvironmentDescriptor> {
+async fn inspect_environment(claude_bin: &Path, timeout: Duration) -> Result<EnvironmentDescriptor> {
     let version_output = tokio::time::timeout(
         timeout.min(Duration::from_secs(10)),
         Command::new(claude_bin).arg("--version").output(),
@@ -1192,13 +1132,8 @@ async fn inspect_environment(
         version_output.status.success(),
         "Claude Code version probe exited unsuccessfully"
     );
-    let claude_version = String::from_utf8_lossy(&version_output.stdout)
-        .trim()
-        .to_owned();
-    ensure!(
-        !claude_version.is_empty(),
-        "Claude Code returned an empty version"
-    );
+    let claude_version = String::from_utf8_lossy(&version_output.stdout).trim().to_owned();
+    ensure!(!claude_version.is_empty(), "Claude Code returned an empty version");
     let (os_version, kernel) = os_details().await?;
     let binary_sha256 = if claude_bin.is_file() {
         Some(hash_file(claude_bin.to_owned()).await?)
@@ -1264,8 +1199,7 @@ fn persist_normalized(path: &Path, normalized: &NormalizedCapture) -> Result<()>
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("create capture output directory {}", parent.display()))?;
+    std::fs::create_dir_all(parent).with_context(|| format!("create capture output directory {}", parent.display()))?;
     let mut temp = NamedTempFile::new_in(parent).context("create atomic capture output")?;
     serde_json::to_writer_pretty(&mut temp, normalized).context("serialize normalized capture")?;
     temp.write_all(b"\n")?;
@@ -1287,8 +1221,7 @@ where
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("create output directory {}", parent.display()))?;
+    std::fs::create_dir_all(parent).with_context(|| format!("create output directory {}", parent.display()))?;
     let mut temp = NamedTempFile::new_in(parent).context("create atomic JSON output")?;
     serde_json::to_writer_pretty(&mut temp, value).context("serialize JSON output")?;
     temp.write_all(b"\n")?;
@@ -1309,9 +1242,7 @@ fn observed_at() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Cli, official_proxy_settings, parse_upstream_http_proxy, summarize_child_protocol,
-    };
+    use super::{Cli, official_proxy_settings, parse_upstream_http_proxy, summarize_child_protocol};
     use clap::CommandFactory;
 
     #[test]
@@ -1341,8 +1272,7 @@ mod tests {
 
     #[test]
     fn inherited_proxy_parser_decodes_basic_auth_without_debug_exposure() {
-        let proxy = parse_upstream_http_proxy("http://user:p%40ss@127.0.0.1:7890")
-            .expect("parse fixture proxy");
+        let proxy = parse_upstream_http_proxy("http://user:p%40ss@127.0.0.1:7890").expect("parse fixture proxy");
         assert_eq!(proxy.host, "127.0.0.1");
         assert_eq!(proxy.port, 7890);
         assert_eq!(proxy.authorization.as_deref(), Some("Basic dXNlcjpwQHNz"));

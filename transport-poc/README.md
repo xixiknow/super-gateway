@@ -74,6 +74,23 @@ cargo run -p transport-matrix -- --bundle var/real-capture/windows-2.1.241-fresh
 
 ### 自动采集真实 Claude Code
 
+完整的 2.1.245 发布入口在主工程目录执行：
+
+```powershell
+cargo run --manifest-path transport-poc/Cargo.toml `
+  -p spike-cli --all-features -- release-bundle `
+  --claude-bin C:\Users\yangrs\.local\bin\claude.exe `
+  --iterations 20 `
+  --output-dir transport-poc/var/real-capture/windows-2.1.245
+```
+
+命令严格校验版本和 Claude 可执行文件 SHA-256，逐轮生成共享 capture run ID 的官方
+TLS/受控 Messages 证据，执行 20 轮稳定性、TLS/H1 Replay、取消验证和 Canary Audit，
+最后再用正式 `gateway-transport` 重放并生成 `SignedBundleEnvelope`。随机无效认证不会
+产生模型用量；Credential、Prompt、请求正文、Claude stdout/stderr 均不写入发布目录。
+输出的 `*.signed-bundle.json` 可在管理页直接上传；上传会从已验签的发布元数据登记新的
+verified Archetype，Bundle 激活仍是单独的治理动作，不会替换内置 2.1.241。
+
 Windows 下 BoringSSL/NASM 的中间构建路径使用 ASCII 目录。`controlled` 只连接本地合成 Messages 端点，不使用真实 Credential，也不产生 Anthropic 用量：
 
 ```powershell
@@ -171,7 +188,7 @@ cargo run -p capture-endpoint -- --bind 127.0.0.1:9443 --store var/captures
 
 ## Archetype Bundle candidate
 
-Bundle Compiler 只接受状态为 `verified|canary|active` 的 Manifest，并逐项核对 Manifest 中的 artifact ID、run ID、lane、归一化哈希、事件数量、环境、场景和 normalizer 版本。Bundle Schema v2 以 `application.protocol=http1|http2` 判别应用层 Profile；Replay Schema v4 额外固化 Supported Groups、KeyShare 组，并在审计项中记录已消费的验证证据哈希；当前 candidate 包含：
+Bundle Compiler 只接受状态为 `verified|active` 的 Manifest（`canary` 仅为存量兼容值，生命周期已无灰度段），并逐项核对 Manifest 中的 artifact ID、run ID、lane、归一化哈希、事件数量、环境、场景和 normalizer 版本。Bundle Schema v2 以 `application.protocol=http1|http2` 判别应用层 Profile；Replay Schema v4 额外固化 Supported Groups、KeyShare 组，并在审计项中记录已消费的验证证据哈希；当前 candidate 包含：
 
 - ClientHello 版本、Cipher 顺序、Supported Groups、KeyShare 组、扩展顺序、ALPN、长度与动态字段路径；
 - HTTP/1.1 的请求方法、路径形状、版本、正文长度和 Content-Length framing，或 HTTP/2 的帧序、SETTINGS 顺序、连接窗口和 pseudo-header 顺序；
@@ -184,7 +201,7 @@ Bundle 中的动态 TLS 值和 Credential/Session Header 只保留生成规则�
 ## Transport Core 门禁
 
 - `probe`：允许生成受控采集目标的 Replay Plan，但会在审计制品中标出所有需要 wire verification 或缺少证据的控制点。
-- `canary`：任一控制点尚需 wire verification、需要补丁、缺少证据或未声明实现时，立即阻止 Plan 产出。wire verification 只接受由成功且未截断的官方 TLS Diff 构建的证据；证据必须同时匹配 Bundle、Probe Plan、后端、Anthropic authority 和 Engine 二进制哈希，TLS 硬字段不接受 allowlist。
+- `canary`（历史命名，语义为"可激活"门禁，与 Bundle 生命周期已取消的灰度段无关；CLI 参数名未改）：任一控制点尚需 wire verification、需要补丁、缺少证据或未声明实现时，立即阻止 Plan 产出。wire verification 只接受由成功且未截断的官方 TLS Diff 构建的证据；证据必须同时匹配 Bundle、Probe Plan、后端、Anthropic authority 和 Engine 二进制哈希，TLS 硬字段不接受 allowlist。
 - H2 公开 Builder 已映射 SETTINGS 1–6 和 connection-level WINDOW_UPDATE；顺序、帧序、pseudo-header 顺序及 HPACK 字节仍由 Wire Diff 门禁。
 - H1 使用低层有序字节 writer，直接保留请求行、Header 顺序/大小写和 Content-Length framing；ALPN 严格来自具体 Bundle，空列表保持不发送，当前 Windows cohort 则发送 `http/1.1`。
 - BoringSSL 可选后端已接入 ALPN、TLS 1.2 及以前 Cipher 顺序、Supported Groups/KeyShare 选择、OCSP stapling、SCT、GREASE 和扩展随机化开关；Windows ASCII 构建目录下已完成 C/ASM 全量编译、链接和真实 TLS/H1/H2 探针。

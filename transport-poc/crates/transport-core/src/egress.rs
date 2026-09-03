@@ -24,9 +24,7 @@ impl ProxyCredentials {
     }
 
     fn valid_for_socks5(&self) -> bool {
-        !self.username.is_empty()
-            && self.username.len() <= u8::MAX.into()
-            && self.password.len() <= u8::MAX.into()
+        !self.username.is_empty() && self.username.len() <= u8::MAX.into() && self.password.len() <= u8::MAX.into()
     }
 }
 
@@ -58,25 +56,17 @@ pub enum ProxyRoute {
 impl ProxyRoute {
     pub fn is_valid(&self) -> bool {
         let (endpoint, credentials, socks5) = match self {
-            Self::HttpConnect {
-                endpoint,
-                credentials,
-            } => (endpoint, credentials, false),
+            Self::HttpConnect { endpoint, credentials } => (endpoint, credentials, false),
             Self::Socks5 {
-                endpoint,
-                credentials,
-                ..
+                endpoint, credentials, ..
             } => (endpoint, credentials, true),
         };
         !endpoint.host.is_empty()
             && endpoint.port != 0
-            && !endpoint.host.contains(|character: char| {
-                character.is_whitespace() || matches!(character, '/' | '\\' | '@')
-            })
-            && (!socks5
-                || credentials
-                    .as_ref()
-                    .is_none_or(ProxyCredentials::valid_for_socks5))
+            && !endpoint
+                .host
+                .contains(|character: char| character.is_whitespace() || matches!(character, '/' | '\\' | '@'))
+            && (!socks5 || credentials.as_ref().is_none_or(ProxyCredentials::valid_for_socks5))
     }
 
     fn endpoint(&self) -> &DialEndpoint {
@@ -130,12 +120,9 @@ pub async fn open_egress(
     if target_host.is_empty() || target_port == 0 || timeout.is_zero() {
         return Err(EgressError::InvalidConfig);
     }
-    tokio::time::timeout(
-        timeout,
-        open_inner(target_host, target_port, dial_override, proxy),
-    )
-    .await
-    .map_err(|_| EgressError::Timeout)?
+    tokio::time::timeout(timeout, open_inner(target_host, target_port, dial_override, proxy))
+        .await
+        .map_err(|_| EgressError::Timeout)?
 }
 
 async fn open_inner(
@@ -164,17 +151,8 @@ async fn open_inner(
             ProxyRoute::HttpConnect { credentials, .. } => {
                 http_connect(&mut stream, target_host, target_port, credentials.as_ref()).await?;
             }
-            ProxyRoute::Socks5 {
-                dns, credentials, ..
-            } => {
-                socks5_connect(
-                    &mut stream,
-                    target_host,
-                    target_port,
-                    *dns,
-                    credentials.as_ref(),
-                )
-                .await?;
+            ProxyRoute::Socks5 { dns, credentials, .. } => {
+                socks5_connect(&mut stream, target_host, target_port, *dns, credentials.as_ref()).await?;
             }
         }
     }
@@ -201,10 +179,7 @@ async fn http_connect(
         request.push_str("\r\n");
     }
     request.push_str("Proxy-Connection: keep-alive\r\n\r\n");
-    stream
-        .write_all(request.as_bytes())
-        .await
-        .map_err(EgressError::Io)?;
+    stream.write_all(request.as_bytes()).await.map_err(EgressError::Io)?;
     let response = read_http_head(stream, 16 * 1024).await?;
     let status = parse_http_status(&response)?;
     if status == 407 {
@@ -233,8 +208,7 @@ fn parse_http_status(response: &[u8]) -> Result<u16, EgressError> {
         .windows(2)
         .position(|window| window == b"\r\n")
         .ok_or(EgressError::MalformedResponse)?;
-    let line =
-        std::str::from_utf8(&response[..line_end]).map_err(|_| EgressError::MalformedResponse)?;
+    let line = std::str::from_utf8(&response[..line_end]).map_err(|_| EgressError::MalformedResponse)?;
     let mut parts = line.split_ascii_whitespace();
     let version = parts.next().ok_or(EgressError::MalformedResponse)?;
     let status = parts
@@ -255,33 +229,19 @@ async fn socks5_connect(
     dns: Socks5Dns,
     credentials: Option<&ProxyCredentials>,
 ) -> Result<(), EgressError> {
-    let methods: &[u8] = if credentials.is_some() {
-        &[0x00, 0x02]
-    } else {
-        &[0x00]
-    };
+    let methods: &[u8] = if credentials.is_some() { &[0x00, 0x02] } else { &[0x00] };
     let method_count = u8::try_from(methods.len()).map_err(|_| EgressError::InvalidConfig)?;
-    stream
-        .write_all(&[0x05, method_count])
-        .await
-        .map_err(EgressError::Io)?;
+    stream.write_all(&[0x05, method_count]).await.map_err(EgressError::Io)?;
     stream.write_all(methods).await.map_err(EgressError::Io)?;
     let mut selection = [0_u8; 2];
-    stream
-        .read_exact(&mut selection)
-        .await
-        .map_err(EgressError::Io)?;
+    stream.read_exact(&mut selection).await.map_err(EgressError::Io)?;
     if selection[0] != 0x05 || selection[1] == 0xff {
         return Err(EgressError::AuthenticationRejected);
     }
     match selection[1] {
         0x00 => {}
         0x02 => {
-            authenticate_socks5(
-                stream,
-                credentials.ok_or(EgressError::AuthenticationRejected)?,
-            )
-            .await?;
+            authenticate_socks5(stream, credentials.ok_or(EgressError::AuthenticationRejected)?).await?;
         }
         _ => return Err(EgressError::MalformedResponse),
     }
@@ -289,10 +249,7 @@ async fn socks5_connect(
     append_socks5_address(&mut request, host, port, dns).await?;
     stream.write_all(&request).await.map_err(EgressError::Io)?;
     let mut head = [0_u8; 4];
-    stream
-        .read_exact(&mut head)
-        .await
-        .map_err(EgressError::Io)?;
+    stream.read_exact(&mut head).await.map_err(EgressError::Io)?;
     if head[0] != 0x05 || head[2] != 0x00 {
         return Err(EgressError::MalformedResponse);
     }
@@ -303,27 +260,19 @@ async fn socks5_connect(
     Ok(())
 }
 
-async fn authenticate_socks5(
-    stream: &mut TcpStream,
-    credentials: &ProxyCredentials,
-) -> Result<(), EgressError> {
+async fn authenticate_socks5(stream: &mut TcpStream, credentials: &ProxyCredentials) -> Result<(), EgressError> {
     if !credentials.valid_for_socks5() {
         return Err(EgressError::InvalidConfig);
     }
-    let username_length =
-        u8::try_from(credentials.username.len()).map_err(|_| EgressError::InvalidConfig)?;
-    let password_length =
-        u8::try_from(credentials.password.len()).map_err(|_| EgressError::InvalidConfig)?;
+    let username_length = u8::try_from(credentials.username.len()).map_err(|_| EgressError::InvalidConfig)?;
+    let password_length = u8::try_from(credentials.password.len()).map_err(|_| EgressError::InvalidConfig)?;
     let mut request = vec![0x01, username_length];
     request.extend_from_slice(credentials.username.as_bytes());
     request.push(password_length);
     request.extend_from_slice(credentials.password.as_bytes());
     stream.write_all(&request).await.map_err(EgressError::Io)?;
     let mut response = [0_u8; 2];
-    stream
-        .read_exact(&mut response)
-        .await
-        .map_err(EgressError::Io)?;
+    stream.read_exact(&mut response).await.map_err(EgressError::Io)?;
     if response != [0x01, 0x00] {
         return Err(EgressError::AuthenticationRejected);
     }
@@ -374,10 +323,7 @@ async fn consume_socks5_address(stream: &mut TcpStream, kind: u8) -> Result<(), 
         _ => return Err(EgressError::MalformedResponse),
     };
     let mut remainder = vec![0_u8; address_bytes + 2];
-    stream
-        .read_exact(&mut remainder)
-        .await
-        .map_err(EgressError::Io)?;
+    stream.read_exact(&mut remainder).await.map_err(EgressError::Io)?;
     Ok(())
 }
 
@@ -422,9 +368,7 @@ mod tests {
         let proxy_addr = proxy.local_addr().expect("proxy address");
         let proxy_task = tokio::spawn(async move {
             let (mut client, _) = proxy.accept().await.expect("proxy accept");
-            let head = read_http_head(&mut client, 16 * 1024)
-                .await
-                .expect("CONNECT head");
+            let head = read_http_head(&mut client, 16 * 1024).await.expect("CONNECT head");
             let text = String::from_utf8(head).expect("ASCII CONNECT");
             assert!(text.starts_with("CONNECT 127.0.0.1:"));
             assert!(text.contains("Proxy-Authorization: Basic dXNlcjpwYXNz\r\n"));
@@ -468,9 +412,7 @@ mod tests {
         let proxy_addr = proxy.local_addr().expect("proxy address");
         let proxy_task = tokio::spawn(async move {
             let (mut client, _) = proxy.accept().await.expect("proxy accept");
-            let _ = read_http_head(&mut client, 16 * 1024)
-                .await
-                .expect("CONNECT head");
+            let _ = read_http_head(&mut client, 16 * 1024).await.expect("CONNECT head");
             client
                 .write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
                 .await
@@ -483,14 +425,7 @@ mod tests {
             },
             credentials: None,
         };
-        let result = open_egress(
-            "example.invalid",
-            443,
-            None,
-            Some(&route),
-            Duration::from_secs(2),
-        )
-        .await;
+        let result = open_egress("example.invalid", 443, None, Some(&route), Duration::from_secs(2)).await;
         let Err(error) = result else {
             panic!("407 must fail");
         };

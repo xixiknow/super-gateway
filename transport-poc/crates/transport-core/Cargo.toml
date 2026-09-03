@@ -8,7 +8,7 @@ publish.workspace = true
 
 [features]
 default = []
-boring-backend = ["dep:base64", "dep:boring", "dep:tokio", "dep:tokio-boring"]
+boring-backend = ["dep:base64", "dep:boring", "dep:rustls-native-certs", "dep:tokio", "dep:tokio-boring"]
 
 [dependencies]
 archetype-bundle = { path = "../archetype-bundle" }
@@ -19,6 +19,7 @@ capture-schema = { path = "../capture-schema" }
 hex.workspace = true
 h2.workspace = true
 http.workspace = true
+rustls-native-certs = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

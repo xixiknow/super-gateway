@@ -13,14 +13,20 @@ boring-backend = ["controlled-h2-capture/boring-backend", "transport-core/boring
 [dependencies]
 anyhow.workspace = true
 archetype-bundle = { path = "../archetype-bundle" }
+base64.workspace = true
 capture-schema = { path = "../capture-schema" }
 clap.workspace = true
 controlled-h2-capture = { path = "../controlled-h2-capture" }
+ed25519-dalek = "2.2"
+gateway-domain = { path = "../../../crates/gateway-domain" }
+gateway-transport = { path = "../../../crates/gateway-transport", features = ["boring-backend"] }
+getrandom = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 transport-core = { path = "../transport-core" }
 tokio.workspace = true
+tokio-util.workspace = true
 tls-tap = { path = "../tls-tap" }
 uuid.workspace = true
 hex.workspace = true

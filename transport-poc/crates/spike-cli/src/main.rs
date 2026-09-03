@@ -1,18 +1,20 @@
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "boring-backend")]
+mod release_bundle;
+#[cfg(feature = "boring-backend")]
+mod release_orchestrator;
+
 use anyhow::{Context, Result, bail, ensure};
 #[cfg(feature = "boring-backend")]
 use archetype_bundle::HeaderValueMode;
-use archetype_bundle::{
-    BundleCompilerOptions, CandidateArchetypeBundle, compile_bundle, verify_bundle,
-};
+use archetype_bundle::{BundleCompilerOptions, CandidateArchetypeBundle, compile_bundle, verify_bundle};
 use capture_schema::{
-    CAPTURE_MANIFEST_SCHEMA_VERSION, CAPTURE_SCHEMA_VERSION, CaptureBatch, CaptureEvent,
-    CaptureEvidenceRef, CaptureLane, CaptureManifest, CaptureManifestState, ConnectionPhase,
-    Direction, DnsMode, EnvironmentDescriptor, HeaderObservation, Http2FrameDetail, Http2FrameType,
-    Http2Setting, ManifestEnvironmentDescriptor, ManifestScenarioDescriptor, ManifestVerification,
-    NetworkDescriptor, NetworkPath, ScenarioDescriptor, TargetDescriptor, TlsAttributeObservation,
-    TlsExtensionObservation,
+    CAPTURE_MANIFEST_SCHEMA_VERSION, CAPTURE_SCHEMA_VERSION, CaptureBatch, CaptureEvent, CaptureEvidenceRef,
+    CaptureLane, CaptureManifest, CaptureManifestState, ConnectionPhase, Direction, DnsMode, EnvironmentDescriptor,
+    HeaderObservation, Http2FrameDetail, Http2FrameType, Http2Setting, ManifestEnvironmentDescriptor,
+    ManifestScenarioDescriptor, ManifestVerification, NetworkDescriptor, NetworkPath, ScenarioDescriptor,
+    TargetDescriptor, TlsAttributeObservation, TlsExtensionObservation,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "boring-backend")]
@@ -32,23 +34,19 @@ use std::{
 use tls_tap::{ConnectTlsTapConfig, ConnectTlsTapListener, parse_client_hello};
 #[cfg(feature = "boring-backend")]
 use transport_core::boring_backend::{
-    DialEndpoint, DirectTlsPolicy, H1ProbePolicy, H1ProbeRequest, H2ProbePolicy, H2ProbeRequest,
-    ProxyRoute, connect_direct, probe_h1_cancellation_with_request, probe_h1_with_request,
-    probe_h2, probe_h2_with_request,
+    DialEndpoint, DirectTlsPolicy, H1ProbePolicy, H1ProbeRequest, H2ProbePolicy, H2ProbeRequest, ProxyRoute,
+    connect_direct, probe_h1_cancellation_with_request, probe_h1_with_request, probe_h2, probe_h2_with_request,
 };
 use transport_core::{
-    ApplicationReplayPlan, AuditMode, BackendDescriptor, CanaryCancellationEvidence,
-    CanaryTlsEvidence, ReplayPlan, TargetKind, TransportTarget, audit_bundle,
-    audit_bundle_with_canary_evidence, build_replay_plan, h2_backend, load_bundle,
-    verify_replay_plan,
+    ApplicationReplayPlan, AuditMode, BackendDescriptor, CanaryCancellationEvidence, CanaryTlsEvidence, ReplayPlan,
+    TargetKind, TransportTarget, audit_bundle, audit_bundle_with_canary_evidence, build_replay_plan, h2_backend,
+    load_bundle, verify_replay_plan,
 };
 #[cfg(feature = "boring-backend")]
 use transport_core::{build_canary_cancellation_evidence, build_canary_tls_evidence};
 use uuid::Uuid;
 use wire_diff::{AllowedDifference, DiffDecision, DiffPolicy, WireDiffReport, compare_captures};
-use wire_normalizer::{
-    NormalizedCapture, normalize_capture, recompute_normalized_sha256, verify_normalized_capture,
-};
+use wire_normalizer::{NormalizedCapture, normalize_capture, recompute_normalized_sha256, verify_normalized_capture};
 
 const FRESH_STABILITY_MATRIX_SCHEMA_VERSION: u32 = 1;
 
@@ -266,6 +264,50 @@ enum Command {
         #[arg(long)]
         output_report: PathBuf,
     },
+    /// Capture, replay, audit and sign a complete privacy-safe Claude Code release Bundle.
+    #[cfg(feature = "boring-backend")]
+    ReleaseBundle {
+        #[arg(long)]
+        claude_bin: PathBuf,
+        #[arg(long, default_value_t = 20)]
+        iterations: usize,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long)]
+        signing_key: Option<PathBuf>,
+        #[arg(long)]
+        engine_artifact: Option<PathBuf>,
+    },
+    /// Promote existing verified POC evidence into the formal signed runtime ABI.
+    #[cfg(feature = "boring-backend")]
+    PromoteBundle {
+        #[arg(long)]
+        candidate: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        audit: PathBuf,
+        #[arg(long)]
+        stability_report: PathBuf,
+        #[arg(long)]
+        signing_key: PathBuf,
+        #[arg(long)]
+        key_id: String,
+        #[arg(long, default_value = "x86_64-pc-windows-msvc")]
+        target: String,
+        #[arg(long)]
+        source_archetype_version_id: String,
+        #[arg(long)]
+        engine_artifact: PathBuf,
+        #[arg(long, value_enum, default_value_t = release_bundle::PublishLifecycle::Verified)]
+        lifecycle: release_bundle::PublishLifecycle,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        trust_store_output: PathBuf,
+        #[arg(long)]
+        replay_report_output: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -338,10 +380,7 @@ async fn main() -> Result<()> {
         }
         Command::SampleSet { directory } => {
             write_sample_set(&directory)?;
-            println!(
-                "synthetic reference/replay sample set created: {}",
-                directory.display()
-            );
+            println!("synthetic reference/replay sample set created: {}", directory.display());
         }
         Command::Manifest {
             passive_tls,
@@ -370,15 +409,11 @@ async fn main() -> Result<()> {
                 .map(read_json::<DiffPolicy>)
                 .transpose()?
                 .unwrap_or_default();
-            let report = compare_captures(&reference, &candidate, &policy)
-                .context("compare normalized captures")?;
+            let report = compare_captures(&reference, &candidate, &policy).context("compare normalized captures")?;
             write_json(&output, &report)?;
             println!(
                 "wire diff: decision={:?}, match={:?}, differences={}, report_id={}",
-                report.decision,
-                report.match_level,
-                report.summary.total_differences,
-                report.report_id
+                report.decision, report.match_level, report.summary.total_differences, report.report_id
             );
             if report.decision != DiffDecision::Pass {
                 bail!(
@@ -399,9 +434,13 @@ async fn main() -> Result<()> {
             let manifest = read_json::<CaptureManifest>(&manifest)?;
             let passive = read_json::<NormalizedCapture>(&passive_tls)?;
             let controlled = read_json::<NormalizedCapture>(&controlled_http2)?;
-            let archetype_id =
-                archetype_id.unwrap_or_else(|| default_archetype_id(&manifest.environment));
-            let options = BundleCompilerOptions::production_defaults(archetype_id, bundle_version);
+            let archetype_id = archetype_id.unwrap_or_else(|| default_archetype_id(&manifest.environment));
+            let mut options = BundleCompilerOptions::production_defaults(archetype_id, bundle_version);
+            if manifest.environment.os_name.eq_ignore_ascii_case("windows")
+                && manifest.environment.arch.eq_ignore_ascii_case("x86_64")
+            {
+                options.rust_targets = vec!["x86_64-pc-windows-msvc".to_owned()];
+            }
             let bundle = compile_bundle(&manifest, &passive, &controlled, &options)
                 .context("compile Archetype Bundle candidate")?;
             write_json(&output, &bundle)?;
@@ -436,10 +475,7 @@ async fn main() -> Result<()> {
                     mode == AuditMode::Canary,
                     "TLS evidence is consumed only by Canary audits"
                 );
-                let probe_plans = probe_plan
-                    .iter()
-                    .map(read_replay_plan)
-                    .collect::<Result<Vec<_>>>()?;
+                let probe_plans = probe_plan.iter().map(read_replay_plan).collect::<Result<Vec<_>>>()?;
                 let tls_evidence = tls_evidence
                     .iter()
                     .map(read_json::<CanaryTlsEvidence>)
@@ -508,9 +544,7 @@ async fn main() -> Result<()> {
             let plan = read_replay_plan(&plan)?;
             let trust_roots_pem = ca_bundle
                 .as_ref()
-                .map(|path| {
-                    fs::read(path).with_context(|| format!("read CA bundle {}", path.display()))
-                })
+                .map(|path| fs::read(path).with_context(|| format!("read CA bundle {}", path.display())))
                 .transpose()?;
             let connection = connect_direct(
                 &plan,
@@ -614,8 +648,7 @@ async fn main() -> Result<()> {
             let policy = DiffPolicy {
                 allowed_differences: vec![AllowedDifference {
                     path: "/events/1/timing_bucket".to_owned(),
-                    rationale: "same-target TLS byte replay excludes local CONNECT setup latency"
-                        .to_owned(),
+                    rationale: "same-target TLS byte replay excludes local CONNECT setup latency".to_owned(),
                     evidence_ref: "capture-method:connect-tls-tap".to_owned(),
                 }],
                 ..DiffPolicy::default()
@@ -638,14 +671,9 @@ async fn main() -> Result<()> {
                     output_diff.display()
                 );
             }
-            let canary_evidence = build_canary_tls_evidence(
-                &plan,
-                &engine_build_id()?,
-                &reference,
-                &candidate,
-                &report,
-            )
-            .context("build integrity-bound Canary TLS evidence")?;
+            let canary_evidence =
+                build_canary_tls_evidence(&plan, &engine_build_id()?, &reference, &candidate, &report)
+                    .context("build integrity-bound Canary TLS evidence")?;
             write_json(&output_canary_evidence, &canary_evidence)?;
             println!(
                 "Canary TLS evidence: sha256={}, controls={}",
@@ -680,10 +708,7 @@ async fn main() -> Result<()> {
             write_json(&output_diff, &report)?;
             println!(
                 "controlled H2 diff: decision={:?}, findings={}, settings_exact={}, frames={}",
-                report.decision,
-                report.summary.total_differences,
-                evidence.settings_exact,
-                evidence.frame_count
+                report.decision, report.summary.total_differences, evidence.settings_exact, evidence.frame_count
             );
             if report.decision != DiffDecision::Pass {
                 bail!(
@@ -778,8 +803,7 @@ async fn main() -> Result<()> {
                 FreshStabilityOptions {
                     reference_directory: &reference_directory,
                     iterations,
-                    reference_collection_attempts: reference_collection_attempts
-                        .unwrap_or(iterations),
+                    reference_collection_attempts: reference_collection_attempts.unwrap_or(iterations),
                     trust_roots_pem,
                     connect_timeout_ms,
                     handshake_timeout_ms,
@@ -800,6 +824,56 @@ async fn main() -> Result<()> {
                     output_report.display()
                 );
             }
+        }
+        #[cfg(feature = "boring-backend")]
+        Command::ReleaseBundle {
+            claude_bin,
+            iterations,
+            output_dir,
+            signing_key,
+            engine_artifact,
+        } => {
+            release_orchestrator::release(release_orchestrator::ReleaseRequest {
+                claude_bin,
+                iterations,
+                output_dir,
+                signing_key,
+                engine_artifact,
+            })
+            .await?;
+        }
+        #[cfg(feature = "boring-backend")]
+        Command::PromoteBundle {
+            candidate,
+            manifest,
+            audit,
+            stability_report,
+            signing_key,
+            key_id,
+            target,
+            source_archetype_version_id,
+            engine_artifact,
+            lifecycle,
+            output,
+            trust_store_output,
+            replay_report_output,
+        } => {
+            release_bundle::promote(release_bundle::PromoteRequest {
+                candidate,
+                manifest,
+                audit,
+                stability_report,
+                signing_key,
+                key_id,
+                target,
+                source_archetype_version_id,
+                engine_artifact,
+                lifecycle,
+                output,
+                trust_store_output,
+                replay_report_output,
+            })
+            .await?;
         }
     }
     Ok(())
@@ -896,9 +970,7 @@ async fn run_fresh_stability_matrix(
         "fresh stability matrix plans must bind the same backend"
     );
     ensure!(
-        options.connect_timeout_ms > 0
-            && options.handshake_timeout_ms > 0
-            && options.h1_timeout_ms > 0,
+        options.connect_timeout_ms > 0 && options.handshake_timeout_ms > 0 && options.h1_timeout_ms > 0,
         "fresh stability matrix timeouts must be positive"
     );
     ensure!(
@@ -949,37 +1021,25 @@ async fn run_fresh_stability_matrix(
             &official,
             &reference_stability_policy(&official_baseline),
         )
-        .with_context(|| {
-            format!("compare official reference stability at iteration {iteration}")
-        })?;
+        .with_context(|| format!("compare official reference stability at iteration {iteration}"))?;
         let controlled_reference_stability = compare_reference_stability(
             &controlled_baseline,
             &controlled,
             &reference_stability_policy(&controlled_baseline),
         )
-        .with_context(|| {
-            format!("compare controlled reference stability at iteration {iteration}")
-        })?;
+        .with_context(|| format!("compare controlled reference stability at iteration {iteration}"))?;
 
         let prefix = format!("{iteration:02}");
         let official_replay_capture = options
             .output_directory
             .join(format!("{prefix}-tls-replay.normalized.json"));
-        let official_replay_diff = options
-            .output_directory
-            .join(format!("{prefix}-tls-diff.json"));
-        let official_handshake_evidence = options
-            .output_directory
-            .join(format!("{prefix}-tls-handshake.json"));
+        let official_replay_diff = options.output_directory.join(format!("{prefix}-tls-diff.json"));
+        let official_handshake_evidence = options.output_directory.join(format!("{prefix}-tls-handshake.json"));
         let controlled_replay_capture = options
             .output_directory
             .join(format!("{prefix}-h1-replay.normalized.json"));
-        let controlled_replay_diff = options
-            .output_directory
-            .join(format!("{prefix}-h1-diff.json"));
-        let controlled_h1_evidence = options
-            .output_directory
-            .join(format!("{prefix}-h1-control.json"));
+        let controlled_replay_diff = options.output_directory.join(format!("{prefix}-h1-diff.json"));
+        let controlled_h1_evidence = options.output_directory.join(format!("{prefix}-h1-control.json"));
 
         let (tls_candidate, tls_observation) = capture_tls_candidate(
             official_plan,
@@ -996,17 +1056,11 @@ async fn run_fresh_stability_matrix(
         write_json(&official_replay_diff, &official_replay)?;
         write_json(&official_handshake_evidence, &tls_observation)?;
 
-        let (h1_candidate, h1_evidence) =
-            capture_h1_candidate(controlled_plan, &controlled, options.h1_timeout_ms)
-                .await
-                .with_context(|| {
-                    format!("capture controlled H1 replay at iteration {iteration}")
-                })?;
-        let controlled_h1_replay =
-            compare_captures(&controlled, &h1_candidate, &h1_diff_policy(&controlled))
-                .with_context(|| {
-                    format!("compare controlled H1 replay at iteration {iteration}")
-                })?;
+        let (h1_candidate, h1_evidence) = capture_h1_candidate(controlled_plan, &controlled, options.h1_timeout_ms)
+            .await
+            .with_context(|| format!("capture controlled H1 replay at iteration {iteration}"))?;
+        let controlled_h1_replay = compare_captures(&controlled, &h1_candidate, &h1_diff_policy(&controlled))
+            .with_context(|| format!("compare controlled H1 replay at iteration {iteration}"))?;
         write_json(&controlled_replay_capture, &h1_candidate)?;
         write_json(&controlled_replay_diff, &controlled_h1_replay)?;
         write_json(&controlled_h1_evidence, &h1_evidence)?;
@@ -1044,10 +1098,7 @@ async fn run_fresh_stability_matrix(
         println!("fresh stability iteration {iteration}: decision={decision:?}");
     }
 
-    let passed_runs = runs
-        .iter()
-        .filter(|run| run.decision == DiffDecision::Pass)
-        .count();
+    let passed_runs = runs.iter().filter(|run| run.decision == DiffDecision::Pass).count();
     let decisions = runs.iter().map(|run| run.decision).collect::<Vec<_>>();
     let decision = combined_decision(&decisions, true);
     let mut report = FreshStabilityMatrixReport {
@@ -1061,9 +1112,7 @@ async fn run_fresh_stability_matrix(
         output_directory: options.output_directory.display().to_string(),
         iterations: options.iterations,
         reference_collection_attempts: options.reference_collection_attempts,
-        reference_collection_failures: options
-            .reference_collection_attempts
-            .saturating_sub(options.iterations),
+        reference_collection_failures: options.reference_collection_attempts.saturating_sub(options.iterations),
         passed_runs,
         decision,
         runs,
@@ -1082,8 +1131,7 @@ fn read_matrix_reference(
 ) -> Result<NormalizedCapture> {
     let path = directory.join(format!("{iteration:02}-{kind}.normalized.json"));
     let reference = read_json::<NormalizedCapture>(&path)?;
-    verify_normalized_capture(&reference)
-        .with_context(|| format!("verify matrix reference {}", path.display()))?;
+    verify_normalized_capture(&reference).with_context(|| format!("verify matrix reference {}", path.display()))?;
     ensure!(
         &reference.lane == expected_lane,
         "matrix reference {} has the wrong lane",
@@ -1104,8 +1152,8 @@ fn compare_reference_stability(
         CaptureLane::ReferenceControlledEndpoint => CaptureLane::ReplayControlledEndpoint,
         _ => bail!("reference stability baseline must use a reference lane"),
     };
-    candidate.normalized_sha256 = recompute_normalized_sha256(&candidate)
-        .context("recompute reference stability candidate digest")?;
+    candidate.normalized_sha256 =
+        recompute_normalized_sha256(&candidate).context("recompute reference stability candidate digest")?;
     compare_captures(baseline, &candidate, policy).context("compare reference stability")
 }
 
@@ -1116,18 +1164,14 @@ fn reference_stability_policy(reference: &NormalizedCapture) -> DiffPolicy {
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {
-            wire_normalizer::NormalizedEvent::ConnectionLifecycle { .. } => {
-                Some(AllowedDifference {
-                    path: format!("/events/{index}/timing_bucket"),
-                    rationale: "fresh connections may cross timing buckets".to_owned(),
-                    evidence_ref: "matrix-policy:fresh-reference-timing".to_owned(),
-                })
-            }
+            wire_normalizer::NormalizedEvent::ConnectionLifecycle { .. } => Some(AllowedDifference {
+                path: format!("/events/{index}/timing_bucket"),
+                rationale: "fresh connections may cross timing buckets".to_owned(),
+                evidence_ref: "matrix-policy:fresh-reference-timing".to_owned(),
+            }),
             wire_normalizer::NormalizedEvent::SseChunk { .. } => Some(AllowedDifference {
                 path: format!("/events/{index}/byte_len"),
-                rationale:
-                    "response Body/SSE remains transparent and is outside outbound request drift"
-                        .to_owned(),
+                rationale: "response Body/SSE remains transparent and is outside outbound request drift".to_owned(),
                 evidence_ref: "product-decision:transparent-response-body-sse".to_owned(),
             }),
             _ => None,
@@ -1145,8 +1189,7 @@ fn tls_diff_policy() -> DiffPolicy {
     DiffPolicy {
         allowed_differences: vec![AllowedDifference {
             path: "/events/1/timing_bucket".to_owned(),
-            rationale: "same-target TLS byte replay excludes local CONNECT setup latency"
-                .to_owned(),
+            rationale: "same-target TLS byte replay excludes local CONNECT setup latency".to_owned(),
             evidence_ref: "capture-method:connect-tls-tap".to_owned(),
         }],
         ..DiffPolicy::default()
@@ -1157,10 +1200,7 @@ fn tls_diff_policy() -> DiffPolicy {
 fn combined_decision(decisions: &[DiffDecision], controls_exact: bool) -> DiffDecision {
     if !controls_exact || decisions.contains(&DiffDecision::Fail) {
         DiffDecision::Fail
-    } else if decisions
-        .iter()
-        .all(|decision| *decision == DiffDecision::Pass)
-    {
+    } else if decisions.iter().all(|decision| *decision == DiffDecision::Pass) {
         DiffDecision::Pass
     } else {
         DiffDecision::Inconclusive
@@ -1169,8 +1209,7 @@ fn combined_decision(decisions: &[DiffDecision], controls_exact: bool) -> DiffDe
 
 #[cfg(feature = "boring-backend")]
 fn matrix_report_sha256(report: &FreshStabilityMatrixReport) -> Result<String> {
-    let bytes =
-        serde_json::to_vec(report).context("serialize fresh stability report for digest")?;
+    let bytes = serde_json::to_vec(report).context("serialize fresh stability report for digest")?;
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
@@ -1183,7 +1222,8 @@ fn h1_diff_policy(reference: &NormalizedCapture) -> DiffPolicy {
         .filter(|(_, event)| matches!(event, wire_normalizer::NormalizedEvent::SseChunk { .. }))
         .map(|(index, _)| AllowedDifference {
             path: format!("/events/{index}/byte_len"),
-            rationale: "response Body/SSE is transparent; this gate targets the outbound HTTP/1.1 request wire shape".to_owned(),
+            rationale: "response Body/SSE is transparent; this gate targets the outbound HTTP/1.1 request wire shape"
+                .to_owned(),
             evidence_ref: "product-decision:transparent-response-body-sse".to_owned(),
         })
         .collect();
@@ -1211,8 +1251,8 @@ fn read_replay_plan(path: &PathBuf) -> Result<ReplayPlan> {
 
 fn engine_build_id() -> Result<String> {
     let executable = std::env::current_exe().context("resolve current Transport Engine binary")?;
-    let bytes = fs::read(&executable)
-        .with_context(|| format!("read Transport Engine binary {}", executable.display()))?;
+    let bytes =
+        fs::read(&executable).with_context(|| format!("read Transport Engine binary {}", executable.display()))?;
     Ok(format!(
         "spike-cli/{}+sha256:{}",
         env!("CARGO_PKG_VERSION"),
@@ -1306,13 +1346,8 @@ fn required_alpn_for_tls_replay(alpn_wire: &[u8]) -> Result<Option<String>> {
         let length = usize::from(alpn_wire[offset]);
         offset += 1;
         ensure!(length > 0, "Replay Plan contains an empty ALPN protocol");
-        let end = offset
-            .checked_add(length)
-            .context("Replay Plan ALPN length overflow")?;
-        ensure!(
-            end <= alpn_wire.len(),
-            "Replay Plan contains a truncated ALPN protocol"
-        );
+        let end = offset.checked_add(length).context("Replay Plan ALPN length overflow")?;
+        ensure!(end <= alpn_wire.len(), "Replay Plan contains a truncated ALPN protocol");
         protocols.push(
             std::str::from_utf8(&alpn_wire[offset..end])
                 .context("Replay Plan ALPN protocol is not UTF-8")?
@@ -1422,14 +1457,8 @@ struct H1ControlEvidence {
 }
 
 #[cfg(feature = "boring-backend")]
-async fn capture_h1_cancellation_evidence(
-    plan: &ReplayPlan,
-    timeout_ms: u64,
-) -> Result<CanaryCancellationEvidence> {
-    ensure!(
-        timeout_ms > 0,
-        "controlled H1 cancellation timeout must be positive"
-    );
+async fn capture_h1_cancellation_evidence(plan: &ReplayPlan, timeout_ms: u64) -> Result<CanaryCancellationEvidence> {
+    ensure!(timeout_ms > 0, "controlled H1 cancellation timeout must be positive");
     let profile = plan.http1().context("require HTTP/1.1 Replay Plan")?;
     let path = synthetic_messages_path(profile.path_bytes)?;
     let body = synthetic_h1_body(profile.body_bytes)?;
@@ -1451,9 +1480,7 @@ async fn capture_h1_cancellation_evidence(
     )
     .await
     .context("bind controlled H1 cancellation endpoint")?;
-    let server_addr = server
-        .local_addr()
-        .context("read controlled H1 cancellation address")?;
+    let server_addr = server.local_addr().context("read controlled H1 cancellation address")?;
     let trust_roots_pem = server.ca_pem().to_vec();
     let capture_task = tokio::spawn(server.capture_one());
     let observation = probe_h1_cancellation_with_request(
@@ -1473,11 +1500,7 @@ async fn capture_h1_cancellation_evidence(
             io_timeout_ms: timeout_ms,
             max_response_bytes: 4 * 1024 * 1024,
         },
-        &H1ProbeRequest {
-            path,
-            headers,
-            body,
-        },
+        &H1ProbeRequest { path, headers, body },
     )
     .await
     .context("run controlled H1 streaming cancellation")?;
@@ -1497,13 +1520,8 @@ async fn capture_h1_cancellation_evidence(
             && peer.response_bytes_sent > 0,
         "controlled peer cancellation observation differs from Transport Engine action"
     );
-    build_canary_cancellation_evidence(
-        plan,
-        &engine_build_id()?,
-        &observation,
-        peer.peer_close_observed,
-    )
-    .context("build integrity-bound Canary cancellation evidence")
+    build_canary_cancellation_evidence(plan, &engine_build_id()?, &observation, peer.peer_close_observed)
+        .context("build integrity-bound Canary cancellation evidence")
 }
 
 #[cfg(feature = "boring-backend")]
@@ -1553,11 +1571,7 @@ async fn capture_h1_candidate(
             io_timeout_ms: timeout_ms,
             max_response_bytes: 4 * 1024 * 1024,
         },
-        &H1ProbeRequest {
-            path,
-            headers,
-            body,
-        },
+        &H1ProbeRequest { path, headers, body },
     )
     .await
     .context("probe controlled TLS/HTTP1 Capture Endpoint")?;
@@ -1632,10 +1646,7 @@ fn synthetic_h1_body(body_bytes: u32) -> Result<Vec<u8>> {
     );
     let mut body = Vec::with_capacity(body_bytes);
     body.extend_from_slice(prefix);
-    body.extend(std::iter::repeat_n(
-        b'x',
-        body_bytes - prefix.len() - suffix.len(),
-    ));
+    body.extend(std::iter::repeat_n(b'x', body_bytes - prefix.len() - suffix.len()));
     body.extend_from_slice(suffix);
     Ok(body)
 }
@@ -1654,15 +1665,11 @@ fn synthetic_h1_headers(plan: &ReplayPlan, body_bytes: usize) -> Result<Vec<(Str
                     "00000000-0000-4000-8000-000000000000".to_owned()
                 }
                 _ => match rule.mode {
-                    HeaderValueMode::Exact => rule.exact_value.clone().with_context(|| {
-                        format!(
-                            "exact controlled header {} has no value",
-                            rule.canonical_name
-                        )
-                    })?,
-                    HeaderValueMode::Shape | HeaderValueMode::CredentialDerivedSecret => {
-                        "x".repeat(rule.value_bytes)
-                    }
+                    HeaderValueMode::Exact => rule
+                        .exact_value
+                        .clone()
+                        .with_context(|| format!("exact controlled header {} has no value", rule.canonical_name))?,
+                    HeaderValueMode::Shape | HeaderValueMode::CredentialDerivedSecret => "x".repeat(rule.value_bytes),
                 },
             };
             ensure!(
@@ -1768,9 +1775,7 @@ fn raw_h1_candidate(
         },
         events,
     };
-    batch
-        .validate()
-        .context("validate controlled H1 CaptureBatch")?;
+    batch.validate().context("validate controlled H1 CaptureBatch")?;
     Ok(batch)
 }
 
@@ -1839,28 +1844,19 @@ async fn capture_h2_candidate(
             _ => None,
         })
         .unwrap_or_default();
-    let observed_settings_order = observed_settings
-        .iter()
-        .map(|setting| setting.id)
-        .collect::<Vec<_>>();
+    let observed_settings_order = observed_settings.iter().map(|setting| setting.id).collect::<Vec<_>>();
     let http2 = plan.http2().context("require HTTP/2 Replay Plan")?;
     let evidence = H2ControlEvidence {
         expected_settings: http2.settings.clone(),
         observed_settings: observed_settings.clone(),
         expected_settings_order: http2.settings_order.clone(),
         observed_settings_order: observed_settings_order.clone(),
-        settings_exact: observed_settings == http2.settings
-            && observed_settings_order == http2.settings_order,
+        settings_exact: observed_settings == http2.settings && observed_settings_order == http2.settings_order,
         frame_count: captured.frames.len(),
         decrypted_client_bytes: captured.decrypted_client_bytes,
         negotiated_alpn: captured.negotiated_alpn,
     };
-    let batch = raw_h2_candidate(
-        reference,
-        plan,
-        &captured.frames,
-        probe.tls.handshake_elapsed_micros,
-    )?;
+    let batch = raw_h2_candidate(reference, plan, &captured.frames, probe.tls.handshake_elapsed_micros)?;
     let normalized = normalize_capture(&batch).context("normalize controlled H2 candidate")?;
     Ok((normalized, evidence))
 }
@@ -1879,12 +1875,10 @@ fn synthetic_h2_request(plan: &ReplayPlan) -> Result<H2ProbeRequest> {
         .filter(|rule| !rule.canonical_name.starts_with(':') && rule.canonical_name != "host")
         .map(|rule| {
             let value = match rule.mode {
-                HeaderValueMode::Exact => rule.exact_value.clone().with_context(|| {
-                    format!(
-                        "exact controlled header {} has no value",
-                        rule.canonical_name
-                    )
-                })?,
+                HeaderValueMode::Exact => rule
+                    .exact_value
+                    .clone()
+                    .with_context(|| format!("exact controlled header {} has no value", rule.canonical_name))?,
                 HeaderValueMode::Shape => "x".repeat(rule.value_bytes),
                 HeaderValueMode::CredentialDerivedSecret => "s".repeat(rule.value_bytes),
             };
@@ -1961,9 +1955,7 @@ fn raw_h2_candidate(
         },
         events,
     };
-    batch
-        .validate()
-        .context("validate controlled H2 CaptureBatch")?;
+    batch.validate().context("validate controlled H2 CaptureBatch")?;
     Ok(batch)
 }
 
@@ -1974,8 +1966,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T> {
 
 fn write_json(path: &PathBuf, value: &impl serde::Serialize) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create output directory {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("create output directory {}", parent.display()))?;
     }
     let bytes = serde_json::to_vec_pretty(value).context("serialize JSON")?;
     fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
@@ -2000,18 +1991,12 @@ fn write_sample_set(directory: &Path) -> Result<()> {
     for (name, batch) in samples {
         write_json(&directory.join(format!("{name}.raw.json")), &batch)?;
         let normalized = normalize_capture(&batch).context("normalize sample set batch")?;
-        write_json(
-            &directory.join(format!("{name}.normalized.json")),
-            &normalized,
-        )?;
+        write_json(&directory.join(format!("{name}.normalized.json")), &normalized)?;
     }
     Ok(())
 }
 
-fn build_manifest(
-    passive: &NormalizedCapture,
-    controlled: &NormalizedCapture,
-) -> Result<CaptureManifest> {
+fn build_manifest(passive: &NormalizedCapture, controlled: &NormalizedCapture) -> Result<CaptureManifest> {
     verify_normalized_capture(passive).context("verify passive TLS artifact")?;
     verify_normalized_capture(controlled).context("verify controlled H2 artifact")?;
     ensure!(
@@ -2104,7 +2089,13 @@ fn default_archetype_id(environment: &ManifestEnvironmentDescriptor) -> String {
         archetype_segment(&environment.os_name),
         archetype_segment(&environment.arch),
         archetype_segment(&environment.runtime_name),
-        archetype_segment(&environment.claude_code_version)
+        archetype_segment(
+            environment
+                .claude_code_version
+                .split_ascii_whitespace()
+                .next()
+                .unwrap_or(&environment.claude_code_version),
+        )
     )
 }
 
@@ -2180,18 +2171,12 @@ fn sample_batch(lane: CaptureLane, capture_run_id: Uuid) -> CaptureBatch {
             length: 18,
             detail: Http2FrameDetail::Settings {
                 entries: vec![
-                    Http2Setting {
-                        id: 1,
-                        value: 65_536,
-                    },
+                    Http2Setting { id: 1, value: 65_536 },
                     Http2Setting {
                         id: 4,
                         value: 6_291_456,
                     },
-                    Http2Setting {
-                        id: 6,
-                        value: 262_144,
-                    },
+                    Http2Setting { id: 6, value: 262_144 },
                 ],
             },
         },
@@ -2289,8 +2274,7 @@ mod tests {
     #[test]
     fn tls_replay_requires_the_first_offered_alpn_protocol() {
         assert_eq!(
-            required_alpn_for_tls_replay(b"\x02h2\x08http/1.1")
-                .expect("decode ordered ALPN profile"),
+            required_alpn_for_tls_replay(b"\x02h2\x08http/1.1").expect("decode ordered ALPN profile"),
             Some("h2".to_owned())
         );
     }
@@ -2305,19 +2289,13 @@ mod tests {
     #[test]
     fn manifest_pairs_logical_scenario_across_different_lane_protocols() {
         let capture_run_id = Uuid::new_v4();
-        let passive = normalize_capture(&sample_batch(
-            CaptureLane::ReferenceOfficialTls,
-            capture_run_id,
-        ))
-        .expect("normalize passive fixture");
-        let mut controlled_batch =
-            sample_batch(CaptureLane::ReferenceControlledEndpoint, capture_run_id);
+        let passive = normalize_capture(&sample_batch(CaptureLane::ReferenceOfficialTls, capture_run_id))
+            .expect("normalize passive fixture");
+        let mut controlled_batch = sample_batch(CaptureLane::ReferenceControlledEndpoint, capture_run_id);
         controlled_batch.scenario.expected_protocol = "http/1.1".to_owned();
-        let controlled =
-            normalize_capture(&controlled_batch).expect("normalize controlled fixture");
+        let controlled = normalize_capture(&controlled_batch).expect("normalize controlled fixture");
 
-        let manifest = build_manifest(&passive, &controlled)
-            .expect("pair lanes with distinct observed protocols");
+        let manifest = build_manifest(&passive, &controlled).expect("pair lanes with distinct observed protocols");
 
         assert_eq!(manifest.scenario.id, passive.scenario.id);
         assert_ne!(

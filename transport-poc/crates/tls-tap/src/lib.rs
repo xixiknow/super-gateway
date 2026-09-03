@@ -6,6 +6,7 @@ use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::oneshot,
 };
 
 const TLS_HANDSHAKE_CONTENT_TYPE: u8 = 22;
@@ -52,10 +53,7 @@ impl fmt::Debug for UpstreamHttpProxy {
             .debug_struct("UpstreamHttpProxy")
             .field("host", &self.host)
             .field("port", &self.port)
-            .field(
-                "authorization",
-                &self.authorization.as_ref().map(|_| "<redacted>"),
-            )
+            .field("authorization", &self.authorization.as_ref().map(|_| "<redacted>"))
             .finish()
     }
 }
@@ -85,9 +83,7 @@ impl TlsTapListener {
     /// Returns [`TlsTapError`] when the listener configuration or bind fails.
     pub async fn bind(config: TlsTapConfig) -> Result<Self, TlsTapError> {
         validate_config(&config)?;
-        let listener = TcpListener::bind(config.listen)
-            .await
-            .map_err(TlsTapError::Io)?;
+        let listener = TcpListener::bind(config.listen).await.map_err(TlsTapError::Io)?;
         Ok(Self { listener, config })
     }
 
@@ -113,20 +109,39 @@ impl TlsTapListener {
             .map_err(|_| TlsTapError::Timeout)?
     }
 
+    /// Returns as soon as a complete ClientHello is observed while a detached
+    /// pass-through task keeps the TLS handshake alive.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlsTapError`] for accept/connect/forwarding failure or timeout.
+    pub async fn capture_client_hello(self) -> Result<Vec<u8>, TlsTapError> {
+        let timeout = self.config.session_timeout;
+        tokio::time::timeout(timeout, self.capture_client_hello_inner())
+            .await
+            .map_err(|_| TlsTapError::Timeout)?
+    }
+
+    async fn capture_client_hello_inner(self) -> Result<Vec<u8>, TlsTapError> {
+        let (client, _) = self.listener.accept().await.map_err(TlsTapError::Io)?;
+        let upstream = TcpStream::connect((self.config.upstream_host.as_str(), self.config.upstream_port))
+            .await
+            .map_err(TlsTapError::Io)?;
+        let (sender, receiver) = oneshot::channel();
+        tokio::spawn(async move {
+            let _result =
+                forward_and_capture_with_notification(client, upstream, self.config.max_capture_bytes, Some(sender))
+                    .await;
+        });
+        receiver.await.map_err(|_| TlsTapError::NotClientHello)
+    }
+
     async fn capture_one_inner(self) -> Result<Vec<u8>, TlsTapError> {
         let (client, _) = self.listener.accept().await.map_err(TlsTapError::Io)?;
-        let upstream = TcpStream::connect((
-            self.config.upstream_host.as_str(),
-            self.config.upstream_port,
-        ))
-        .await
-        .map_err(TlsTapError::Io)?;
-        Box::pin(forward_and_capture(
-            client,
-            upstream,
-            self.config.max_capture_bytes,
-        ))
-        .await
+        let upstream = TcpStream::connect((self.config.upstream_host.as_str(), self.config.upstream_port))
+            .await
+            .map_err(TlsTapError::Io)?;
+        Box::pin(forward_and_capture(client, upstream, self.config.max_capture_bytes)).await
     }
 }
 
@@ -139,9 +154,7 @@ impl ConnectTlsTapListener {
     /// Returns [`TlsTapError`] when configuration or listener binding fails.
     pub async fn bind(config: ConnectTlsTapConfig) -> Result<Self, TlsTapError> {
         validate_connect_config(&config)?;
-        let listener = TcpListener::bind(config.listen)
-            .await
-            .map_err(TlsTapError::Io)?;
+        let listener = TcpListener::bind(config.listen).await.map_err(TlsTapError::Io)?;
         Ok(Self { listener, config })
     }
 
@@ -173,28 +186,35 @@ impl ConnectTlsTapListener {
     ///
     /// Returns [`TlsTapError`] for timeout, malformed CONNECT requests, too many
     /// rejected targets, upstream connection failure, or forwarding failure.
-    pub async fn capture_allowed(
-        self,
-        max_rejected_tunnels: usize,
-    ) -> Result<Vec<u8>, TlsTapError> {
+    pub async fn capture_allowed(self, max_rejected_tunnels: usize) -> Result<Vec<u8>, TlsTapError> {
         let timeout = self.config.session_timeout;
-        tokio::time::timeout(
-            timeout,
-            Box::pin(self.capture_one_inner(max_rejected_tunnels)),
-        )
-        .await
-        .map_err(|_| TlsTapError::Timeout)?
+        tokio::time::timeout(timeout, Box::pin(self.capture_one_inner(max_rejected_tunnels)))
+            .await
+            .map_err(|_| TlsTapError::Timeout)?
     }
 
-    async fn capture_one_inner(self, max_rejected_tunnels: usize) -> Result<Vec<u8>, TlsTapError> {
+    /// Rejects a bounded number of unrelated CONNECT targets, then returns as
+    /// soon as a complete ClientHello is observed. A detached pass-through task
+    /// keeps the accepted tunnel alive for the real client exchange.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlsTapError`] for timeout, malformed CONNECT requests, too many
+    /// rejected targets, upstream connection failure, or an invalid ClientHello.
+    pub async fn capture_allowed_client_hello(self, max_rejected_tunnels: usize) -> Result<Vec<u8>, TlsTapError> {
+        let timeout = self.config.session_timeout;
+        tokio::time::timeout(timeout, Box::pin(self.capture_client_hello_inner(max_rejected_tunnels)))
+            .await
+            .map_err(|_| TlsTapError::Timeout)?
+    }
+
+    async fn capture_client_hello_inner(self, max_rejected_tunnels: usize) -> Result<Vec<u8>, TlsTapError> {
         let mut rejected_tunnels = 0_usize;
         loop {
             let (mut client, _) = self.listener.accept().await.map_err(TlsTapError::Io)?;
             let head = read_connect_head(&mut client, self.config.max_connect_header_bytes).await?;
             let (host, port) = parse_connect_authority(&head)?;
-            if !host.eq_ignore_ascii_case(&self.config.allowed_host)
-                || port != self.config.allowed_port
-            {
+            if !host.eq_ignore_ascii_case(&self.config.allowed_host) || port != self.config.allowed_port {
                 client
                     .write_all(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
                     .await
@@ -210,12 +230,39 @@ impl ConnectTlsTapListener {
                 .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 .await
                 .map_err(TlsTapError::Io)?;
-            return Box::pin(forward_and_capture(
-                client,
-                upstream,
-                self.config.max_capture_bytes,
-            ))
-            .await;
+            let (sender, receiver) = oneshot::channel();
+            let max_capture_bytes = self.config.max_capture_bytes;
+            tokio::spawn(async move {
+                let _forwarded =
+                    forward_and_capture_with_notification(client, upstream, max_capture_bytes, Some(sender)).await;
+            });
+            return receiver.await.map_err(|_| TlsTapError::NotClientHello);
+        }
+    }
+
+    async fn capture_one_inner(self, max_rejected_tunnels: usize) -> Result<Vec<u8>, TlsTapError> {
+        let mut rejected_tunnels = 0_usize;
+        loop {
+            let (mut client, _) = self.listener.accept().await.map_err(TlsTapError::Io)?;
+            let head = read_connect_head(&mut client, self.config.max_connect_header_bytes).await?;
+            let (host, port) = parse_connect_authority(&head)?;
+            if !host.eq_ignore_ascii_case(&self.config.allowed_host) || port != self.config.allowed_port {
+                client
+                    .write_all(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+                    .await
+                    .map_err(TlsTapError::Io)?;
+                if rejected_tunnels >= max_rejected_tunnels {
+                    return Err(TlsTapError::UnexpectedConnectAuthority { host, port });
+                }
+                rejected_tunnels += 1;
+                continue;
+            }
+            let upstream = connect_allowed_upstream(&self.config).await?;
+            client
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .map_err(TlsTapError::Io)?;
+            return Box::pin(forward_and_capture(client, upstream, self.config.max_capture_bytes)).await;
         }
     }
 }
@@ -237,10 +284,7 @@ async fn connect_allowed_upstream(config: &ConnectTlsTapConfig) -> Result<TcpStr
         request.push_str("\r\n");
     }
     request.push_str("Proxy-Connection: keep-alive\r\n\r\n");
-    stream
-        .write_all(request.as_bytes())
-        .await
-        .map_err(TlsTapError::Io)?;
+    stream.write_all(request.as_bytes()).await.map_err(TlsTapError::Io)?;
     let response = read_connect_head(&mut stream, config.max_connect_header_bytes).await?;
     let status = parse_connect_response_status(&response)?;
     if status != 200 {
@@ -262,12 +306,9 @@ fn parse_connect_response_status(head: &[u8]) -> Result<u16, TlsTapError> {
         .windows(2)
         .position(|window| window == b"\r\n")
         .ok_or(TlsTapError::InvalidUpstreamProxyResponse)?;
-    let line = std::str::from_utf8(&head[..line_end])
-        .map_err(|_| TlsTapError::InvalidUpstreamProxyResponse)?;
+    let line = std::str::from_utf8(&head[..line_end]).map_err(|_| TlsTapError::InvalidUpstreamProxyResponse)?;
     let mut parts = line.split_ascii_whitespace();
-    let version = parts
-        .next()
-        .ok_or(TlsTapError::InvalidUpstreamProxyResponse)?;
+    let version = parts.next().ok_or(TlsTapError::InvalidUpstreamProxyResponse)?;
     if !version.starts_with("HTTP/1.") {
         return Err(TlsTapError::InvalidUpstreamProxyResponse);
     }
@@ -283,9 +324,19 @@ async fn forward_and_capture(
     upstream: TcpStream,
     max_capture_bytes: usize,
 ) -> Result<Vec<u8>, TlsTapError> {
+    forward_and_capture_with_notification(client, upstream, max_capture_bytes, None).await
+}
+
+async fn forward_and_capture_with_notification(
+    client: TcpStream,
+    upstream: TcpStream,
+    max_capture_bytes: usize,
+    hello_sender: Option<oneshot::Sender<Vec<u8>>>,
+) -> Result<Vec<u8>, TlsTapError> {
     let (mut client_read, mut client_write) = client.into_split();
     let (mut upstream_read, mut upstream_write) = upstream.into_split();
     let client_to_upstream = async move {
+        let mut hello_sender = hello_sender;
         let mut captured = Vec::with_capacity(max_capture_bytes.min(16 * 1024));
         let mut buffer = [0_u8; 16 * 1024];
         loop {
@@ -307,6 +358,11 @@ async fn forward_and_capture(
             if captured.len() < max_capture_bytes {
                 let remaining = max_capture_bytes - captured.len();
                 captured.extend_from_slice(&buffer[..read.min(remaining)]);
+            }
+            if hello_sender.is_some() && parse_client_hello(&captured).is_ok() {
+                if let Some(sender) = hello_sender.take() {
+                    let _sent = sender.send(captured.clone());
+                }
             }
             if let Err(error) = upstream_write.write_all(&buffer[..read]).await {
                 if !captured.is_empty() && is_terminal_tunnel_error(&error) {
@@ -345,10 +401,7 @@ fn is_terminal_tunnel_error(error: &std::io::Error) -> bool {
     )
 }
 
-async fn read_connect_head(
-    client: &mut TcpStream,
-    max_header_bytes: usize,
-) -> Result<Vec<u8>, TlsTapError> {
+async fn read_connect_head(client: &mut TcpStream, max_header_bytes: usize) -> Result<Vec<u8>, TlsTapError> {
     let mut head = Vec::with_capacity(max_header_bytes.min(1024));
     while head.len() < max_header_bytes {
         let byte = client.read_u8().await.map_err(TlsTapError::Io)?;
@@ -365,8 +418,7 @@ fn parse_connect_authority(head: &[u8]) -> Result<(String, u16), TlsTapError> {
         .windows(2)
         .position(|window| window == b"\r\n")
         .ok_or(TlsTapError::InvalidConnectRequest)?;
-    let line =
-        std::str::from_utf8(&head[..line_end]).map_err(|_| TlsTapError::InvalidConnectRequest)?;
+    let line = std::str::from_utf8(&head[..line_end]).map_err(|_| TlsTapError::InvalidConnectRequest)?;
     let mut parts = line.split_ascii_whitespace();
     if parts.next() != Some("CONNECT") {
         return Err(TlsTapError::InvalidConnectRequest);
@@ -384,25 +436,19 @@ fn split_authority(authority: &str) -> Result<(&str, u16), TlsTapError> {
         return Err(TlsTapError::InvalidConnectRequest);
     }
     let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
-        let end = bracketed
-            .find(']')
-            .ok_or(TlsTapError::InvalidConnectRequest)?;
+        let end = bracketed.find(']').ok_or(TlsTapError::InvalidConnectRequest)?;
         let host = &bracketed[..end];
         let port = bracketed[end + 1..]
             .strip_prefix(':')
             .ok_or(TlsTapError::InvalidConnectRequest)?;
         (host, port)
     } else {
-        authority
-            .rsplit_once(':')
-            .ok_or(TlsTapError::InvalidConnectRequest)?
+        authority.rsplit_once(':').ok_or(TlsTapError::InvalidConnectRequest)?
     };
     if host.is_empty() || host.chars().any(char::is_whitespace) {
         return Err(TlsTapError::InvalidConnectRequest);
     }
-    let port = port
-        .parse::<u16>()
-        .map_err(|_| TlsTapError::InvalidConnectRequest)?;
+    let port = port.parse::<u16>().map_err(|_| TlsTapError::InvalidConnectRequest)?;
     if port == 0 {
         return Err(TlsTapError::InvalidConnectRequest);
     }
@@ -456,8 +502,7 @@ pub fn parse_client_hello(input: &[u8]) -> Result<ParsedClientHello, TlsTapError
         cipher_suites,
         extensions,
         alpn,
-        client_hello_len: u32::try_from(message_len)
-            .map_err(|_| TlsTapError::Malformed("ClientHello too large"))?,
+        client_hello_len: u32::try_from(message_len).map_err(|_| TlsTapError::Malformed("ClientHello too large"))?,
         record_lengths,
     })
 }
@@ -529,8 +574,7 @@ fn collect_handshake(input: &[u8]) -> Result<(Vec<u8>, u16, Vec<u32>), TlsTapErr
             );
             handshake.extend_from_slice(payload);
             if expected_handshake_len.is_none() && handshake.len() >= HANDSHAKE_HEADER_LEN {
-                expected_handshake_len =
-                    Some(HANDSHAKE_HEADER_LEN + read_u24(&handshake[1..HANDSHAKE_HEADER_LEN])?);
+                expected_handshake_len = Some(HANDSHAKE_HEADER_LEN + read_u24(&handshake[1..HANDSHAKE_HEADER_LEN])?);
             }
             if expected_handshake_len.is_some_and(|expected| handshake.len() >= expected) {
                 break;
@@ -549,9 +593,7 @@ fn collect_handshake(input: &[u8]) -> Result<(Vec<u8>, u16, Vec<u32>), TlsTapErr
     ))
 }
 
-fn parse_extensions(
-    input: &[u8],
-) -> Result<(Vec<TlsExtensionObservation>, Vec<String>), TlsTapError> {
+fn parse_extensions(input: &[u8]) -> Result<(Vec<TlsExtensionObservation>, Vec<String>), TlsTapError> {
     let mut cursor = Cursor::new(input);
     let mut extensions = vec![];
     let mut alpn = vec![];
@@ -559,15 +601,14 @@ fn parse_extensions(
         let extension_type = cursor.u16("extension_type")?;
         let length = usize::from(cursor.u16("extension_length")?);
         let data = cursor.take(length, "extension_data")?;
-        let position = u16::try_from(extensions.len())
-            .map_err(|_| TlsTapError::Malformed("too many TLS extensions"))?;
+        let position =
+            u16::try_from(extensions.len()).map_err(|_| TlsTapError::Malformed("too many TLS extensions"))?;
         let (name, attributes) = extension_shape(extension_type, data, &mut alpn)?;
         extensions.push(TlsExtensionObservation {
             extension_type,
             name,
             position,
-            encoded_len: u32::try_from(length)
-                .map_err(|_| TlsTapError::Malformed("TLS extension too large"))?,
+            encoded_len: u32::try_from(length).map_err(|_| TlsTapError::Malformed("TLS extension too large"))?,
             attributes,
         });
     }
@@ -591,10 +632,7 @@ fn extension_shape(
             "server_name"
         }
         10 => {
-            attributes.push(static_vector_attribute(
-                "groups",
-                parse_u16_vector(data, 2)?,
-            ));
+            attributes.push(static_vector_attribute("groups", parse_u16_vector(data, 2)?));
             "supported_groups"
         }
         13 => {
@@ -617,10 +655,7 @@ fn extension_shape(
             "padding"
         }
         43 => {
-            attributes.push(static_vector_attribute(
-                "versions",
-                parse_u16_vector(data, 1)?,
-            ));
+            attributes.push(static_vector_attribute("versions", parse_u16_vector(data, 1)?));
             "supported_versions"
         }
         51 => {
@@ -731,9 +766,7 @@ fn static_vector_attribute(name: &str, value: String) -> TlsAttributeObservation
 }
 
 fn read_u24(input: &[u8]) -> Result<usize, TlsTapError> {
-    let bytes: [u8; 3] = input
-        .try_into()
-        .map_err(|_| TlsTapError::Truncated("u24"))?;
+    let bytes: [u8; 3] = input.try_into().map_err(|_| TlsTapError::Truncated("u24"))?;
     Ok((usize::from(bytes[0]) << 16) | (usize::from(bytes[1]) << 8) | usize::from(bytes[2]))
 }
 
@@ -760,10 +793,7 @@ impl<'a> Cursor<'a> {
             .offset
             .checked_add(length)
             .ok_or(TlsTapError::Malformed("cursor overflow"))?;
-        let value = self
-            .input
-            .get(self.offset..end)
-            .ok_or(TlsTapError::Truncated(field))?;
+        let value = self.input.get(self.offset..end).ok_or(TlsTapError::Truncated(field))?;
         self.offset = end;
         Ok(value)
     }
@@ -831,11 +861,7 @@ mod tests {
         body.extend([0, 4, 0x13, 1, 0x13, 2]);
         body.extend([1, 0]);
         let extensions = [0x00, 0x10, 0x00, 0x05, 0x00, 0x03, 0x02, b'h', b'2'];
-        body.extend(
-            u16::try_from(extensions.len())
-                .expect("extension length")
-                .to_be_bytes(),
-        );
+        body.extend(u16::try_from(extensions.len()).expect("extension length").to_be_bytes());
         body.extend(extensions);
         let mut handshake = vec![1];
         let len = body.len();
@@ -846,11 +872,7 @@ mod tests {
         ]);
         handshake.extend(body);
         let mut record = vec![22, 0x03, 0x01];
-        record.extend(
-            u16::try_from(handshake.len())
-                .expect("record length")
-                .to_be_bytes(),
-        );
+        record.extend(u16::try_from(handshake.len()).expect("record length").to_be_bytes());
         record.extend(handshake);
         record
     }
@@ -869,25 +891,17 @@ mod tests {
     fn rejects_truncated_record() {
         let mut record = client_hello();
         record.pop();
-        assert!(matches!(
-            parse_client_hello(&record),
-            Err(TlsTapError::Truncated(_))
-        ));
+        assert!(matches!(parse_client_hello(&record), Err(TlsTapError::Truncated(_))));
     }
 
     #[tokio::test]
     async fn pass_through_tap_forwards_and_captures_client_prefix() {
-        let upstream = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind upstream");
+        let upstream = TcpListener::bind("127.0.0.1:0").await.expect("bind upstream");
         let upstream_addr = upstream.local_addr().expect("upstream address");
         let server = tokio::spawn(async move {
             let (mut stream, _) = upstream.accept().await.expect("accept upstream");
             let mut received = vec![];
-            stream
-                .read_to_end(&mut received)
-                .await
-                .expect("read upstream");
+            stream.read_to_end(&mut received).await.expect("read upstream");
             received
         });
         let tap = TlsTapListener::bind(TlsTapConfig {
@@ -913,17 +927,12 @@ mod tests {
 
     #[tokio::test]
     async fn connect_tap_forwards_only_after_allowed_connect() {
-        let upstream = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind upstream");
+        let upstream = TcpListener::bind("127.0.0.1:0").await.expect("bind upstream");
         let upstream_addr = upstream.local_addr().expect("upstream address");
         let server = tokio::spawn(async move {
             let (mut stream, _) = upstream.accept().await.expect("accept upstream");
             let mut received = vec![];
-            stream
-                .read_to_end(&mut received)
-                .await
-                .expect("read upstream");
+            stream.read_to_end(&mut received).await.expect("read upstream");
             received
         });
         let tap = ConnectTlsTapListener::bind(ConnectTlsTapConfig {
@@ -950,9 +959,7 @@ mod tests {
             )
             .await
             .expect("write CONNECT");
-        let response = read_connect_head(&mut client, 4096)
-            .await
-            .expect("CONNECT response");
+        let response = read_connect_head(&mut client, 4096).await.expect("CONNECT response");
         assert!(response.starts_with(b"HTTP/1.1 200"));
         let payload = client_hello();
         client.write_all(&payload).await.expect("write ClientHello");
@@ -965,17 +972,12 @@ mod tests {
 
     #[tokio::test]
     async fn connect_tap_can_reject_unrelated_target_then_capture_allowed_target() {
-        let upstream = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind upstream");
+        let upstream = TcpListener::bind("127.0.0.1:0").await.expect("bind upstream");
         let upstream_addr = upstream.local_addr().expect("upstream address");
         let server = tokio::spawn(async move {
             let (mut stream, _) = upstream.accept().await.expect("accept upstream");
             let mut received = vec![];
-            stream
-                .read_to_end(&mut received)
-                .await
-                .expect("read upstream");
+            stream.read_to_end(&mut received).await.expect("read upstream");
             received
         });
         let tap = ConnectTlsTapListener::bind(ConnectTlsTapConfig {
@@ -992,16 +994,12 @@ mod tests {
         let tap_addr = tap.local_addr().expect("tap address");
         let tap_task = tokio::spawn(tap.capture_allowed(1));
 
-        let mut unrelated = TcpStream::connect(tap_addr)
-            .await
-            .expect("connect unrelated target");
+        let mut unrelated = TcpStream::connect(tap_addr).await.expect("connect unrelated target");
         unrelated
             .write_all(b"CONNECT telemetry.invalid:443 HTTP/1.1\r\nHost: fixture\r\n\r\n")
             .await
             .expect("write unrelated CONNECT");
-        let denied = read_connect_head(&mut unrelated, 4096)
-            .await
-            .expect("denied response");
+        let denied = read_connect_head(&mut unrelated, 4096).await.expect("denied response");
         assert!(denied.starts_with(b"HTTP/1.1 403"));
 
         let mut client = TcpStream::connect(tap_addr).await.expect("connect tap");
@@ -1015,9 +1013,7 @@ mod tests {
             )
             .await
             .expect("write CONNECT");
-        let response = read_connect_head(&mut client, 4096)
-            .await
-            .expect("CONNECT response");
+        let response = read_connect_head(&mut client, 4096).await.expect("CONNECT response");
         assert!(response.starts_with(b"HTTP/1.1 200"));
         let payload = client_hello();
         client.write_all(&payload).await.expect("write ClientHello");
@@ -1031,9 +1027,7 @@ mod tests {
 
     #[tokio::test]
     async fn connect_tap_can_chain_through_an_upstream_http_proxy() {
-        let proxy = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind fixture proxy");
+        let proxy = TcpListener::bind("127.0.0.1:0").await.expect("bind fixture proxy");
         let proxy_addr = proxy.local_addr().expect("fixture proxy address");
         let proxy_task = tokio::spawn(async move {
             let (mut stream, _) = proxy.accept().await.expect("accept fixture proxy");
@@ -1045,10 +1039,7 @@ mod tests {
                 .await
                 .expect("write chained CONNECT response");
             let mut payload = vec![];
-            stream
-                .read_to_end(&mut payload)
-                .await
-                .expect("read chained payload");
+            stream.read_to_end(&mut payload).await.expect("read chained payload");
             (head, payload)
         });
         let tap = ConnectTlsTapListener::bind(ConnectTlsTapConfig {

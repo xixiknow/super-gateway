@@ -4,8 +4,7 @@
 mod egress;
 
 use archetype_bundle::{
-    ApplicationProfileSpec, CandidateArchetypeBundle, HeaderValueRule, Http1ProfileSpec,
-    Http2FrameSpec, verify_bundle,
+    ApplicationProfileSpec, CandidateArchetypeBundle, HeaderValueRule, Http1ProfileSpec, Http2FrameSpec, verify_bundle,
 };
 use capture_schema::{CancellationStage, Http2Setting, ProtocolAction};
 use serde::{Deserialize, Serialize};
@@ -13,12 +12,9 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use thiserror::Error;
 use uuid::Uuid;
-use wire_diff::{
-    AllowedDifference, DiffDecision, DiffLayer, DiffPolicy, WireDiffReport, compare_captures,
-};
+use wire_diff::{AllowedDifference, DiffDecision, DiffLayer, DiffPolicy, WireDiffReport, compare_captures};
 use wire_normalizer::{
-    NormalizedCapture, NormalizedEvent, NormalizedHttp2FrameDetail, NormalizedTlsExtension,
-    verify_normalized_capture,
+    NormalizedCapture, NormalizedEvent, NormalizedHttp2FrameDetail, NormalizedTlsExtension, verify_normalized_capture,
 };
 
 pub const TRANSPORT_PLAN_SCHEMA_VERSION: u32 = 4;
@@ -119,10 +115,7 @@ impl BackendDescriptor {
                 CapabilitySupport::WireVerificationRequired,
             ),
             (ControlPoint::TlsDynamicFields, CapabilitySupport::Native),
-            (
-                ControlPoint::TlsSessionResumption,
-                CapabilitySupport::Native,
-            ),
+            (ControlPoint::TlsSessionResumption, CapabilitySupport::Native),
             (ControlPoint::Http1RequestLine, CapabilitySupport::Native),
             (ControlPoint::Http1HeaderOrder, CapabilitySupport::Native),
             (ControlPoint::Http1HeaderCasing, CapabilitySupport::Native),
@@ -132,10 +125,7 @@ impl BackendDescriptor {
                 ControlPoint::Http2SettingsOrder,
                 CapabilitySupport::WireVerificationRequired,
             ),
-            (
-                ControlPoint::Http2ConnectionWindow,
-                CapabilitySupport::Native,
-            ),
+            (ControlPoint::Http2ConnectionWindow, CapabilitySupport::Native),
             (
                 ControlPoint::Http2FrameSequence,
                 CapabilitySupport::WireVerificationRequired,
@@ -149,14 +139,8 @@ impl BackendDescriptor {
                 CapabilitySupport::WireVerificationRequired,
             ),
             (ControlPoint::Http2HeaderCasing, CapabilitySupport::Native),
-            (
-                ControlPoint::Http2HpackEncoding,
-                CapabilitySupport::EvidenceMissing,
-            ),
-            (
-                ControlPoint::CancellationBehavior,
-                CapabilitySupport::EvidenceMissing,
-            ),
+            (ControlPoint::Http2HpackEncoding, CapabilitySupport::EvidenceMissing),
+            (ControlPoint::CancellationBehavior, CapabilitySupport::EvidenceMissing),
         ]
         .into_iter()
         .collect();
@@ -305,9 +289,7 @@ pub fn audit_bundle_with_canary_evidence(
             || plan.audit.decision != AuditDecision::ReadyForProbe
             || plan.bundle_sha256 != bundle.bundle_sha256
             || plan.backend_id != backend.backend_id
-            || plans_by_sha256
-                .insert(plan.plan_sha256.clone(), plan)
-                .is_some()
+            || plans_by_sha256.insert(plan.plan_sha256.clone(), plan).is_some()
         {
             return Err(TransportError::CanaryEvidenceBindingMismatch);
         }
@@ -376,13 +358,9 @@ fn audit_bundle_internal(
                 .copied()
                 .unwrap_or(CapabilitySupport::Unsupported);
             let evidence_can_satisfy = support == CapabilitySupport::WireVerificationRequired
-                || (support == CapabilitySupport::EvidenceMissing
-                    && control == ControlPoint::CancellationBehavior);
+                || (support == CapabilitySupport::EvidenceMissing && control == ControlPoint::CancellationBehavior);
             let verification_evidence = if mode == AuditMode::Canary && evidence_can_satisfy {
-                verification_by_control
-                    .get(&control)
-                    .cloned()
-                    .unwrap_or_default()
+                verification_by_control.get(&control).cloned().unwrap_or_default()
             } else {
                 vec![]
             };
@@ -425,31 +403,16 @@ fn bundle_requirements(bundle: &CandidateArchetypeBundle) -> BTreeMap<ControlPoi
         ControlPoint::TlsProtocolVersions,
         vec!["/tls/legacy_version".to_owned()],
     );
-    requirements.insert(
-        ControlPoint::TlsCipherOrder,
-        vec!["/tls/cipher_suites".to_owned()],
-    );
-    requirements.insert(
-        ControlPoint::TlsExtensionOrder,
-        vec!["/tls/extensions".to_owned()],
-    );
-    requirements.insert(
-        ControlPoint::TlsAlpnOrder,
-        vec!["/tls/alpn_order".to_owned()],
-    );
+    requirements.insert(ControlPoint::TlsCipherOrder, vec!["/tls/cipher_suites".to_owned()]);
+    requirements.insert(ControlPoint::TlsExtensionOrder, vec!["/tls/extensions".to_owned()]);
+    requirements.insert(ControlPoint::TlsAlpnOrder, vec!["/tls/alpn_order".to_owned()]);
     requirements.insert(
         ControlPoint::TlsClientHelloLength,
         vec!["/tls/client_hello_len".to_owned()],
     );
-    requirements.insert(
-        ControlPoint::TlsRecordFraming,
-        vec!["/tls/record_lengths".to_owned()],
-    );
+    requirements.insert(ControlPoint::TlsRecordFraming, vec!["/tls/record_lengths".to_owned()]);
     if !bundle.tls.dynamic_fields.is_empty() {
-        requirements.insert(
-            ControlPoint::TlsDynamicFields,
-            vec!["/tls/dynamic_fields".to_owned()],
-        );
+        requirements.insert(ControlPoint::TlsDynamicFields, vec!["/tls/dynamic_fields".to_owned()]);
     }
     requirements.insert(
         ControlPoint::TlsSessionResumption,
@@ -537,20 +500,16 @@ fn is_blocking(support: CapabilitySupport, mode: AuditMode) -> bool {
 fn capability_note(control: ControlPoint, support: CapabilitySupport) -> String {
     match (control, support) {
         (ControlPoint::TlsCipherOrder, CapabilitySupport::WireVerificationRequired) => {
-            "BoringSSL exposes pre-TLS1.3 cipher configuration; TLS1.3 suites remain library-defined"
-                .to_owned()
+            "BoringSSL exposes pre-TLS1.3 cipher configuration; TLS1.3 suites remain library-defined".to_owned()
         }
         (ControlPoint::TlsExtensionOrder, CapabilitySupport::WireVerificationRequired) => {
-            "BoringSSL exposes GREASE and permutation toggles, not an arbitrary extension-order API"
-                .to_owned()
+            "BoringSSL exposes GREASE and permutation toggles, not an arbitrary extension-order API".to_owned()
         }
         (ControlPoint::Http2SettingsOrder, CapabilitySupport::WireVerificationRequired) => {
-            "h2 exposes SETTINGS values while encoding order remains implementation-defined"
-                .to_owned()
+            "h2 exposes SETTINGS values while encoding order remains implementation-defined".to_owned()
         }
         (ControlPoint::Http2HpackEncoding, CapabilitySupport::EvidenceMissing) => {
-            "current Bundle records decoded Header shape; HPACK byte evidence must be added"
-                .to_owned()
+            "current Bundle records decoded Header shape; HPACK byte evidence must be added".to_owned()
         }
         (ControlPoint::CancellationBehavior, CapabilitySupport::EvidenceMissing) => {
             "current fixture does not yet carry a verified cancellation scenario matrix".to_owned()
@@ -562,9 +521,7 @@ fn capability_note(control: ControlPoint, support: CapabilitySupport) -> String 
         (_, CapabilitySupport::PatchRequired) => {
             "upstream API needs a maintained patch or thin transport layer".to_owned()
         }
-        (_, CapabilitySupport::EvidenceMissing) => {
-            "reference evidence must be extended before Canary".to_owned()
-        }
+        (_, CapabilitySupport::EvidenceMissing) => "reference evidence must be extended before Canary".to_owned(),
         (_, CapabilitySupport::Unsupported) => "backend has no declared implementation".to_owned(),
     }
 }
@@ -697,14 +654,7 @@ pub fn build_replay_plan_with_tls_evidence(
     if target != probe_plan.target {
         return Err(TransportError::CanaryEvidenceBindingMismatch);
     }
-    let audit = audit_bundle_with_tls_evidence(
-        bundle,
-        backend,
-        mode,
-        probe_plan,
-        engine_build_id,
-        evidence,
-    )?;
+    let audit = audit_bundle_with_tls_evidence(bundle, backend, mode, probe_plan, engine_build_id, evidence)?;
     build_replay_plan_from_audit(bundle, backend, target, audit)
 }
 
@@ -718,9 +668,7 @@ fn build_replay_plan_from_audit(
         return Err(TransportError::CapabilityBlocked(Box::new(audit)));
     }
     let application = match &bundle.application {
-        ApplicationProfileSpec::Http1(profile) => {
-            ApplicationReplayPlan::Http1(http1_replay_plan(profile))
-        }
+        ApplicationProfileSpec::Http1(profile) => ApplicationReplayPlan::Http1(http1_replay_plan(profile)),
         ApplicationProfileSpec::Http2(profile) => {
             let settings = profile
                 .client_frames
@@ -904,11 +852,9 @@ fn validate_tls_evidence_report(
             }),
         ..DiffPolicy::default()
     };
-    let recomputed = compare_captures(reference, candidate, &policy)
-        .map_err(|_| TransportError::InvalidCanaryTlsEvidence)?;
-    if !same_report_except_id(report, &recomputed)
-        || tls_client_hello(reference) != tls_client_hello(candidate)
-    {
+    let recomputed =
+        compare_captures(reference, candidate, &policy).map_err(|_| TransportError::InvalidCanaryTlsEvidence)?;
+    if !same_report_except_id(report, &recomputed) || tls_client_hello(reference) != tls_client_hello(candidate) {
         return Err(TransportError::InvalidCanaryTlsEvidence);
     }
     Ok(())
@@ -927,10 +873,7 @@ fn tls_client_hello(capture: &NormalizedCapture) -> Option<&NormalizedEvent> {
     }
 }
 
-fn tls_capture_matches_plan(
-    capture: &NormalizedCapture,
-    plan: &ReplayPlan,
-) -> Result<bool, TransportError> {
+fn tls_capture_matches_plan(capture: &NormalizedCapture, plan: &ReplayPlan) -> Result<bool, TransportError> {
     let Some(NormalizedEvent::TlsClientHello {
         cipher_suites,
         extensions,
@@ -1051,9 +994,7 @@ pub fn build_canary_cancellation_evidence(
 ///
 /// Returns [`TransportError::InvalidCanaryCancellationEvidence`] for an invalid
 /// schema, target, observation, or integrity digest.
-pub fn verify_canary_cancellation_evidence(
-    evidence: &CanaryCancellationEvidence,
-) -> Result<(), TransportError> {
+pub fn verify_canary_cancellation_evidence(evidence: &CanaryCancellationEvidence) -> Result<(), TransportError> {
     validate_target(&evidence.target)?;
     let observation = H1CancellationObservation {
         response_status: evidence.response_status,
@@ -1077,10 +1018,7 @@ pub fn verify_canary_cancellation_evidence(
     Ok(())
 }
 
-fn valid_h1_cancellation_observation(
-    observation: &H1CancellationObservation,
-    peer_close_observed: bool,
-) -> bool {
+fn valid_h1_cancellation_observation(observation: &H1CancellationObservation, peer_close_observed: bool) -> bool {
     (200..300).contains(&observation.response_status)
         && observation.response_bytes_before_cancel > 0
         && observation.stage == CancellationStage::ResponseStreaming
@@ -1090,9 +1028,7 @@ fn valid_h1_cancellation_observation(
         && peer_close_observed
 }
 
-fn hash_canary_cancellation_evidence(
-    evidence: &CanaryCancellationEvidence,
-) -> Result<String, TransportError> {
+fn hash_canary_cancellation_evidence(evidence: &CanaryCancellationEvidence) -> Result<String, TransportError> {
     let mut canonical = evidence.clone();
     canonical.evidence_sha256.clear();
     hash_serializable(&canonical)
@@ -1105,9 +1041,9 @@ fn hash_serializable<T: Serialize>(value: &T) -> Result<String, TransportError> 
 fn validate_target(target: &TransportTarget) -> Result<(), TransportError> {
     if target.port == 0
         || target.authority.is_empty()
-        || target.authority.contains(|character: char| {
-            character.is_whitespace() || matches!(character, '/' | '\\' | ':' | '@')
-        })
+        || target
+            .authority
+            .contains(|character: char| character.is_whitespace() || matches!(character, '/' | '\\' | ':' | '@'))
     {
         return Err(TransportError::InvalidTarget);
     }
@@ -1149,10 +1085,7 @@ fn tls_group_ids(
     if attribute.dynamic {
         return Err(TransportError::InvalidTlsProfile);
     }
-    let value = attribute
-        .value
-        .as_deref()
-        .ok_or(TransportError::InvalidTlsProfile)?;
+    let value = attribute.value.as_deref().ok_or(TransportError::InvalidTlsProfile)?;
     value
         .split(',')
         .map(|entry| {
@@ -1257,15 +1190,15 @@ pub mod h2_backend {
 #[cfg(feature = "boring-backend")]
 pub mod boring_backend {
     use super::{
-        CancellationStage, H1CancellationObservation, Http2Setting, ProtocolAction, ReplayPlan,
-        TransportError, h2_backend, verify_replay_plan,
+        CancellationStage, H1CancellationObservation, Http2Setting, ProtocolAction, ReplayPlan, TransportError,
+        h2_backend, verify_replay_plan,
     };
     use crate::egress::{BoxedIo, open_egress};
     pub use crate::egress::{ProxyCredentials, ProxyRoute, Socks5Dns};
     use archetype_bundle::HeaderValueMode;
     use boring::{
         hash::MessageDigest,
-        ssl::{SslConnector, SslMethod},
+        ssl::{SslConnector, SslMethod, SslVerifyMode},
         x509::{X509, store::X509StoreBuilder},
     };
     use serde::{Deserialize, Serialize};
@@ -1410,15 +1343,10 @@ pub mod boring_backend {
             || request.path.is_empty()
             || request.path.len() != profile.path_bytes
             || request.body.len() != usize::try_from(profile.body_bytes).unwrap_or(usize::MAX)
-            || request
-                .path
-                .bytes()
-                .any(|byte| byte == b'\r' || byte == b'\n')
+            || request.path.bytes().any(|byte| byte == b'\r' || byte == b'\n')
             || request.headers.iter().any(|(name, value)| {
                 name.is_empty()
-                    || name
-                        .bytes()
-                        .any(|byte| byte == b':' || byte == b'\r' || byte == b'\n')
+                    || name.bytes().any(|byte| byte == b':' || byte == b'\r' || byte == b'\n')
                     || value.bytes().any(|byte| byte == b'\r' || byte == b'\n')
             })
         {
@@ -1497,15 +1425,10 @@ pub mod boring_backend {
             || request.path.is_empty()
             || request.path.len() != profile.path_bytes
             || request.body.len() != usize::try_from(profile.body_bytes).unwrap_or(usize::MAX)
-            || request
-                .path
-                .bytes()
-                .any(|byte| byte == b'\r' || byte == b'\n')
+            || request.path.bytes().any(|byte| byte == b'\r' || byte == b'\n')
             || request.headers.iter().any(|(name, value)| {
                 name.is_empty()
-                    || name
-                        .bytes()
-                        .any(|byte| byte == b':' || byte == b'\r' || byte == b'\n')
+                    || name.bytes().any(|byte| byte == b':' || byte == b'\r' || byte == b'\n')
                     || value.bytes().any(|byte| byte == b'\r' || byte == b'\n')
             })
         {
@@ -1557,10 +1480,7 @@ pub mod boring_backend {
                 ));
             }
             if response.len().saturating_add(read) > policy.max_response_bytes {
-                return Err(connection_error(
-                    "http1_read",
-                    "response byte limit exceeded",
-                ));
+                return Err(connection_error("http1_read", "response byte limit exceeded"));
             }
             response.extend_from_slice(&buffer[..read]);
             if let Some(header_end) = response
@@ -1591,13 +1511,11 @@ pub mod boring_backend {
         request: &H1ProbeRequest,
     ) -> Result<(), TransportError> {
         if request.headers.len() != plan.headers.len() {
-            return Err(configuration_error(
-                "HTTP/1.1 Header count differs from Replay Plan",
-            ));
+            return Err(configuration_error("HTTP/1.1 Header count differs from Replay Plan"));
         }
         for ((name, value), rule) in request.headers.iter().zip(&plan.headers) {
-            let fixed_value_differs = rule.mode == HeaderValueMode::Exact
-                && rule.exact_value.as_deref() != Some(value.as_str());
+            let fixed_value_differs =
+                rule.mode == HeaderValueMode::Exact && rule.exact_value.as_deref() != Some(value.as_str());
             if name != &rule.wire_name || value.len() != rule.value_bytes || fixed_value_differs {
                 return Err(configuration_error(format!(
                     "HTTP/1.1 Header {} differs from Replay Plan",
@@ -1630,10 +1548,7 @@ pub mod boring_backend {
             .map_err(|_| connection_error("http1_response", "status line is not UTF-8"))?;
         let mut parts = line.split_ascii_whitespace();
         if parts.next() != Some("HTTP/1.1") {
-            return Err(connection_error(
-                "http1_response",
-                "unexpected HTTP version",
-            ));
+            return Err(connection_error("http1_response", "unexpected HTTP version"));
         }
         parts
             .next()
@@ -1669,6 +1584,7 @@ pub mod boring_backend {
         verify_replay_plan(plan)?;
         let mut builder = SslConnector::builder(SslMethod::tls())
             .map_err(|error| TransportError::BackendConfiguration(error.to_string()))?;
+        builder.set_verify(SslVerifyMode::PEER);
         builder
             .set_alpn_protos(&plan.tls.alpn_wire)
             .map_err(|error| TransportError::BackendConfiguration(error.to_string()))?;
@@ -1687,15 +1603,15 @@ pub mod boring_backend {
         builder.set_grease_enabled(plan.tls.grease_enabled);
         builder.set_permute_extensions(plan.tls.permute_extensions);
         if let Some(pem) = trust_roots_pem {
-            let certificates = X509::stack_from_pem(pem)
-                .map_err(|error| TransportError::BackendConfiguration(error.to_string()))?;
+            let certificates =
+                X509::stack_from_pem(pem).map_err(|error| TransportError::BackendConfiguration(error.to_string()))?;
             if certificates.is_empty() {
                 return Err(TransportError::BackendConfiguration(
                     "explicit trust bundle contains no certificates".to_owned(),
                 ));
             }
-            let mut store = X509StoreBuilder::new()
-                .map_err(|error| TransportError::BackendConfiguration(error.to_string()))?;
+            let mut store =
+                X509StoreBuilder::new().map_err(|error| TransportError::BackendConfiguration(error.to_string()))?;
             for certificate in certificates {
                 store
                     .add_cert(certificate)
@@ -1704,8 +1620,37 @@ pub mod boring_backend {
             builder
                 .set_verify_cert_store(store.build())
                 .map_err(|error| TransportError::BackendConfiguration(error.to_string()))?;
+        } else {
+            configure_platform_trust(&mut builder)?;
         }
         Ok(builder.build())
+    }
+
+    fn configure_platform_trust(builder: &mut boring::ssl::SslConnectorBuilder) -> Result<(), TransportError> {
+        #[cfg(target_os = "windows")]
+        {
+            let native = rustls_native_certs::load_native_certs();
+            let mut added = 0_usize;
+            for certificate in native.certs {
+                let certificate =
+                    X509::from_der(certificate.as_ref()).map_err(|error| configuration_error(error.to_string()))?;
+                builder
+                    .cert_store_mut()
+                    .add_cert(certificate)
+                    .map_err(|error| configuration_error(error.to_string()))?;
+                added += 1;
+            }
+            if added == 0 {
+                return Err(configuration_error(
+                    "Windows native trust store contains no certificates",
+                ));
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        builder
+            .set_default_verify_paths()
+            .map_err(|error| configuration_error(error.to_string()))?;
+        Ok(())
     }
 
     fn apply_cipher_order(
@@ -1717,9 +1662,7 @@ pub mod boring_backend {
             .filter(|&&id| !(0x1301..=0x1303).contains(&id))
             .map(|id| {
                 pre_tls13_cipher_name(*id).ok_or_else(|| {
-                    configuration_error(format!(
-                        "Replay Plan cipher suite 0x{id:04x} has no BoringSSL mapping"
-                    ))
+                    configuration_error(format!("Replay Plan cipher suite 0x{id:04x} has no BoringSSL mapping"))
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1778,9 +1721,7 @@ pub mod boring_backend {
             .iter()
             .map(|id| {
                 tls_group_name(*id).ok_or_else(|| {
-                    configuration_error(format!(
-                        "Replay Plan TLS group 0x{id:04x} has no BoringSSL mapping"
-                    ))
+                    configuration_error(format!("Replay Plan TLS group 0x{id:04x} has no BoringSSL mapping"))
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1866,10 +1807,7 @@ pub mod boring_backend {
                     format!(
                         "expected {}, negotiated {}",
                         required.unwrap_or("<none>"),
-                        observed
-                            .map(String::from_utf8_lossy)
-                            .as_deref()
-                            .unwrap_or("<none>")
+                        observed.map(String::from_utf8_lossy).as_deref().unwrap_or("<none>")
                     ),
                 ));
             }
@@ -1901,10 +1839,7 @@ pub mod boring_backend {
             connect_elapsed_micros,
             handshake_elapsed_micros,
         };
-        Ok(DirectTlsConnection {
-            stream,
-            observation,
-        })
+        Ok(DirectTlsConnection { stream, observation })
     }
 
     /// Completes the `h2` client preface/SETTINGS handshake over a verified TLS
@@ -1914,10 +1849,7 @@ pub mod boring_backend {
     ///
     /// Returns [`TransportError`] when TLS setup, H2 builder configuration, or
     /// the H2 handshake fails or exceeds its deadline.
-    pub async fn probe_h2(
-        plan: &ReplayPlan,
-        policy: &H2ProbePolicy,
-    ) -> Result<H2HandshakeObservation, TransportError> {
+    pub async fn probe_h2(plan: &ReplayPlan, policy: &H2ProbePolicy) -> Result<H2HandshakeObservation, TransportError> {
         probe_h2_inner(plan, policy, None).await
     }
 
@@ -1970,21 +1902,17 @@ pub mod boring_backend {
                 .body(())
                 .map_err(|_| configuration_error("controlled H2 request is invalid"))?;
             for (name, value) in &request.headers {
-                let name = http::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-                    configuration_error("controlled H2 request header name is invalid")
-                })?;
-                let value = http::header::HeaderValue::from_str(value).map_err(|_| {
-                    configuration_error("controlled H2 request header value is invalid")
-                })?;
+                let name = http::header::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| configuration_error("controlled H2 request header name is invalid"))?;
+                let value = http::header::HeaderValue::from_str(value)
+                    .map_err(|_| configuration_error("controlled H2 request header value is invalid"))?;
                 http_request.headers_mut().append(name, value);
             }
-            send_request = tokio::time::timeout(
-                Duration::from_millis(policy.handshake_timeout_ms),
-                send_request.ready(),
-            )
-            .await
-            .map_err(|_| connection_error("h2_request_ready", "deadline exceeded"))?
-            .map_err(|error| connection_error("h2_request_ready", error.to_string()))?;
+            send_request =
+                tokio::time::timeout(Duration::from_millis(policy.handshake_timeout_ms), send_request.ready())
+                    .await
+                    .map_err(|_| connection_error("h2_request_ready", "deadline exceeded"))?
+                    .map_err(|error| connection_error("h2_request_ready", error.to_string()))?;
             let (response, stream) = send_request
                 .send_request(http_request, request.end_stream)
                 .map_err(|error| connection_error("h2_send_request", error.to_string()))?;
@@ -1993,9 +1921,7 @@ pub mod boring_backend {
         }
         let drive_started = Instant::now();
         let mut connection = Box::pin(connection);
-        if let Ok(result) =
-            tokio::time::timeout(Duration::from_millis(25), connection.as_mut()).await
-        {
+        if let Ok(result) = tokio::time::timeout(Duration::from_millis(25), connection.as_mut()).await {
             result.map_err(|error| connection_error("h2_connection", error.to_string()))?;
         }
         let connection_drive_elapsed_micros = elapsed_micros(drive_started);
@@ -2022,16 +1948,17 @@ pub mod boring_backend {
         verify_replay_plan(plan)?;
         if policy.connect_timeout_ms == 0
             || policy.handshake_timeout_ms == 0
-            || policy.required_alpn.as_ref().is_some_and(|required| {
-                required.is_empty() || !offers_alpn(&plan.tls.alpn_wire, required.as_bytes())
-            })
+            || policy
+                .required_alpn
+                .as_ref()
+                .is_some_and(|required| required.is_empty() || !offers_alpn(&plan.tls.alpn_wire, required.as_bytes()))
             || (policy.required_alpn.is_none() && !plan.tls.alpn_wire.is_empty())
             || policy.dial_override.as_ref().is_some_and(|endpoint| {
                 endpoint.host.is_empty()
                     || endpoint.port == 0
-                    || endpoint.host.contains(|character: char| {
-                        character.is_whitespace() || matches!(character, '/' | '\\' | '@')
-                    })
+                    || endpoint
+                        .host
+                        .contains(|character: char| character.is_whitespace() || matches!(character, '/' | '\\' | '@'))
             })
             || policy.proxy.as_ref().is_some_and(|proxy| !proxy.is_valid())
             || (policy.proxy.is_some() && policy.dial_override.is_some())
@@ -2085,9 +2012,7 @@ pub enum TransportError {
     InvalidPlan,
     #[error("Canary TLS evidence is invalid or has been modified")]
     InvalidCanaryTlsEvidence,
-    #[error(
-        "Canary evidence does not match a supplied Probe Plan, Bundle, backend, or engine build"
-    )]
+    #[error("Canary evidence does not match a supplied Probe Plan, Bundle, backend, or engine build")]
     CanaryEvidenceBindingMismatch,
     #[error("Canary cancellation evidence is invalid or has been modified")]
     InvalidCanaryCancellationEvidence,
@@ -2104,27 +2029,22 @@ pub enum TransportError {
     #[error("backend configuration failed: {0}")]
     BackendConfiguration(String),
     #[error("transport connection failed at {stage}: {message}")]
-    Connection {
-        stage: &'static str,
-        message: String,
-    },
+    Connection { stage: &'static str, message: String },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use archetype_bundle::{
-        ARCHETYPE_BUNDLE_SCHEMA_VERSION, ApplicationProfileSpec, BundleCompatibility,
-        BundleEvidence, BundleState, BundleVerification, ConnectionProfileSpec, HeaderCasingPolicy,
-        HeaderProfileSpec, HeaderValueMode, Http2ProfileSpec, TlsProfileSpec,
-        recompute_bundle_sha256,
+        ARCHETYPE_BUNDLE_SCHEMA_VERSION, ApplicationProfileSpec, BundleCompatibility, BundleEvidence, BundleState,
+        BundleVerification, ConnectionProfileSpec, HeaderCasingPolicy, HeaderProfileSpec, HeaderValueMode,
+        Http2ProfileSpec, TlsProfileSpec, recompute_bundle_sha256,
     };
     use capture_schema::{CaptureEvidenceRef, CaptureLane, DnsMode, Http2FrameType, NetworkPath};
     use uuid::Uuid;
     use wire_normalizer::{
-        NORMALIZER_VERSION, NormalizedEnvironment, NormalizedNetwork, NormalizedScenario,
-        NormalizedTarget, NormalizedTlsAttribute, NormalizedTlsExtension, ValueKind, ValueShape,
-        recompute_normalized_sha256,
+        NORMALIZER_VERSION, NormalizedEnvironment, NormalizedNetwork, NormalizedScenario, NormalizedTarget,
+        NormalizedTlsAttribute, NormalizedTlsExtension, ValueKind, ValueShape, recompute_normalized_sha256,
     };
 
     fn bundle() -> CandidateArchetypeBundle {
@@ -2259,8 +2179,7 @@ mod tests {
             }],
             normalized_sha256: String::new(),
         };
-        capture.normalized_sha256 =
-            recompute_normalized_sha256(&capture).expect("hash TLS fixture");
+        capture.normalized_sha256 = recompute_normalized_sha256(&capture).expect("hash TLS fixture");
         capture
     }
 
@@ -2317,12 +2236,8 @@ mod tests {
 
     #[test]
     fn upstream_backend_is_ready_for_probe() {
-        let audit = audit_bundle(
-            &bundle(),
-            &BackendDescriptor::upstream_boring_h2(),
-            AuditMode::Probe,
-        )
-        .expect("audit bundle");
+        let audit =
+            audit_bundle(&bundle(), &BackendDescriptor::upstream_boring_h2(), AuditMode::Probe).expect("audit bundle");
         assert_eq!(audit.decision, AuditDecision::ReadyForProbe);
         assert_eq!(audit.blocker_count, 0);
     }
@@ -2337,10 +2252,7 @@ mod tests {
         let mut tampered = fixture;
         tampered.tls.client_hello_len += 1;
         let encoded = serde_json::to_vec(&tampered).expect("encode tampered fixture");
-        assert!(matches!(
-            load_bundle(&encoded),
-            Err(TransportError::Bundle(_))
-        ));
+        assert!(matches!(load_bundle(&encoded), Err(TransportError::Bundle(_))));
     }
 
     #[test]
@@ -2392,12 +2304,8 @@ mod tests {
 
     #[test]
     fn upstream_backend_blocks_canary_until_wire_evidence_exists() {
-        let audit = audit_bundle(
-            &bundle(),
-            &BackendDescriptor::upstream_boring_h2(),
-            AuditMode::Canary,
-        )
-        .expect("audit bundle");
+        let audit =
+            audit_bundle(&bundle(), &BackendDescriptor::upstream_boring_h2(), AuditMode::Canary).expect("audit bundle");
         assert_eq!(audit.decision, AuditDecision::Blocked);
         assert!(audit.blocker_count > 0);
     }
@@ -2419,8 +2327,8 @@ mod tests {
         .expect("build official probe plan");
         let reference = official_tls_capture(CaptureLane::ReferenceOfficialTls);
         let candidate = official_tls_capture(CaptureLane::ReplayOfficialTls);
-        let report = compare_captures(&reference, &candidate, &DiffPolicy::default())
-            .expect("compare exact TLS captures");
+        let report =
+            compare_captures(&reference, &candidate, &DiffPolicy::default()).expect("compare exact TLS captures");
         let evidence = build_canary_tls_evidence(
             &probe_plan,
             "spike-cli/fixture+sha256:fixture",
@@ -2452,10 +2360,7 @@ mod tests {
                 .find(|item| item.control == control)
                 .expect("TLS control is present");
             assert!(!item.blocking);
-            assert_eq!(
-                item.verification_evidence,
-                vec![evidence.evidence_sha256.clone()]
-            );
+            assert_eq!(item.verification_evidence, vec![evidence.evidence_sha256.clone()]);
         }
         assert!(
             audit
@@ -2484,11 +2389,10 @@ mod tests {
         .expect("build official probe plan");
         let reference = official_tls_capture(CaptureLane::ReferenceOfficialTls);
         let candidate = official_tls_capture(CaptureLane::ReplayOfficialTls);
-        let report = compare_captures(&reference, &candidate, &DiffPolicy::default())
-            .expect("compare exact TLS captures");
-        let evidence =
-            build_canary_tls_evidence(&probe_plan, "engine-a", &reference, &candidate, &report)
-                .expect("build Canary TLS evidence");
+        let report =
+            compare_captures(&reference, &candidate, &DiffPolicy::default()).expect("compare exact TLS captures");
+        let evidence = build_canary_tls_evidence(&probe_plan, "engine-a", &reference, &candidate, &report)
+            .expect("build Canary TLS evidence");
 
         let mut tampered = evidence.clone();
         tampered.verified_controls.pop();
@@ -2537,11 +2441,10 @@ mod tests {
         .expect("build controlled H1 probe plan");
         let reference = official_tls_capture(CaptureLane::ReferenceOfficialTls);
         let candidate = official_tls_capture(CaptureLane::ReplayOfficialTls);
-        let report = compare_captures(&reference, &candidate, &DiffPolicy::default())
-            .expect("compare exact TLS captures");
-        let tls_evidence =
-            build_canary_tls_evidence(&official_plan, "engine-a", &reference, &candidate, &report)
-                .expect("build TLS evidence");
+        let report =
+            compare_captures(&reference, &candidate, &DiffPolicy::default()).expect("compare exact TLS captures");
+        let tls_evidence = build_canary_tls_evidence(&official_plan, "engine-a", &reference, &candidate, &report)
+            .expect("build TLS evidence");
         let cancellation_evidence = build_canary_cancellation_evidence(
             &controlled_plan,
             "engine-a",
@@ -2606,10 +2509,7 @@ mod tests {
         )
         .expect("build replay plan");
         plan.target.port = 443;
-        assert!(matches!(
-            verify_replay_plan(&plan),
-            Err(TransportError::InvalidPlan)
-        ));
+        assert!(matches!(verify_replay_plan(&plan), Err(TransportError::InvalidPlan)));
     }
 
     #[cfg(feature = "boring-backend")]
@@ -2638,12 +2538,8 @@ mod tests {
         let ApplicationProfileSpec::Http2(http2) = &mut fixture.application else {
             panic!("expected HTTP/2 fixture");
         };
-        if let NormalizedHttp2FrameDetail::Settings { entries } = &mut http2.client_frames[0].detail
-        {
-            entries.push(Http2Setting {
-                id: 65_000,
-                value: 1,
-            });
+        if let NormalizedHttp2FrameDetail::Settings { entries } = &mut http2.client_frames[0].detail {
+            entries.push(Http2Setting { id: 65_000, value: 1 });
         }
         fixture.bundle_sha256 = recompute_bundle_sha256(&fixture).expect("rehash fixture");
         let plan = build_replay_plan(

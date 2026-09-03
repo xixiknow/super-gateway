@@ -81,11 +81,11 @@
     'help':'<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
   };
   function build(){
-    let s='<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">';
+    let s='<svg xmlns="http://www.w3.org/2000/svg" class="sg-icon-sprite" width="0" height="0" aria-hidden="true" focusable="false">';
     for(const k in ICONS){s+='<symbol id="i-'+k+'" viewBox="0 0 24 24">'+ICONS[k]+'</symbol>';}
     s+='</svg>';
     const wrap=document.createElement('div');wrap.innerHTML=s;
-    document.body.insertBefore(wrap.firstChild,document.body.firstChild);
+    document.body.appendChild(wrap.firstChild);
   }
   if(document.body)build();else document.addEventListener('DOMContentLoaded',build);
   window.UI_ICONS=ICONS; // 暴露名单，便于文档页渲染图标墙

@@ -15,7 +15,7 @@ interface Envelope<T> {
 }
 
 interface ApiErrorEnvelope {
-  error?: { type?: string; message?: string };
+  error?: { code?: string; type?: string; message?: string };
 }
 
 export class ApiError extends Error {
@@ -54,7 +54,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as ApiErrorEnvelope | Envelope<T>;
   if (!response.ok) {
     const error = (payload as ApiErrorEnvelope).error;
-    throw new ApiError(response.status, error?.message ?? "请求失败", error?.type);
+    throw new ApiError(response.status, error?.message ?? "request_failed", error?.code ?? error?.type);
   }
   return (payload as Envelope<T>).data;
 }

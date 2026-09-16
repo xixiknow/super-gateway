@@ -1,14 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://super-gateway.local/contracts/schemas/audit-approval.schema.json",
-  "title": "Approval and Content Audit Contracts",
+  "title": "Approval Contracts",
   "$defs": {
     "StepUpPurpose": {
       "type": "string",
       "enum": [
         "key_secret_reveal",
         "irreversible_lifecycle",
-        "content_audit_access",
         "approval_decision",
         "key_provider_change",
         "backup_restore_security",
@@ -20,15 +19,8 @@
     "ApprovalKind": {
       "type": "string",
       "enum": [
-        "key_full_audit",
-        "group_audit_policy",
-        "content_read",
-        "content_export",
         "device_rebuild",
-        "key_provider_change",
-        "legal_hold",
-        "manual_delete",
-        "enforcement_activate"
+        "key_provider_change"
       ],
       "x-enum-registry": "approval_kind"
     },
@@ -42,40 +34,6 @@
         "revoked"
       ],
       "x-enum-registry": "approval_state"
-    },
-    "ContentAuditRequestedMode": {
-      "type": "string",
-      "enum": [
-        "metadata_only",
-        "full_encrypted"
-      ],
-      "x-enum-registry": "content_audit_requested_mode"
-    },
-    "ContentAuditGroupPolicy": {
-      "type": "string",
-      "enum": [
-        "allow",
-        "require",
-        "forbid"
-      ],
-      "x-enum-registry": "content_audit_group_policy"
-    },
-    "ContentAuditEffectiveMode": {
-      "type": "string",
-      "enum": [
-        "metadata_only",
-        "full_encrypted"
-      ],
-      "x-enum-registry": "content_audit_effective_mode"
-    },
-    "ContentAuditObjectKind": {
-      "type": "string",
-      "enum": [
-        "original_request",
-        "final_upstream_request",
-        "upstream_response"
-      ],
-      "x-enum-registry": "content_audit_object_kind"
     },
     "StepUpGrant": {
       "type": "object",
@@ -182,66 +140,6 @@
         "expires_at",
         "state",
         "revision"
-      ]
-    },
-    "ContentAuditObject": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "request_id": {
-          "type": "string"
-        },
-        "attempt_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "kind": {
-          "$ref": "#/$defs/ContentAuditObjectKind"
-        },
-        "ciphertext_location": {
-          "type": "string"
-        },
-        "wrapped_dek": {
-          "type": "string"
-        },
-        "aead_algorithm": {
-          "type": "string"
-        },
-        "plaintext_digest": {
-          "type": "string"
-        },
-        "retention_until": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "legal_hold_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "uniqueItems": true
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "request_id",
-        "kind",
-        "ciphertext_location",
-        "wrapped_dek",
-        "aead_algorithm",
-        "plaintext_digest",
-        "retention_until",
-        "legal_hold_ids",
-        "created_at"
       ]
     }
   }

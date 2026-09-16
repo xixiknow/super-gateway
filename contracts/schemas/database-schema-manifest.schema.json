@@ -28,8 +28,8 @@
             "type": "string",
             "pattern": "^[a-z_]+\\.[a-z0-9_]+$"
           },
-          "minItems": 116,
-          "maxItems": 116,
+          "minItems": 112,
+          "maxItems": 112,
           "uniqueItems": true
         },
         "database_roles": {

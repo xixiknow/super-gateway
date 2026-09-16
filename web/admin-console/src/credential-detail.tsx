@@ -355,7 +355,18 @@ export function CredentialDetailDialog({ row, onClose }: { row: Row; onClose(): 
                   {tabs.map((item) => <button key={item.key} type="button" className={tab === item.key ? "active" : ""} aria-pressed={tab === item.key} onClick={() => setTab(item.key)}>{t(item.label)}</button>)}
                 </div>
                 <div className="detail-pane">
-                  {tab === "overview" && <DataGrid record={record} />}
+                  {tab === "overview" && (
+                    <>
+                      <DataGrid record={record} />
+                      <h4 className="detail-section-heading">{t("credential.profiles.title")}</h4>
+                      <p className="muted">{t("credential.profiles.hint")}</p>
+                      <SubTable
+                        rows={Array.isArray(record.profiles) ? record.profiles.filter((item): item is Row => typeof item === "object" && item !== null) : []}
+                        columns={["os_family", "lifecycle", "archetype_version_id", "profile_epoch", "device_epoch", "egress_mode", "egress_stability", "egress_epoch"]}
+                        empty={t("credential.profiles.none")}
+                      />
+                    </>
+                  )}
                   {tab === "scheduling" && <SchedulingPane endpoint={endpoint} record={record} revision={revision} onSaved={refreshAll} />}
                   {tab === "maintenance" && (
                     <PaneStatus loading={maintenance.isLoading} error={maintenance.error}>

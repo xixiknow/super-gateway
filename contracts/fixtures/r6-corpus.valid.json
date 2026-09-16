@@ -122,7 +122,7 @@
     ],
     "source_sha256": {
       "crates/gateway-transport/src/tls.rs": "a8d12981bc68eddf144cbf9325cbf016463bfda4b25c5baef5d4085a4ecf2a85",
-      "Cargo.lock": "2657a1389d71feee9fef08d6dd9dcade360a27f8f7cb6594ac93d7ffc1c92c7e"
+      "Cargo.lock": "2c87c8e046fe90b4c542038b888de577113d61266aa7786024726c531d187371"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -220,7 +220,7 @@
     ],
     "source_sha256": {
       "planning/transport-spike-report.md": "662ebf356a0d81c84088593d215964475d7e21667e21ecd834f1ba8a19235864",
-      ".github/workflows/ci.yml": "6a7234ecb79ca2086ac23f1ab9ad91f6e4161398a9959f539520984cca700e4e"
+      ".github/workflows/ci.yml": "6c9d0684e534a1cf9c8a2f87af701b15a3733c1b7ecdd8b37ecdd793b3756242"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -240,7 +240,7 @@
     ],
     "source_sha256": {
       "planning/test-strategy.md": "5e30256618b3783709ff995052938077a33c2b1759f74a65016567762da3d42a",
-      ".github/workflows/ci.yml": "6a7234ecb79ca2086ac23f1ab9ad91f6e4161398a9959f539520984cca700e4e"
+      ".github/workflows/ci.yml": "6c9d0684e534a1cf9c8a2f87af701b15a3733c1b7ecdd8b37ecdd793b3756242"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",

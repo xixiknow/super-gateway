@@ -29,6 +29,52 @@ cargo test --workspace
 
 真实服务配置从 `GATEWAY_` 前缀环境变量、`.env` 和 secret file reference 加载。示例见 [`.env.example`](.env.example)，示例文件只含占位值。
 
+> **仓库路径含非 ASCII 字符时**（例如中文目录）：BoringSSL 的 Windows NASM 构建无法处理非 ASCII 中间路径，`cargo build` 会失败。请把 Cargo 中间产物放到 ASCII 路径——设环境变量 `CARGO_TARGET_DIR=C:/some-ascii-path`，或在仓库根自建 `.cargo/config.toml`（已被 `.gitignore` 忽略，不要提交）：
+>
+> ```toml
+> [build]
+> target-dir = "C:/codex-targets/super-gateway-runtime"
+> ```
+
+## Windows 本机运行
+
+本机开发模式不依赖 Docker。它使用已安装的 PostgreSQL 16+ 工具创建隔离的
+`.super-gateway-local/` 数据集群，不修改 Windows 中已有的 PostgreSQL 服务或数据库。
+
+```powershell
+cargo run --locked -p super-gatewayd -- local
+```
+
+`local` 每次启动都会自动完成以下步骤：
+
+1. 从 `C:\Program Files\PostgreSQL\<VERSION>\bin` 发现最新的 PostgreSQL 16+；
+2. 首次运行初始化私有 cluster，并自动选择一个空闲回环端口；
+3. 创建缺失的 `super_gateway` 数据库；
+4. 执行当前二进制内嵌的全部 SQLx migration，后续版本新增 migration 也在启动时自动应用；
+5. 生成本地 digest/audit key 和首次管理员密码；
+6. 验签、编译并幂等登记内置的 Windows Claude Code 2.1.241 Bundle；
+7. 启动数据面 `127.0.0.1:8080` 与管理面 `127.0.0.1:8081`。
+
+首次管理员用户名为 `admin`，随机密码保存在
+`.super-gateway-local/admin-password`。管理台地址为
+`http://127.0.0.1:8081/admin/`。
+
+`local` 模式只校验用户名和密码，不要求注册或输入 TOTP 第二因素；首次管理员仍需在首次登录时修改随机初始密码。普通生产启动保留完整的 MFA 流程。
+
+可选覆盖项：
+
+```powershell
+$env:GATEWAY_LOCAL_POSTGRES_BIN='D:\PostgreSQL\18\bin'
+$env:GATEWAY_LOCAL_POSTGRES_PORT='55432'
+$env:GATEWAY_LOCAL_STATE_DIR='D:\super-gateway-local'
+cargo run --locked -p super-gatewayd -- local
+```
+
+Windows x86_64 本机使用 BoringSSL `ProductionTransportCore`。内置 Bundle 固定显示
+`Claude Code 2.1.241`，状态为 `active / passed / loadable`；`local` 只安装和加载该只读
+资源，不启动 Claude CLI、不采集证据，也不执行 Replay 或编译发布流水线。后续版本的
+采集与签名由 `transport-poc release-bundle` 独立执行，上传后仍需在管理页单独激活。
+
 ## 容器部署
 
 管理前端在构建阶段嵌入 `super-gatewayd`，因此一个 Linux 容器同时提供数据面、管理 API 与 `/admin/` 管理页面，无需额外部署 Nginx 或 Node.js 运行时。PostgreSQL 保持外部持久依赖。

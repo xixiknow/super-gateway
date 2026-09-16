@@ -1,6 +1,7 @@
 **/target/
 /dist/
 /.tmp/
+/.super-gateway-local/
 /.env
 /.sqlx/
 *.log
@@ -17,3 +18,10 @@
 /deploy/container/secrets/
 /deploy/container/config/bundle-trust-store.json
 /deploy/container/bundles/
+/.cargo/config.toml
+/.cursor/
+/cargo-check-result.txt
+/web/admin-console/*.png
+/web/admin-console/galaxy_*.py
+/web/admin-console/repro-*.html
+/web/admin-console/repro-*.tsx

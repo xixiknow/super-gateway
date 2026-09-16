@@ -9,8 +9,8 @@
   "base_backup_lsn": "0/1000000",
   "wal_end_lsn": "0/1000100",
   "release_version": "0.1.0",
-  "schema_version_value": 20260901000100,
-  "migration_manifest_sha256": "376f2665a04125cca5b1033b290cd816875af4f5926e5ed2488c1a7450b2f6d4",
+  "schema_version_value": 20260907000100,
+  "migration_manifest_sha256": "f59fb0bc0c9867d0e9ccaf7a831356af95d75d9c4b13fcbab2d4df7c489b98b5",
   "audit_seal_watermark": "2026-08-24",
   "deletion_ledger_watermark": 0,
   "audit": {
@@ -23,8 +23,8 @@
   },
   "lineage": {
     "release_version": "0.1.0",
-    "schema_version": 20260901000100,
-    "migration_manifest_sha256": "376f2665a04125cca5b1033b290cd816875af4f5926e5ed2488c1a7450b2f6d4",
+    "schema_version": 20260907000100,
+    "migration_manifest_sha256": "f59fb0bc0c9867d0e9ccaf7a831356af95d75d9c4b13fcbab2d4df7c489b98b5",
     "parent_manifest_sha256": null
   },
   "objects": [

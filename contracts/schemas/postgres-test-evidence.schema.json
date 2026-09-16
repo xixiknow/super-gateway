@@ -24,7 +24,7 @@
         },
         "required_table_count": {
           "type": "integer",
-          "const": 116
+          "const": 112
         },
         "partition_count": {
           "type": "integer",

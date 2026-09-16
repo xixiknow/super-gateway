@@ -748,9 +748,9 @@ mod tests {
     }
 
     #[test]
-    fn embedded_contract_contains_exactly_196_operations() -> Result<(), Box<dyn std::error::Error>> {
+    fn embedded_contract_contains_exactly_178_operations() -> Result<(), Box<dyn std::error::Error>> {
         let state = ManagementState::new(Arc::new(FixtureBackend))?;
-        assert_eq!(state.operation_count(), 196);
+        assert_eq!(state.operation_count(), 178);
         let contract = state.contract;
         let (_, parameters) = contract
             .resolve(&http::Method::POST, "/admin/v1/credentials/credential-7:begin-recovery")

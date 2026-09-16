@@ -2,8 +2,8 @@
 //! Real `PostgreSQL` R7 request/commit/usage contract.
 
 use gateway_domain::{
-    CostEstimate, DeliveryOutcome, PriceSnapshot, ResponseMode, SecretValue, TokenCounts, UsageCompleteness,
-    UsageObservation, UsageSource,
+    ClientOs, CostEstimate, DeliveryOutcome, OsResolution, PriceSnapshot, ResponseMode, SecretValue, TokenCounts,
+    UsageCompleteness, UsageObservation, UsageSource,
 };
 use gateway_storage::{
     CancelEstimateEvidencePersist, CostPersist, DeliveryComplete, DeliveryStart, PgStorage, QuotaObservationPersist,
@@ -170,6 +170,9 @@ async fn telemetry_r7_commit_usage_and_single_terminal_contract() -> Result<(), 
             owner_generation: 1,
             endpoint_code: "messages".into(),
             client_class_code: "claude_code_cli".into(),
+            client_os: ClientOs::Windows,
+            os_resolution: OsResolution::Header,
+            os_mismatch: false,
             model_id: Some(model_id),
             request_body_bytes: 123,
             response_mode: ResponseMode::NonStreaming,

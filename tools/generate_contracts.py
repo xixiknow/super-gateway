@@ -71,6 +71,7 @@ ENUMS: dict[str, list[str]] = {
     "egress_binding_stability": ["pending", "stable", "drifted", "unavailable"],
     "egress_binding_lifecycle": ["pending", "active", "transport_unavailable", "rebinding", "disabled"],
     "client_class": ["claude_code_cli", "non_claude_code_cli"],
+    "client_os": ["windows", "macos", "linux"],
     "base_session_kind": ["explicit", "anonymous_reuse"],
     "portability": ["portable", "credential_bound", "unknown"],
     "usage_source": ["official", "local_estimate", "console_count", "cancel_estimate"],
@@ -78,18 +79,11 @@ ENUMS: dict[str, list[str]] = {
     "plan_adapter": ["oauth_profile", "claude_cli_bootstrap", "not_applicable"],
     "plan_freshness": ["fresh", "stale", "unknown", "not_applicable"],
     "step_up_purpose": [
-        "key_secret_reveal", "irreversible_lifecycle", "content_audit_access", "approval_decision",
+        "key_secret_reveal", "irreversible_lifecycle", "approval_decision",
         "key_provider_change", "backup_restore_security", "bundle_activation", "device_rebuild",
     ],
-    "approval_kind": [
-        "key_full_audit", "group_audit_policy", "content_read", "content_export", "device_rebuild",
-        "key_provider_change", "legal_hold", "manual_delete", "enforcement_activate",
-    ],
+    "approval_kind": ["device_rebuild", "key_provider_change"],
     "approval_state": ["pending", "approved", "rejected", "expired", "revoked"],
-    "content_audit_requested_mode": ["metadata_only", "full_encrypted"],
-    "content_audit_group_policy": ["allow", "require", "forbid"],
-    "content_audit_effective_mode": ["metadata_only", "full_encrypted"],
-    "content_audit_object_kind": ["original_request", "final_upstream_request", "upstream_response"],
     "job_status": ["queued", "running", "succeeded", "partially_succeeded", "failed", "cancelled"],
     "request_state": ["accepted", "queued", "executing", "delivering", "completed", "failed", "cancelled"],
     "response_mode": ["stream", "non_stream"],
@@ -271,6 +265,7 @@ def generate_credential_schema() -> None:
         "credential_auth_kind", "credential_purpose", "credential_lifecycle", "credential_attachment",
         "credential_auth_state", "credential_capacity", "credential_transport", "credential_management_class",
         "enrollment_mode", "enrollment_auth_method", "enrollment_state", "enrollment_next_action",
+        "client_os",
     ]}
     defs["CredentialStatus"] = object_schema({
         "lifecycle": {"$ref": "#/$defs/CredentialLifecycle"},
@@ -295,6 +290,7 @@ def generate_credential_schema() -> None:
     defs["CredentialEnrollment"] = object_schema({
         "id": {"type": "string"}, "mode": {"$ref": "#/$defs/EnrollmentMode"},
         "target_group_id": {"type": "string"}, "auth_method": {"$ref": "#/$defs/EnrollmentAuthMethod"},
+        "os_family": {"$ref": "#/$defs/ClientOs"},
         "pending_credential_id": {"type": ["string", "null"]},
         "recovery_credential_id": {"type": ["string", "null"]},
         "expected_credential_revision": {"type": ["integer", "null"], "minimum": 1},
@@ -310,13 +306,14 @@ def generate_credential_schema() -> None:
         "attempt_count": {"type": "integer", "minimum": 0},
         "expires_at": {"type": "string", "format": "date-time"},
         "revision": {"type": "integer", "minimum": 1},
-    }, ["id", "mode", "target_group_id", "auth_method", "state", "next_action", "egress_binding_snapshot", "attempt_count", "expires_at", "revision"])
+    }, ["id", "mode", "target_group_id", "auth_method", "os_family", "state", "next_action", "egress_binding_snapshot", "attempt_count", "expires_at", "revision"])
     defs["EnrollmentCreateCommand"] = object_schema({
         "mode": {"$ref": "#/$defs/EnrollmentMode"},
         "target_group_id": {"type": "string"},
         "auth_method": {"$ref": "#/$defs/EnrollmentAuthMethod"},
         "recovery_credential_id": {"type": ["string", "null"]},
         "expected_credential_revision": {"type": ["integer", "null"], "minimum": 1},
+        "os_family": {"type": ["string", "null"], "enum": ["windows", "macos", "linux", None]},
     }, ["mode", "target_group_id", "auth_method"])
     defs["AutoReauthStrategy"] = object_schema({
         "id": {"type": "string"}, "credential_id": {"type": "string"},
@@ -470,10 +467,6 @@ def generate_audit_schema() -> None:
     defs = {
         "StepUpPurpose": enum_schema("step_up_purpose"), "ApprovalKind": enum_schema("approval_kind"),
         "ApprovalState": enum_schema("approval_state"),
-        "ContentAuditRequestedMode": enum_schema("content_audit_requested_mode"),
-        "ContentAuditGroupPolicy": enum_schema("content_audit_group_policy"),
-        "ContentAuditEffectiveMode": enum_schema("content_audit_effective_mode"),
-        "ContentAuditObjectKind": enum_schema("content_audit_object_kind"),
     }
     defs["StepUpGrant"] = object_schema({
         "id": {"type": "string"}, "purpose": {"$ref": "#/$defs/StepUpPurpose"},
@@ -492,17 +485,7 @@ def generate_audit_schema() -> None:
         "decided_at": {"type": ["string", "null"], "format": "date-time"},
         "revision": {"type": "integer", "minimum": 1},
     }, ["id", "kind", "scope", "requested_by", "request_step_up_grant_id", "reason", "action_snapshot_digest", "requested_at", "expires_at", "state", "revision"])
-    defs["ContentAuditObject"] = object_schema({
-        "id": {"type": "string"}, "request_id": {"type": "string"},
-        "attempt_id": {"type": ["string", "null"]},
-        "kind": {"$ref": "#/$defs/ContentAuditObjectKind"},
-        "ciphertext_location": {"type": "string"}, "wrapped_dek": {"type": "string"},
-        "aead_algorithm": {"type": "string"}, "plaintext_digest": {"type": "string"},
-        "retention_until": {"type": "string", "format": "date-time"},
-        "legal_hold_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
-        "created_at": {"type": "string", "format": "date-time"},
-    }, ["id", "request_id", "kind", "ciphertext_location", "wrapped_dek", "aead_algorithm", "plaintext_digest", "retention_until", "legal_hold_ids", "created_at"])
-    write_json(SCHEMAS / "audit-approval.schema.json", base_schema("audit-approval.schema.json", "Approval and Content Audit Contracts", defs))
+    write_json(SCHEMAS / "audit-approval.schema.json", base_schema("audit-approval.schema.json", "Approval Contracts", defs))
 
 
 def trace_base_properties() -> dict[str, Any]:
@@ -872,7 +855,7 @@ def generate_r2_foundation_schemas() -> None:
             "schema_version": {"type": "string", "const": "1.0.0"},
             "postgres_minimum_major": {"type": "integer", "const": 16},
             "logical_schemas": {"type": "array", "items": {"type": "string"}, "minItems": 6, "uniqueItems": True},
-            "required_tables": {"type": "array", "items": {"type": "string", "pattern": "^[a-z_]+\\.[a-z0-9_]+$"}, "minItems": 116, "maxItems": 116, "uniqueItems": True},
+            "required_tables": {"type": "array", "items": {"type": "string", "pattern": "^[a-z_]+\\.[a-z0-9_]+$"}, "minItems": 112, "maxItems": 112, "uniqueItems": True},
             "database_roles": {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 4, "uniqueItems": True},
             "uuid_generation": {"type": "string", "const": "application_uuid_v7"},
             "enum_storage": {"type": "string", "const": "text_check_fail_closed"},
@@ -951,7 +934,7 @@ def generate_r2_foundation_schemas() -> None:
             "postgres_major": {"type": "integer", "minimum": 16},
             "schema_version_value": {"type": "integer", "minimum": 1},
             "migration_manifest_sha256": sha256,
-            "required_table_count": {"type": "integer", "const": 116},
+            "required_table_count": {"type": "integer", "const": 112},
             "partition_count": {"type": "integer", "minimum": 1},
             "fixture_id": {"type": "string", "minLength": 1},
             "automation": {"type": "string", "minLength": 1},
@@ -1064,6 +1047,12 @@ def request_ref(path: str, method: str) -> str:
         return "#/components/schemas/UserCreateCommand"
     if path == "/admin/v1/platform-keys" and method == "post":
         return "#/components/schemas/PlatformKeyCreateCommand"
+    if path == "/admin/v1/platform-keys/{id}" and method == "patch":
+        return "#/components/schemas/PlatformKeyPatchCommand"
+    if path == "/admin/v1/settings/body-capture" and method == "put":
+        return "#/components/schemas/BodyCaptureSettingsCommand"
+    if path == "/admin/v1/settings/runtime" and method == "put":
+        return "#/components/schemas/RuntimeSettingsCommand"
     if path == "/admin/v1/platform-keys/{id}:reveal" and method == "post":
         return "#/components/schemas/PlatformKeyRevealCommand"
     if path == "/admin/v1/platform-keys/{id}:revoke" and method == "post":
@@ -1098,6 +1087,8 @@ def request_ref(path: str, method: str) -> str:
         return "#/components/schemas/ModelRefreshCommand"
     if path == "/admin/v1/price-versions" and method == "post":
         return "#/components/schemas/PriceVersionCreateCommand"
+    if path == "/admin/v1/price-sync:run" and method == "post":
+        return "#/components/schemas/EmptyCommand"
     if path == "/admin/v1/rulesets" and method == "post":
         return "#/components/schemas/RuleSetCreateCommand"
     if path == "/admin/v1/rulesets/{id}:simulate" and method == "post":
@@ -1118,18 +1109,8 @@ def request_ref(path: str, method: str) -> str:
         return "#/components/schemas/ApprovalCreateCommand"
     if path.startswith("/admin/v1/approval-cases/{id}:") and path.rsplit(":", 1)[-1] in {"approve", "reject"}:
         return "#/components/schemas/ApprovalDecisionCommand"
-    if path == "/admin/v1/content-audit/search-sessions" and method == "post":
-        return "#/components/schemas/ContentAuditSearchCommand"
-    if path == "/admin/v1/content-audit/records/{id}:export" and method == "post":
-        return "#/components/schemas/ContentAuditExportCommand"
-    if path == "/admin/v1/content-audit/legal-holds" and method == "post":
-        return "#/components/schemas/LegalHoldCreateCommand"
     if path == "/admin/v1/operations/jobs/{id}:cancel" and method == "post":
         return "#/components/schemas/ReasonActionCommand"
-    if path.startswith("/admin/v1/content-audit/legal-holds/{id}:"):
-        return "#/components/schemas/LegalHoldActionCommand"
-    if path == "/admin/v1/content-audit/purge-jobs" and method == "post":
-        return "#/components/schemas/ContentPurgeCommand"
     if path == "/admin/v1/operations/key-rotation-jobs" and method == "post":
         return "#/components/schemas/KeyRotationCommand"
     if path == "/admin/v1/operations/key-lifecycle-jobs" and method == "post":
@@ -1199,6 +1180,12 @@ def response_ref(path: str, method: str) -> str:
         return "#/components/schemas/ModelEnvelope"
     if path == "/admin/v1/platform-keys/{id}/client-config" and method == "get":
         return "../schemas/common.schema.json#/$defs/SingleEnvelope"
+    if path == "/admin/v1/requests/{id}/body" and method == "get":
+        return "#/components/schemas/RequestBodyEnvelope"
+    if path == "/admin/v1/settings/body-capture":
+        return "#/components/schemas/BodyCaptureSettingsEnvelope"
+    if path == "/admin/v1/settings/runtime":
+        return "#/components/schemas/RuntimeSettingsEnvelope"
     if method == "get" and not (path.endswith("/{id}") or re.search(r"\{[^}]+\}$", path)):
         return "../schemas/common.schema.json#/$defs/ListEnvelope"
     return "../schemas/common.schema.json#/$defs/SingleEnvelope"
@@ -1213,13 +1200,13 @@ def is_async(path: str, method: str) -> bool:
         "/admin/v1/plan-mapping-versions/{id}:activate",
         "/admin/v1/plan-mapping-versions/{id}:rollback",
         "/admin/v1/notification-channels/{id}:test",
-        "/admin/v1/content-audit/records/{id}:export",
         "/admin/v1/credentials/{id}/reauth-strategy:reactivate",
+        "/admin/v1/price-sync:run",
     }:
         return True
     return any(token in path for token in [
         "refresh", ":probe", ":verify", ":initialize", ":recompute", ":migrate-", ":rebind-",
-        "/exports", "/purge-jobs", "/backup-jobs", "/restore-validations", "/key-rotation-jobs",
+        "/exports", "/backup-jobs", "/restore-validations", "/key-rotation-jobs",
         "/upgrade-checks", "/operations/drills",
     ])
 
@@ -1229,13 +1216,10 @@ def needs_idempotency(path: str, method: str) -> bool:
         return False
     return not any(token in path for token in [
         "/auth/login", "/auth/mfa/", "/auth/step-up", ":validate", ":simulate",
-        "/content-audit/search-sessions",
     ])
 
 
 def needs_if_match(path: str, method: str) -> bool:
-    if path == "/admin/v1/content-audit/records/{id}:export" and method == "post":
-        return False
     return "{" in path and (method in {"patch", "delete"} or (method == "post" and ":" in path))
 
 
@@ -1253,6 +1237,45 @@ def admin_components() -> dict[str, Any]:
         },
         "schemas": {
             "EmptyCommand": object_schema({}),
+            "BodyCaptureSettingsCommand": object_schema({
+                "enabled": {"type": "boolean"}, "retention_days": {"type": "integer", "minimum": 1, "maximum": 365},
+                "max_bytes": {"type": "integer", "minimum": 1, "maximum": 67108864},
+            }, ["enabled", "retention_days", "max_bytes"]),
+            "BodyCaptureSettingsEnvelope": object_schema({
+                "data": object_schema({
+                    "enabled": {"type": "boolean"}, "retention_days": {"type": "integer", "minimum": 1, "maximum": 365},
+                    "max_bytes": {"type": "integer", "minimum": 1, "maximum": 67108864},
+                }, ["enabled", "retention_days", "max_bytes"]),
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "meta"]),
+            "RuntimeSettingsCommand": object_schema({
+                "price_sync_interval_hours": {"type": "integer", "minimum": 1, "maximum": 168},
+                "third_party_window_minutes": {"type": "integer", "minimum": 1, "maximum": 1440},
+                "third_party_min_rejections": {"type": "integer", "minimum": 1, "maximum": 1000},
+                "third_party_ratio_percent": {"type": "integer", "minimum": 1, "maximum": 100},
+            }, ["price_sync_interval_hours", "third_party_window_minutes", "third_party_min_rejections", "third_party_ratio_percent"]),
+            "RuntimeSettingsEnvelope": object_schema({
+                "data": object_schema({
+                    "price_sync_interval_hours": {"type": "integer", "minimum": 1, "maximum": 168},
+                    "third_party_window_minutes": {"type": "integer", "minimum": 1, "maximum": 1440},
+                    "third_party_min_rejections": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    "third_party_ratio_percent": {"type": "integer", "minimum": 1, "maximum": 100},
+                }, ["price_sync_interval_hours", "third_party_window_minutes", "third_party_min_rejections", "third_party_ratio_percent"]),
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "meta"]),
+            "RequestBodyEnvelope": object_schema({
+                "data": object_schema({
+                    "request_id": {"type": "string", "format": "uuid"},
+                    "original_request": {"type": ["object", "array", "string", "null"]},
+                    "policy_request": {"type": ["object", "array", "string", "null"]},
+                    "final_upstream_request": {"type": ["object", "array", "string", "null"]},
+                    "upstream_response": {"type": ["string", "null"]},
+                    "upstream_response_final": {"type": ["object", "array", "string", "null"]},
+                    "captured_at": {"type": "string", "format": "date-time"},
+                    "body_digest_mismatch": {"type": "boolean"},
+                }, ["request_id", "original_request", "policy_request", "final_upstream_request", "upstream_response", "upstream_response_final", "captured_at", "body_digest_mismatch"]),
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "meta"]),
             "ModelResource": object_schema({
                 "id": {"type": "string", "format": "uuid"},
                 "upstream_model_id": {"type": "string"},
@@ -1295,12 +1318,22 @@ def admin_components() -> dict[str, Any]:
             "PlatformKeyCreateCommand": object_schema({
                 "name": {"type": "string"}, "group_id": {"type": "string"},
                 "expires_at": {"type": ["string", "null"], "format": "date-time"},
-                "endpoint_permissions": {"type": "array", "items": {"type": "string", "enum": ["messages", "models"]}, "minItems": 1, "uniqueItems": True},
-                "requested_content_audit": enum_schema("content_audit_requested_mode"),
-                "content_audit_approval_case_id": {"type": ["string", "null"], "format": "uuid"},
-                "content_audit_expires_at": {"type": ["string", "null"], "format": "date-time"},
+                "endpoint_permissions": {"type": "array", "items": {"type": "string", "enum": ["messages", "models"]}, "minItems": 1, "maxItems": 2, "uniqueItems": True},
+                "model_allowlist": {"type": "array", "items": {"type": "string", "format": "uuid"}, "maxItems": 256, "uniqueItems": True},
+                "ip_allowlist": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 256, "uniqueItems": True},
                 "spend_limit_amount": {"type": ["string", "null"], "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"},
-            }, ["name", "group_id", "endpoint_permissions", "requested_content_audit"]),
+            }, ["name", "group_id", "endpoint_permissions"]),
+            "PlatformKeyPatchCommand": object_schema({
+                "name": {"type": "string"},
+                "expires_at": {"type": ["string", "null"], "format": "date-time"},
+                "group_id": {"type": "string", "format": "uuid"},
+                "endpoint_permissions": {"type": "array", "items": {"type": "string", "enum": ["messages", "models"]}, "minItems": 1, "maxItems": 2, "uniqueItems": True},
+                "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 1000000},
+                "messages_rpm": {"type": "integer", "minimum": 1, "maximum": 1000000},
+                "spend_limit_amount": {"type": ["string", "null"], "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"},
+                "model_allowlist": {"type": "array", "items": {"type": "string", "format": "uuid"}, "maxItems": 256, "uniqueItems": True},
+                "ip_allowlist": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 256, "uniqueItems": True},
+            }),
             "PlatformKeyRevealCommand": object_schema({
                 "step_up_grant_id": {"type": "string"},
                 "reason": {"type": "string", "maxLength": 2048},
@@ -1317,6 +1350,7 @@ def admin_components() -> dict[str, Any]:
             "GroupConfigCandidate": object_schema({
                 "accepted_client_classes": {"type": "array", "items": enum_schema("client_class"), "minItems": 1, "uniqueItems": True},
                 "fully_managed_required": {"type": "boolean", "default": False}, "egress_mode": {"type": "string", "enum": ["auto", "direct_only", "proxy_only"]},
+                "default_os_family": {"type": "string", "enum": ["windows", "macos", "linux"], "default": "windows"},
                 "limits": object_schema({
                     "concurrency": {"type": ["integer", "null"], "minimum": 1},
                     "messages_rpm": {"type": ["integer", "null"], "minimum": 1},
@@ -1329,7 +1363,6 @@ def admin_components() -> dict[str, Any]:
                     "upstream_non_stream_total_ms": {"type": "integer", "minimum": 1, "default": 300000},
                     "upstream_stream_idle_ms": {"type": "integer", "minimum": 5000, "maximum": 600000, "default": 30000},
                 }, ["upstream_connect_ms", "upstream_non_stream_total_ms", "upstream_stream_idle_ms"], additional=True),
-                "content_audit": object_schema({"policy": enum_schema("content_audit_group_policy"), "retention_days": {"type": "integer", "minimum": 1, "maximum": 365, "default": 7}}, ["policy", "retention_days"], additional=True),
                 # 可选治理与模型范围:缺省继承当前生效版本
                 "governance": object_schema({
                     "system_prompt_mode": {"type": "string", "enum": ["preserve", "strip_client", "replace", "strip_all"]},
@@ -1341,7 +1374,7 @@ def admin_components() -> dict[str, Any]:
                     "scope": {"type": "string", "enum": ["all_published", "allowlist"]},
                     "model_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}, "maxItems": 100, "uniqueItems": True},
                 }, ["scope"], additional=True),
-            }, ["accepted_client_classes", "fully_managed_required", "egress_mode", "limits", "credential_defaults", "queue", "timeouts", "content_audit"], additional=True),
+            }, ["accepted_client_classes", "fully_managed_required", "egress_mode", "limits", "credential_defaults", "queue", "timeouts"], additional=True),
             "GroupConfigRollbackCommand": object_schema({
                 "target_version": {"type": "integer", "minimum": 1},
                 "reason": {"type": "string", "maxLength": 2048},
@@ -1481,6 +1514,7 @@ def admin_components() -> dict[str, Any]:
                 "os_family": {"type": "string", "enum": ["windows", "macos", "linux"]},
                 "architecture": {"type": "string", "enum": ["x86_64", "aarch64"]},
                 "os_build": {"type": "string", "minLength": 1, "maxLength": 256},
+                "shell": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
                 "client_family": {"type": "string", "const": "claude_code_cli"},
                 "runtime": {"type": "string", "minLength": 1, "maxLength": 256},
                 "runtime_version": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -1488,6 +1522,7 @@ def admin_components() -> dict[str, Any]:
                 "profile_schema_version": {"type": "integer", "minimum": 1},
                 "capture_cohort": {"type": "string", "minLength": 1, "maxLength": 256},
                 "protocol_profile": {"type": "object", "additionalProperties": True},
+                "system_template": {"type": ["string", "array", "null"]},
                 "evidence_set_id": {"type": ["string", "null"], "format": "uuid"},
                 "capacity": {"$ref": "#/components/schemas/EnvironmentArchetypeCapacity"},
             }, ["os_family", "architecture", "os_build", "client_family", "runtime", "runtime_version", "client_version", "profile_schema_version", "capture_cohort", "protocol_profile", "evidence_set_id", "capacity"]),
@@ -1525,63 +1560,9 @@ def admin_components() -> dict[str, Any]:
                 "reason": {"type": "string", "maxLength": 2048},
                 "step_up_grant_id": {"type": "string"},
             }, ["reason", "step_up_grant_id"]),
-            "ContentAuditSearchFilters": object_schema({
-                "request_id": {"type": ["string", "null"], "format": "uuid"},
-                "owner_user_id": {"type": ["string", "null"], "format": "uuid"},
-                "platform_key_id": {"type": ["string", "null"], "format": "uuid"},
-                "group_id": {"type": ["string", "null"], "format": "uuid"},
-                "attempt_id": {"type": ["string", "null"], "format": "uuid"},
-                "object_kind": {"type": ["string", "null"], "enum": ["original_request", "final_upstream_request", "upstream_response", None]},
-                "created_from": {"type": ["string", "null"], "format": "date-time"},
-                "created_to": {"type": ["string", "null"], "format": "date-time"},
-            }),
             "ModelRefreshCommand": object_schema({
                 "reason": {"type": "string", "maxLength": 2048},
             }, ["reason"]),
-            "ContentAuditSearchCommand": object_schema({
-                "approval_case_id": {"type": "string", "format": "uuid"},
-                "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "maxLength": 2048},
-                "filters": {"$ref": "#/components/schemas/ContentAuditSearchFilters"},
-            }, ["approval_case_id", "step_up_grant_id", "reason", "filters"]),
-            "ContentAuditExportCommand": object_schema({
-                "search_session_id": {"type": "string", "format": "uuid"},
-                "approval_case_id": {"type": "string", "format": "uuid"},
-                "step_up_grant_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "maxLength": 2048},
-            }, ["search_session_id", "approval_case_id", "step_up_grant_id", "reason"]),
-            "ContentAuditExportEnvelope": object_schema({
-                "data": object_schema({
-                    "id": {"type": "string", "format": "uuid"},
-                    "job_id": {"type": "string", "format": "uuid"},
-                    "dataset": {"type": "string", "const": "content_audit_record_v1"},
-                    "format": {"type": "string", "const": "raw"},
-                    "state": {"type": "string", "const": "queued"},
-                    "revision": {"type": "integer", "minimum": 1},
-                    "created_at": {"type": "string", "format": "date-time"},
-                }, ["id", "job_id", "dataset", "format", "state", "revision", "created_at"]),
-                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
-            }, ["data", "meta"]),
-            "LegalHoldCreateCommand": object_schema({
-                "name": {"type": "string", "minLength": 1, "maxLength": 256},
-                "reason": {"type": "string", "maxLength": 2048},
-                "approval_case_id": {"type": "string", "format": "uuid"},
-                "review_due_at": {"type": ["string", "null"], "format": "date-time"},
-                "objects": {"type": "array", "minItems": 1, "maxItems": 10000, "items": object_schema({
-                    "content_audit_object_id": {"type": "string", "format": "uuid"},
-                }, ["content_audit_object_id"])},
-            }, ["name", "reason", "approval_case_id", "objects"]),
-            "LegalHoldActionCommand": object_schema({
-                "approval_case_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "maxLength": 2048},
-                "expected_revision": {"type": "integer", "minimum": 1},
-            }, ["approval_case_id", "reason", "expected_revision"]),
-            "ContentPurgeCommand": object_schema({
-                "approval_case_id": {"type": "string", "format": "uuid"},
-                "reason": {"type": "string", "maxLength": 2048},
-                "object_ids": {"type": "array", "minItems": 1, "maxItems": 10000, "uniqueItems": True,
-                               "items": {"type": "string", "format": "uuid"}},
-            }, ["approval_case_id", "reason", "object_ids"]),
             "KeyRotationCommand": object_schema({
                 "approval_case_id": {"type": "string", "format": "uuid"},
                 "step_up_grant_id": {"type": "string", "format": "uuid"},
@@ -1748,13 +1729,7 @@ def generate_admin_openapi() -> list[dict[str, Any]]:
         parameters: list[dict[str, Any]] = []
         for name in re.findall(r"\{([^}]+)\}", path):
             parameters.append({"name": name, "in": "path", "required": True, "schema": {"type": "string"}})
-        if method == "get" and path == "/admin/v1/content-audit/records/{id}":
-            parameters.append({
-                "name": "search_session_id", "in": "query", "required": True,
-                "schema": {"type": "string", "format": "uuid"},
-                "description": "Approval-bound Content Audit search session containing this record.",
-            })
-        elif method == "get" and path != "/admin/v1/exports/{id}/download":
+        if method == "get" and path != "/admin/v1/exports/{id}/download":
             parameters.extend([{"$ref": "#/components/parameters/PageSize"}, {"$ref": "#/components/parameters/PageAfter"}])
         if method not in {"get", "head"}:
             parameters.append({"$ref": "#/components/parameters/CsrfToken"})
@@ -1765,10 +1740,8 @@ def generate_admin_openapi() -> list[dict[str, Any]]:
         status = "202" if is_async(path, method) else ("201" if method == "post" and ":" not in path else ("204" if method == "delete" else "200"))
         success_schema = ({"$ref": "#/components/schemas/UsageExportEnvelope"}
                           if path == "/admin/v1/exports" and method == "post"
-                          else ({"$ref": "#/components/schemas/ContentAuditExportEnvelope"}
-                                if path == "/admin/v1/content-audit/records/{id}:export"
                           else ({"$ref": "../schemas/common.schema.json#/$defs/JobEnvelope"}
-                                if status == "202" else {"$ref": response_ref(path, method)})))
+                                if status == "202" else {"$ref": response_ref(path, method)}))
         operation: dict[str, Any] = {
             "operationId": camel_operation(method, path), "tags": [route["tag"]],
             "summary": route["description"], "x-roles": roles_for(path, method, route["explicit_role"]),
@@ -1826,6 +1799,9 @@ def generate_data_openapi() -> None:
         "tool_choice": {}, "thinking": {}, "metadata": {"type": "object", "additionalProperties": True},
         "output_config": {}, "context_management": {},
     }, ["model", "max_tokens", "messages"], additional=True)
+    count_tokens_request = object_schema({
+        key: value for key, value in message_request["properties"].items() if key != "max_tokens"
+    }, ["model", "messages"], additional=True)
     model = object_schema({
         "id": {"type": "string"}, "type": {"type": "string", "const": "model"},
         "display_name": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"},
@@ -1865,6 +1841,20 @@ def generate_data_openapi() -> None:
                     "200": {"description": "Opaque Anthropic response; JSON or SSE is forwarded without body rewriting", "content": {
                         "application/json": {"schema": {}, "x-opaque-passthrough": True},
                         "text/event-stream": {"schema": {"type": "string"}, "x-opaque-passthrough": True},
+                    }},
+                    "400": {"$ref": "#/components/responses/DataError"}, "401": {"$ref": "#/components/responses/DataError"},
+                    "403": {"$ref": "#/components/responses/DataError"}, "404": {"$ref": "#/components/responses/DataError"},
+                    "429": {"$ref": "#/components/responses/DataError"}, "500": {"$ref": "#/components/responses/DataError"},
+                    "503": {"$ref": "#/components/responses/DataError"}, "504": {"$ref": "#/components/responses/DataError"},
+                },
+            }},
+            "/v1/messages/count_tokens": {"post": {
+                "operationId": "countMessageTokens", "summary": "Count tokens using the selected subscription credential",
+                "x-request-adjustment": "explicit-policy-only", "x-response-body-passthrough": "byte-exact",
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CountTokensRequest"}}}},
+                "responses": {
+                    "200": {"description": "Opaque Anthropic count-tokens response", "content": {
+                        "application/json": {"schema": {}, "x-opaque-passthrough": True},
                     }},
                     "400": {"$ref": "#/components/responses/DataError"}, "401": {"$ref": "#/components/responses/DataError"},
                     "403": {"$ref": "#/components/responses/DataError"}, "404": {"$ref": "#/components/responses/DataError"},
@@ -1937,13 +1927,13 @@ def generate_data_openapi() -> None:
                 "xApiKey": {"type": "apiKey", "in": "header", "name": "x-api-key"},
                 "bearerApiKey": {"type": "http", "scheme": "bearer"},
             },
-            "schemas": {"MessageRequest": message_request, "Model": model,
+            "schemas": {"MessageRequest": message_request, "CountTokensRequest": count_tokens_request, "Model": model,
                 "ModelList": object_schema({"data": {"type": "array", "items": {"$ref": "#/components/schemas/Model"}}, "has_more": {"type": "boolean"}, "first_id": {"type": ["string", "null"]}, "last_id": {"type": ["string", "null"]}}, ["data", "has_more", "first_id", "last_id"]),
                 "AnthropicError": anthropic_error,
             },
             "responses": {"DataError": {"description": "Anthropic-shaped platform error or transparent upstream error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AnthropicError"}}}}},
         },
-        "x-public-route-policy": {"unknown_v1_requires_auth": True, "count_tokens_public": False, "websocket": False, "providers": ["anthropic_official"]},
+        "x-public-route-policy": {"unknown_v1_requires_auth": True, "count_tokens_public": True, "websocket": False, "providers": ["anthropic_official"]},
     }
     write_json(OPENAPI / "data-plane.openapi.json", document)
 
@@ -2322,8 +2312,6 @@ def generate_fixtures() -> None:
         ("GATEWAY_BUNDLE_TRUST_STORE", "path", True, False, True, "independent", None, None),
         ("GATEWAY_BUNDLE_DIR", "path", True, False, True, "independent", None, None),
         ("GATEWAY_RESPONSE_TMP_DIR", "path", True, False, True, "independent", None, None),
-        ("GATEWAY_CONTENT_AUDIT_KEY_FILE", "secret_file", False, True, True, "pair", "GATEWAY_CONTENT_AUDIT_DIR", None),
-        ("GATEWAY_CONTENT_AUDIT_DIR", "path", False, False, True, "pair", "GATEWAY_CONTENT_AUDIT_KEY_FILE", None),
         ("GATEWAY_BACKUP_KEY_FILE", "secret_file", False, True, False, "pair", "GATEWAY_BACKUP_REPOSITORY", None),
         ("GATEWAY_BACKUP_REPOSITORY", "string", False, False, False, "pair", "GATEWAY_BACKUP_KEY_FILE", None),
         ("GATEWAY_DRAIN_DEADLINE", "duration", False, False, False, "independent", None, "300s"),
@@ -2601,7 +2589,8 @@ def generate_fixtures() -> None:
     write_json(migration_fixture_path, migration_manifest)
     migration_manifest_hash = text_sha256(migration_fixture_path)
     sql_text = "\n".join(path.read_text(encoding="utf-8") for path in migration_files)
-    all_tables = sorted(set(re.findall(r"CREATE TABLE\s+([a-z_]+\.[a-z0-9_]+)", sql_text)))
+    dropped_tables = set(re.findall(r"DROP TABLE\s+(?:IF EXISTS\s+)?([a-z_]+\.[a-z0-9_]+)", sql_text))
+    all_tables = sorted(set(re.findall(r"CREATE TABLE\s+([a-z_]+\.[a-z0-9_]+)", sql_text)) - dropped_tables)
     required_tables = [
         name for name in all_tables
         if not re.fullmatch(r"telemetry\.request_record_(?:2026[0-9]{2}|default)", name)

@@ -9,7 +9,8 @@
 use std::time::Duration;
 
 use gateway_domain::{
-    CostEstimate, DeliveryOutcome, PriceSnapshot, ResponseMode, UsageCompleteness, UsageObservation, UsageSource,
+    ClientOs, CostEstimate, DeliveryOutcome, OsResolution, PriceSnapshot, ResponseMode, UsageCompleteness,
+    UsageObservation, UsageSource,
 };
 use serde_json::Value;
 use sqlx::Postgres;
@@ -26,9 +27,80 @@ pub struct RequestCreate {
     pub owner_generation: i64,
     pub endpoint_code: Box<str>,
     pub client_class_code: Box<str>,
+    pub client_os: ClientOs,
+    pub os_resolution: OsResolution,
+    pub os_mismatch: bool,
     pub model_id: Option<Uuid>,
     pub request_body_bytes: i64,
     pub response_mode: ResponseMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyCaptureConfig {
+    pub enabled: bool,
+    pub retention_days: i32,
+    pub max_bytes: usize,
+}
+
+impl Default for BodyCaptureConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            retention_days: 7,
+            max_bytes: 4 * 1024 * 1024,
+        }
+    }
+}
+
+/// Operator-tunable runtime thresholds stored in `ops.system_setting`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuntimeSettings {
+    /// Hours between scheduled `LiteLLM` price synchronizations.
+    pub price_sync_interval_hours: i32,
+    /// Sliding window used to evaluate upstream third-party rejections.
+    pub third_party_window_minutes: i32,
+    /// Minimum rejected attempts inside the window before alerting.
+    pub third_party_min_rejections: i32,
+    /// Rejected/total attempt ratio (percent) inside the window before alerting.
+    pub third_party_ratio_percent: i32,
+}
+
+impl Default for RuntimeSettings {
+    fn default() -> Self {
+        Self {
+            price_sync_interval_hours: 24,
+            third_party_window_minutes: 15,
+            third_party_min_rejections: 3,
+            third_party_ratio_percent: 20,
+        }
+    }
+}
+
+impl RuntimeSettings {
+    pub const PRICE_SYNC_INTERVAL_HOURS: std::ops::RangeInclusive<i32> = 1..=168;
+    pub const THIRD_PARTY_WINDOW_MINUTES: std::ops::RangeInclusive<i32> = 1..=1440;
+    pub const THIRD_PARTY_MIN_REJECTIONS: std::ops::RangeInclusive<i32> = 1..=1000;
+    pub const THIRD_PARTY_RATIO_PERCENT: std::ops::RangeInclusive<i32> = 1..=100;
+
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        Self::PRICE_SYNC_INTERVAL_HOURS.contains(&self.price_sync_interval_hours)
+            && Self::THIRD_PARTY_WINDOW_MINUTES.contains(&self.third_party_window_minutes)
+            && Self::THIRD_PARTY_MIN_REJECTIONS.contains(&self.third_party_min_rejections)
+            && Self::THIRD_PARTY_RATIO_PERCENT.contains(&self.third_party_ratio_percent)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestBodyCapture {
+    pub request_id: Uuid,
+    pub original_request: Option<Value>,
+    pub policy_request: Option<Value>,
+    pub final_upstream_request: Option<Value>,
+    pub upstream_response: Option<String>,
+    pub upstream_response_final: Option<Value>,
+    pub captured_at: String,
+    pub body_digest_mismatch: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -129,6 +201,254 @@ pub struct QuotaCurrentProjection {
 }
 
 impl PgStorage {
+    pub async fn body_capture_config(&self) -> Result<BodyCaptureConfig, StorageError> {
+        let rows = sqlx::query("SELECT key,value FROM ops.system_setting WHERE key LIKE 'body_capture.%'")
+            .fetch_all(&self.pool())
+            .await
+            .map_err(transaction_error)?;
+        let mut config = BodyCaptureConfig::default();
+        for row in rows {
+            let key: String = sqlx::Row::try_get(&row, "key").map_err(transaction_error)?;
+            let value: Value = sqlx::Row::try_get(&row, "value").map_err(transaction_error)?;
+            match key.as_str() {
+                "body_capture.enabled" => config.enabled = value.as_bool().unwrap_or(false),
+                "body_capture.retention_days" => {
+                    config.retention_days = value
+                        .as_i64()
+                        .and_then(|v| i32::try_from(v).ok())
+                        .unwrap_or(7)
+                        .clamp(1, 365);
+                }
+                "body_capture.max_bytes" => {
+                    config.max_bytes = value
+                        .as_u64()
+                        .and_then(|v| usize::try_from(v).ok())
+                        .unwrap_or(4 * 1024 * 1024)
+                        .clamp(1, 64 * 1024 * 1024);
+                }
+                _ => {}
+            }
+        }
+        Ok(config)
+    }
+
+    pub async fn update_body_capture_config(
+        &self,
+        config: BodyCaptureConfig,
+        updated_by: Uuid,
+    ) -> Result<(), StorageError> {
+        let mut transaction = self.pool().begin().await.map_err(transaction_error)?;
+        for (key, value) in [
+            ("body_capture.enabled", Value::Bool(config.enabled)),
+            ("body_capture.retention_days", Value::from(config.retention_days)),
+            (
+                "body_capture.max_bytes",
+                Value::from(u64::try_from(config.max_bytes).map_err(|_| StorageError::TransactionFailed)?),
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO ops.system_setting(key,value,updated_by,updated_at) VALUES($1,$2,$3,clock_timestamp()) \
+                 ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at",
+            )
+            .bind(key)
+            .bind(value)
+            .bind(updated_by)
+            .execute(&mut *transaction)
+            .await
+            .map_err(transaction_error)?;
+        }
+        transaction.commit().await.map_err(transaction_error)
+    }
+
+    pub async fn runtime_settings(&self) -> Result<RuntimeSettings, StorageError> {
+        let rows = sqlx::query(
+            "SELECT key,value FROM ops.system_setting WHERE key LIKE 'price_sync.%' OR key LIKE 'third_party.%'",
+        )
+        .fetch_all(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        let mut settings = RuntimeSettings::default();
+        let defaults = RuntimeSettings::default();
+        for row in rows {
+            let key: String = sqlx::Row::try_get(&row, "key").map_err(transaction_error)?;
+            let value: Value = sqlx::Row::try_get(&row, "value").map_err(transaction_error)?;
+            let integer = |fallback: i32, range: std::ops::RangeInclusive<i32>| {
+                value
+                    .as_i64()
+                    .and_then(|v| i32::try_from(v).ok())
+                    .filter(|v| range.contains(v))
+                    .unwrap_or(fallback)
+            };
+            match key.as_str() {
+                "price_sync.interval_hours" => {
+                    settings.price_sync_interval_hours = integer(
+                        defaults.price_sync_interval_hours,
+                        RuntimeSettings::PRICE_SYNC_INTERVAL_HOURS,
+                    );
+                }
+                "third_party.window_minutes" => {
+                    settings.third_party_window_minutes = integer(
+                        defaults.third_party_window_minutes,
+                        RuntimeSettings::THIRD_PARTY_WINDOW_MINUTES,
+                    );
+                }
+                "third_party.min_rejections" => {
+                    settings.third_party_min_rejections = integer(
+                        defaults.third_party_min_rejections,
+                        RuntimeSettings::THIRD_PARTY_MIN_REJECTIONS,
+                    );
+                }
+                "third_party.ratio_percent" => {
+                    settings.third_party_ratio_percent = integer(
+                        defaults.third_party_ratio_percent,
+                        RuntimeSettings::THIRD_PARTY_RATIO_PERCENT,
+                    );
+                }
+                _ => {}
+            }
+        }
+        Ok(settings)
+    }
+
+    pub async fn update_runtime_settings(
+        &self,
+        settings: RuntimeSettings,
+        updated_by: Uuid,
+    ) -> Result<(), StorageError> {
+        if !settings.is_valid() {
+            return Err(StorageError::InvalidLifecycle);
+        }
+        let mut transaction = self.pool().begin().await.map_err(transaction_error)?;
+        for (key, value) in [
+            ("price_sync.interval_hours", settings.price_sync_interval_hours),
+            ("third_party.window_minutes", settings.third_party_window_minutes),
+            ("third_party.min_rejections", settings.third_party_min_rejections),
+            ("third_party.ratio_percent", settings.third_party_ratio_percent),
+        ] {
+            sqlx::query(
+                "INSERT INTO ops.system_setting(key,value,updated_by,updated_at) VALUES($1,$2,$3,clock_timestamp()) \
+                 ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at",
+            )
+            .bind(key)
+            .bind(Value::from(value))
+            .bind(updated_by)
+            .execute(&mut *transaction)
+            .await
+            .map_err(transaction_error)?;
+        }
+        transaction.commit().await.map_err(transaction_error)
+    }
+
+    pub async fn capture_request_body(
+        &self,
+        request_id: Uuid,
+        original_request: Option<Value>,
+        policy_request: Option<Value>,
+        final_upstream_request: Option<Value>,
+    ) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            "INSERT INTO telemetry.request_body(request_month,request_id,original_request,policy_request,final_upstream_request) \
+             SELECT request_month,$1,$2,$3,$4 FROM telemetry.request_record WHERE request_id=$1 \
+             ON CONFLICT(request_month,request_id) DO UPDATE SET \
+               original_request=COALESCE(EXCLUDED.original_request,telemetry.request_body.original_request), \
+               policy_request=COALESCE(EXCLUDED.policy_request,telemetry.request_body.policy_request), \
+               final_upstream_request=COALESCE(EXCLUDED.final_upstream_request,telemetry.request_body.final_upstream_request), \
+               captured_at=clock_timestamp()",
+        )
+        .bind(request_id)
+        .bind(original_request)
+        .bind(policy_request)
+        .bind(final_upstream_request)
+        .execute(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        require_single(result.rows_affected())
+    }
+
+    pub async fn mark_body_digest_mismatch(&self, request_id: Uuid) -> Result<(), StorageError> {
+        sqlx::query("UPDATE telemetry.request_body SET body_digest_mismatch=true WHERE request_id=$1")
+            .bind(request_id)
+            .execute(&self.pool())
+            .await
+            .map_err(transaction_error)?;
+        Ok(())
+    }
+
+    pub async fn capture_response_body(
+        &self,
+        request_id: Uuid,
+        body: &[u8],
+        _complete: bool,
+        max_bytes: usize,
+    ) -> Result<(), StorageError> {
+        let body = &body[..body.len().min(max_bytes)];
+        let text = String::from_utf8_lossy(body).into_owned();
+        let final_value = serde_json::from_slice::<Value>(body)
+            .ok()
+            .or_else(|| aggregate_sse_message(body));
+        let result = sqlx::query(
+            "UPDATE telemetry.request_body rb SET upstream_response=$2,upstream_response_final=$3,captured_at=clock_timestamp() \
+             FROM telemetry.request_record r WHERE rb.request_id=$1 AND rb.request_month=r.request_month AND r.request_id=$1",
+        )
+        .bind(request_id)
+        .bind(text)
+        .bind(final_value)
+        .execute(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        if result.rows_affected() == 0 {
+            self.capture_request_body(request_id, None, None, None).await?;
+            sqlx::query(
+                "UPDATE telemetry.request_body rb SET upstream_response=$2,upstream_response_final=$3,captured_at=clock_timestamp() \
+                 FROM telemetry.request_record r WHERE rb.request_id=$1 AND rb.request_month=r.request_month AND r.request_id=$1",
+            )
+            .bind(request_id)
+            .bind(String::from_utf8_lossy(body).into_owned())
+            .bind(serde_json::from_slice::<Value>(body).ok().or_else(|| aggregate_sse_message(body)))
+            .execute(&self.pool())
+            .await
+            .map_err(transaction_error)?;
+        }
+        Ok(())
+    }
+
+    pub async fn get_request_body(&self, request_id: Uuid) -> Result<Option<RequestBodyCapture>, StorageError> {
+        let row = sqlx::query(
+            "SELECT rb.request_id,rb.original_request,rb.policy_request,rb.final_upstream_request,rb.upstream_response,rb.upstream_response_final,rb.captured_at::text AS captured_at,rb.body_digest_mismatch \
+             FROM telemetry.request_body rb WHERE rb.request_id=$1 ORDER BY rb.request_month DESC LIMIT 1",
+        )
+        .bind(request_id)
+        .fetch_optional(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        row.map(|row| {
+            Ok(RequestBodyCapture {
+                request_id: sqlx::Row::try_get(&row, "request_id").map_err(transaction_error)?,
+                original_request: sqlx::Row::try_get(&row, "original_request").map_err(transaction_error)?,
+                policy_request: sqlx::Row::try_get(&row, "policy_request").map_err(transaction_error)?,
+                final_upstream_request: sqlx::Row::try_get(&row, "final_upstream_request")
+                    .map_err(transaction_error)?,
+                upstream_response: sqlx::Row::try_get(&row, "upstream_response").map_err(transaction_error)?,
+                upstream_response_final: sqlx::Row::try_get(&row, "upstream_response_final")
+                    .map_err(transaction_error)?,
+                captured_at: sqlx::Row::try_get(&row, "captured_at").map_err(transaction_error)?,
+                body_digest_mismatch: sqlx::Row::try_get(&row, "body_digest_mismatch").map_err(transaction_error)?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn purge_expired_body_captures(&self, limit: i64) -> Result<u64, StorageError> {
+        let result = sqlx::query(
+            "DELETE FROM telemetry.request_body WHERE request_id IN (SELECT request_id FROM telemetry.request_body WHERE captured_at < clock_timestamp() - make_interval(days => COALESCE((SELECT (value #>> '{}')::int FROM ops.system_setting WHERE key='body_capture.retention_days'),7)) ORDER BY captured_at LIMIT $1)",
+        )
+        .bind(limit)
+        .execute(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        Ok(result.rows_affected())
+    }
+
     /// Reconcile stale non-terminal telemetry whose exact Group owner
     /// generation no longer exists. This is the crash/ACK-loss fallback for
     /// the normal single-transaction terminal path.
@@ -178,14 +498,15 @@ impl PgStorage {
         let result = sqlx::query(
             "WITH accepted AS (SELECT clock_timestamp() AS at), selected_price AS ( \
                SELECT p.id FROM catalog.price_entry p,accepted \
-               WHERE p.model_id=$8 AND p.effective_from<=accepted.at \
+               WHERE p.model_id=$12 AND p.effective_from<=accepted.at \
                  AND (p.effective_to IS NULL OR p.effective_to>accepted.at) \
                ORDER BY p.effective_from DESC,p.price_version DESC LIMIT 1) \
              INSERT INTO telemetry.request_record \
              (request_month,request_id,platform_key_id,group_id,owner_executor_id,owner_generation,endpoint_code, \
-              client_class_code,model_id,price_entry_id,phase_code,request_body_bytes,response_mode_code,client_commit_state_code,created_at) \
-             SELECT date_trunc('month',accepted.at)::date,$1,$2,$3,$4,$5,$6,$7,$8,selected_price.id, \
-                    'accepted',$9,$10,'uncommitted',accepted.at FROM accepted LEFT JOIN selected_price ON true",
+              client_class_code,client_os_family,os_resolution_code,os_mismatch,unknown_os,model_id,price_entry_id, \
+              phase_code,request_body_bytes,response_mode_code,client_commit_state_code,created_at) \
+             SELECT date_trunc('month',accepted.at)::date,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,selected_price.id, \
+                    'accepted',$13,$14,'uncommitted',accepted.at FROM accepted LEFT JOIN selected_price ON true",
         )
         .bind(record.request_id)
         .bind(record.platform_key_id)
@@ -194,9 +515,32 @@ impl PgStorage {
         .bind(record.owner_generation)
         .bind(record.endpoint_code.as_ref())
         .bind(record.client_class_code.as_ref())
+        .bind(record.client_os.as_str())
+        .bind(record.os_resolution.as_str())
+        .bind(record.os_mismatch)
+        .bind(matches!(
+            record.os_resolution,
+            OsResolution::SessionSticky | OsResolution::GroupDefault
+        ))
         .bind(record.model_id)
         .bind(record.request_body_bytes)
         .bind(response_mode_code(record.response_mode))
+        .execute(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        require_single(result.rows_affected())
+    }
+
+    /// Persist the exact southbound body digest before any upstream byte is written.
+    /// Retries must reproduce the same body for the request.
+    pub async fn record_upstream_body_digest(&self, request_id: Uuid, digest: &[u8; 32]) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            "UPDATE telemetry.request_record \
+             SET upstream_body_digest=COALESCE(upstream_body_digest,$2) \
+             WHERE request_id=$1 AND (upstream_body_digest IS NULL OR upstream_body_digest=$2)",
+        )
+        .bind(request_id)
+        .bind(digest.as_slice())
         .execute(&self.pool())
         .await
         .map_err(transaction_error)?;
@@ -863,6 +1207,146 @@ impl PgStorage {
     }
 }
 
+/// Build the final Anthropic message from a captured SSE event stream. Unknown
+/// event types are ignored so newer upstream events do not make the snapshot
+/// unreadable.
+pub fn aggregate_sse_message(body: &[u8]) -> Option<Value> {
+    let text = std::str::from_utf8(body)
+        .ok()?
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    if !text.contains("data:") {
+        return None;
+    }
+    let mut message: Option<serde_json::Map<String, Value>> = None;
+    let mut blocks = Vec::<Value>::new();
+    for event in text.split("\n\n") {
+        let data = event
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                if let Some(start) = value.get("message").and_then(Value::as_object) {
+                    message = Some(start.clone());
+                    if let Some(content) = message
+                        .as_ref()
+                        .and_then(|m| m.get("content"))
+                        .and_then(Value::as_array)
+                    {
+                        blocks.clone_from(content);
+                    }
+                }
+            }
+            Some("content_block_start") => {
+                if let Some(index) = value
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|v| usize::try_from(v).ok())
+                {
+                    if blocks.len() <= index {
+                        blocks.resize(index + 1, Value::Object(serde_json::Map::new()));
+                    }
+                    if let Some(block) = value.get("content_block") {
+                        blocks[index] = block.clone();
+                    }
+                }
+            }
+            Some("content_block_delta") => {
+                let Some(index) = value
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|v| usize::try_from(v).ok())
+                else {
+                    continue;
+                };
+                if blocks.len() <= index {
+                    blocks.resize(index + 1, Value::Object(serde_json::Map::new()));
+                }
+                let Some(delta) = value.get("delta").and_then(Value::as_object) else {
+                    continue;
+                };
+                match delta.get("type").and_then(Value::as_str) {
+                    Some("text_delta") => {
+                        let text = delta.get("text").and_then(Value::as_str).unwrap_or_default();
+                        let block = blocks[index].as_object_mut()?;
+                        let current = block.get("text").and_then(Value::as_str).unwrap_or_default();
+                        block.insert("text".to_owned(), Value::String(format!("{current}{text}")));
+                        block
+                            .entry("type".to_owned())
+                            .or_insert_with(|| Value::String("text".to_owned()));
+                    }
+                    Some("input_json_delta") => {
+                        let piece = delta.get("partial_json").and_then(Value::as_str).unwrap_or_default();
+                        let block = blocks[index].as_object_mut()?;
+                        let current = block
+                            .remove("_partial_json")
+                            .and_then(|value| match value {
+                                Value::String(text) => Some(text),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        let combined = format!("{current}{piece}");
+                        if let Ok(parsed) = serde_json::from_str::<Value>(&combined) {
+                            block.insert("input".to_owned(), parsed);
+                        } else {
+                            block.insert("_partial_json".to_owned(), Value::String(combined));
+                        }
+                    }
+                    Some("thinking_delta") => {
+                        let text = delta.get("thinking").and_then(Value::as_str).unwrap_or_default();
+                        let block = blocks[index].as_object_mut()?;
+                        let current = block.get("thinking").and_then(Value::as_str).unwrap_or_default();
+                        block.insert("thinking".to_owned(), Value::String(format!("{current}{text}")));
+                        block
+                            .entry("type".to_owned())
+                            .or_insert_with(|| Value::String("thinking".to_owned()));
+                    }
+                    _ => {
+                        if let Some(block) = blocks[index].as_object_mut() {
+                            block.insert("delta".to_owned(), Value::Object(delta.clone()));
+                        }
+                    }
+                }
+            }
+            Some("message_delta") => {
+                if let Some(usage) = value.get("usage") {
+                    let object = message.get_or_insert_with(serde_json::Map::new);
+                    let target = object
+                        .entry("usage")
+                        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+                    if let Some(target) = target.as_object_mut()
+                        && let Some(source) = usage.as_object()
+                    {
+                        target.extend(source.clone());
+                    }
+                }
+                if let Some(delta) = value.get("delta") {
+                    let object = message.get_or_insert_with(serde_json::Map::new);
+                    if let Some(stop_reason) = delta.get("stop_reason") {
+                        object.insert("stop_reason".to_owned(), stop_reason.clone());
+                    }
+                    if let Some(stop_sequence) = delta.get("stop_sequence") {
+                        object.insert("stop_sequence".to_owned(), stop_sequence.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut message = message?;
+    message.insert("content".to_owned(), Value::Array(blocks));
+    Some(Value::Object(message))
+}
+
 async fn close_request_attempts(
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     request_ids: &[Uuid],
@@ -1279,10 +1763,11 @@ fn transaction_error(error: sqlx::Error) -> StorageError {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, reason = "SSE fixtures must aggregate successfully")]
 mod tests {
     use gateway_domain::{UsageCompleteness, UsageSource};
 
-    use super::{decimal_usd_to_pico, quota_nanos_decimal, usage_basis_rank};
+    use super::{aggregate_sse_message, decimal_usd_to_pico, quota_nanos_decimal, usage_basis_rank};
 
     #[test]
     fn catalog_prices_convert_to_pico_usd_exactly() {
@@ -1309,5 +1794,55 @@ mod tests {
             usage_basis_rank(UsageSource::Official, UsageCompleteness::Partial)
                 > usage_basis_rank(UsageSource::CancelEstimate, UsageCompleteness::Partial)
         );
+    }
+
+    #[test]
+    fn sse_events_are_aggregated_into_a_final_message() {
+        let body = br#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":7}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+"#;
+        let message = aggregate_sse_message(body).expect("aggregated message");
+        assert_eq!(message["id"], "msg_1");
+        assert_eq!(message["content"][0]["text"], "hello");
+        assert_eq!(message["usage"]["output_tokens"], 3);
+    }
+
+    #[test]
+    fn sse_tool_and_thinking_deltas_are_accumulated() {
+        let body = br#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_2","role":"assistant","content":[]}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"x","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"1}"}}
+
+"#;
+        let message = aggregate_sse_message(body).expect("aggregated message");
+        assert_eq!(message["content"][0]["thinking"], "plan");
+        assert_eq!(message["content"][1]["input"]["a"], 1);
     }
 }

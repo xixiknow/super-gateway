@@ -37,8 +37,6 @@ pub enum ReadinessBlocker {
     TransportCore,
     /// A Bundle required by an active `Credential` is unavailable.
     RequiredBundle,
-    /// Content audit key/store is required by an active full-encrypted scope.
-    ContentAudit,
     /// The process lifecycle is not serving.
     Lifecycle,
 }
@@ -68,8 +66,6 @@ pub struct InternalReadiness {
     pub transport_core_ready: bool,
     /// All Bundles referenced by active `Credentials` are available.
     pub required_bundles_ready: bool,
-    /// Content audit dependencies are ready when a full-encrypted scope exists.
-    pub content_audit_ready: bool,
 }
 
 impl Default for InternalReadiness {
@@ -84,7 +80,6 @@ impl Default for InternalReadiness {
             active_configuration_ready: false,
             transport_core_ready: false,
             required_bundles_ready: false,
-            content_audit_ready: true,
         }
     }
 }
@@ -116,7 +111,6 @@ impl InternalReadiness {
             (self.active_configuration_ready, ReadinessBlocker::ActiveConfiguration),
             (self.transport_core_ready, ReadinessBlocker::TransportCore),
             (self.required_bundles_ready, ReadinessBlocker::RequiredBundle),
-            (self.content_audit_ready, ReadinessBlocker::ContentAudit),
         ] {
             if !ready {
                 blockers.push(blocker);
@@ -152,7 +146,6 @@ mod tests {
             active_configuration_ready: true,
             transport_core_ready: true,
             required_bundles_ready: true,
-            content_audit_ready: true,
         };
         assert_eq!(state.public(), PublicReadiness::Ready);
         state.database_schema_ready = false;

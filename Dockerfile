@@ -61,7 +61,6 @@ RUN apt-get update \
         /var/lib/super-gateway \
         /var/lib/super-gateway/bundles \
         /var/lib/super-gateway/response-tmp \
-        /var/lib/super-gateway/content-audit \
     && install -d -o root -g gateway -m 0750 /etc/super-gateway
 
 COPY --from=builder --chown=10001:10001 /out/super-gatewayd /usr/local/bin/super-gatewayd

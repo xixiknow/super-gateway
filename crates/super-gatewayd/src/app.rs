@@ -10,13 +10,13 @@ use std::{
 
 use anyhow::Context as _;
 use gateway_api::{
-    AccessGrant, AccessResolver, BusinessRateLimiter, ContentAuditMode, DataPlaneState, EndpointPermission,
+    AccessGrant, AccessResolver, BusinessRateLimiter, ClientOsSessionCache, DataPlaneState, EndpointPermission,
     KeyConcurrencyLimiter, ManagementRuntimeBridge, ManagementState, MessageDispatcher, ModelCatalog, ModelRecord,
     ProbeRateLimit, ProbeRateLimiter, ProbeState, RateLimit, SpendAuthorizer, SpendDecision, StaticModelCatalog,
     TrustedProxyConfig, VersionedDigestAccessResolver, data_plane_router, management_router,
 };
 use gateway_domain::{
-    ClientClass, Clock, Digest, GroupId, InternalReadiness, PlatformKeyId, RequestSnapshotSet, SecretBytes,
+    ClientClass, ClientOs, Clock, Digest, GroupId, InternalReadiness, PlatformKeyId, RequestSnapshotSet, SecretBytes,
     SnapshotVersion, SystemClock, UserId,
 };
 use gateway_policy::{
@@ -136,56 +136,6 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         false
     };
     readiness.update(|state| state.audit_integrity_ready = audit_integrity_ready);
-    let full_content_audit_required: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM iam.platform_key_active_config active \
-         JOIN iam.platform_key_config config ON config.id=active.config_id \
-         JOIN iam.platform_key key ON key.id=active.platform_key_id \
-         JOIN gateway.group_active_config ga ON ga.group_id=key.group_id \
-         JOIN gateway.group_config gc ON gc.id=ga.config_id \
-         LEFT JOIN security.approval_case approval ON approval.id=config.content_audit_approval_case_id \
-         WHERE key.status_code='active' AND gc.content_audit_policy_code<>'forbid' \
-           AND (gc.content_audit_policy_code='require' OR (gc.content_audit_policy_code='allow' \
-                AND config.audit_mode_code='full_encrypted' AND config.content_audit_expires_at>clock_timestamp() \
-                AND approval.state_code='consumed' AND approval.consumed_at IS NOT NULL)))",
-    )
-    .fetch_one(&storage.pool())
-    .await
-    .context("Content Audit activation projection failed")?;
-    let content_audit_store = if let Some(content) = &config.content_audit {
-        let key = read_secret_file(&content.key_file).context("Content Audit key is unavailable")?;
-        let store = gateway_services::content_audit::ContentAuditStore::new(
-            content.directory.clone(),
-            SecretBytes::new(key.expose().as_bytes().to_vec()),
-        )
-        .context("Content Audit store configuration failed")?;
-        store
-            .preflight()
-            .await
-            .context("Content Audit store preflight failed")?;
-        store
-            .sweep_staged()
-            .await
-            .context("Content Audit orphan sweep failed")?;
-        let referenced = sqlx::query_scalar::<_, String>(
-            "SELECT object_uri FROM security.content_audit_object \
-             WHERE object_uri IS NOT NULL AND storage_state_code='finalized'",
-        )
-        .fetch_all(&storage.pool())
-        .await
-        .context("Content Audit manifest projection failed")?
-        .into_iter()
-        .map(String::into_boxed_str)
-        .collect::<BTreeSet<_>>();
-        store
-            .sweep_unreferenced_finalized(&referenced)
-            .await
-            .context("Content Audit finalized-object reconciliation failed")?;
-        readiness.update(|state| state.content_audit_ready = true);
-        Some(Arc::new(store))
-    } else {
-        readiness.update(|state| state.content_audit_ready = !full_content_audit_required);
-        None
-    };
     let export_store = Arc::new(gateway_services::export::ExportArtifactStore::new(
         config.response_tmp_dir.join("exports"),
     ));
@@ -275,6 +225,10 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let provider_http = crate::provider_http::PgProviderHttpPort::new(storage.clone());
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let price_http_runtime = Some(provider_http.clone());
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    let price_http_runtime: Option<crate::operations::PriceHttp> = None;
     #[cfg(target_os = "linux")]
     let credential_maintainer: Option<Arc<dyn gateway_services::credential::CredentialMaintainer>> = {
         use gateway_services::{
@@ -334,7 +288,6 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
             transport_core,
             config.response_tmp_dir.clone(),
             clock.clone(),
-            content_audit_store.clone(),
             credential_maintainer,
         )
         .await
@@ -380,7 +333,6 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         storage.clone(),
         gateway_domain::SecretValue::new(audit_integrity_key.expose().to_owned()),
         integrity_guard.clone(),
-        content_audit_store.clone(),
         export_store.clone(),
         enrollment_executor,
         plan_collector,
@@ -388,6 +340,7 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         managed_browser_executor,
         backup_executor,
         production_dispatcher.clone(),
+        price_http_runtime,
         readiness.clone(),
         crate::operations::ProxyProbeTarget {
             observer_host: config.proxy_probe.observer_host.clone(),
@@ -415,7 +368,6 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         data_metrics,
         integrity_guard,
         export_store,
-        content_audit_store,
         management_runtime.clone(),
         Some(production_dispatcher.clone()),
         Some(transport_management_runtime),
@@ -622,22 +574,13 @@ pub(crate) async fn load_access_snapshot(
                 LEAST(c.max_concurrency,u.key_max_concurrency) AS max_concurrency, \
                 c.ruleset_artifact_id AS key_ruleset_artifact_id, \
                 gc.config_version AS group_config_version,gc.ruleset_artifact_id AS group_ruleset_artifact_id, \
-                gc.system_prompt_mode_code,gc.system_prompt_ref,gc.system_prompt_content, \
-                gc.content_audit_retention_days, \
-                CASE WHEN gc.content_audit_policy_code='allow' \
-                     THEN extract(epoch FROM c.content_audit_expires_at)::bigint ELSE NULL END \
-                     AS content_audit_expires_at_unix_seconds, \
-                CASE WHEN gc.content_audit_policy_code='require' THEN true \
-                     WHEN gc.content_audit_policy_code='allow' AND c.audit_mode_code='full_encrypted' \
-                          AND c.content_audit_expires_at>clock_timestamp() AND approval.state_code='consumed' \
-                          AND approval.consumed_at IS NOT NULL THEN true ELSE false END AS full_content_audit \
+                gc.system_prompt_mode_code,gc.system_prompt_ref,gc.system_prompt_content,gc.default_os_family \
          FROM iam.platform_key k JOIN security.encrypted_secret s ON s.id=k.secret_id \
          JOIN iam.platform_key_active_config ka ON ka.platform_key_id=k.id \
          JOIN iam.platform_key_config c ON c.id=ka.config_id \
          JOIN gateway.credential_group g ON g.id=k.group_id \
          JOIN gateway.group_active_config ga ON ga.group_id=g.id \
          JOIN gateway.group_config gc ON gc.id=ga.config_id \
-         LEFT JOIN security.approval_case approval ON approval.id=c.content_audit_approval_case_id \
          JOIN iam.user_account u ON u.id=k.owner_user_id \
          WHERE k.status_code='active' AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) \
            AND g.status_code='active' AND u.status_code='active' AND s.destroyed_at IS NULL AND s.lookup_digest IS NOT NULL",
@@ -717,8 +660,7 @@ pub(crate) async fn load_access_snapshot(
         .await?;
         let effective_ruleset = compile_effective_ruleset(group_id, key_id, group_rules.as_ref(), key_rules.as_ref())?;
         let ruleset_snapshot = ruleset_snapshot(group_rules.as_ref(), key_rules.as_ref());
-        let enforcement_snapshot =
-            SnapshotVersion::new(format!("group:{group_id}:enforcement:{group_config_version}"));
+        let enforcement_snapshot = SnapshotVersion::new(format!("group:{group_id}:enforcement:{group_config_version}"));
         let snapshots = Arc::new(RequestSnapshotSet {
             access_policy: SnapshotVersion::new(format!("key:{key_id}:config:{config_version}")),
             group_config: SnapshotVersion::new(format!("group:{group_id}:config:{group_config_version}")),
@@ -752,6 +694,7 @@ pub(crate) async fn load_access_snapshot(
                 requests_per_minute: u32::try_from(row.try_get::<i32, _>("messages_rpm")?)?,
                 burst: u32::try_from(row.try_get::<i32, _>("messages_burst")?)?,
             },
+            count_tokens_rate: RateLimit::DEFAULT_COUNT_TOKENS,
             models_rate: RateLimit {
                 requests_per_minute: u32::try_from(row.try_get::<i32, _>("models_rpm")?)?,
                 burst: u32::try_from(row.try_get::<i32, _>("models_burst")?)?,
@@ -759,11 +702,7 @@ pub(crate) async fn load_access_snapshot(
             concurrency_limit: u32::try_from(row.try_get::<i32, _>("max_concurrency")?)?,
             ip_allowlist,
             accepted_client_classes,
-            content_audit: effective_content_audit(&row)?,
-            content_audit_expires_at_unix_seconds: row
-                .try_get::<Option<i64>, _>("content_audit_expires_at_unix_seconds")?
-                .map(u64::try_from)
-                .transpose()?,
+            default_os_family: parse_client_os(&row.try_get::<String, _>("default_os_family")?)?,
             policy: Arc::new(policy),
         };
         entries.push((lookup, Arc::new(grant)));
@@ -928,14 +867,6 @@ fn load_system_policy(row: &sqlx::postgres::PgRow) -> anyhow::Result<SystemPolic
     }
 }
 
-fn effective_content_audit(row: &sqlx::postgres::PgRow) -> anyhow::Result<ContentAuditMode> {
-    if !row.try_get::<bool, _>("full_content_audit")? {
-        return Ok(ContentAuditMode::MetadataOnly);
-    }
-    let retention_days = u16::try_from(row.try_get::<i32, _>("content_audit_retention_days")?)?;
-    Ok(ContentAuditMode::FullEncrypted { retention_days })
-}
-
 async fn published_scope(
     storage: &PgStorage,
     table: &'static str,
@@ -980,11 +911,21 @@ fn initial_data_state(
         runtime,
         dispatcher,
         observability,
-        business_rates: BusinessRateLimiter::new(clock),
+        business_rates: BusinessRateLimiter::new(clock.clone()),
+        client_os_sessions: ClientOsSessionCache::new(clock, Duration::from_hours(24), 32_768),
         concurrency: KeyConcurrencyLimiter::default(),
         spend_authorizer: Arc::new(PostgresSpendAuthorizer { storage }),
         trusted_proxies: TrustedProxyConfig::default(),
         platform_body_limit_bytes: 64 * 1024 * 1024,
+    }
+}
+
+fn parse_client_os(value: &str) -> anyhow::Result<ClientOs> {
+    match value {
+        "windows" => Ok(ClientOs::Windows),
+        "macos" => Ok(ClientOs::MacOs),
+        "linux" => Ok(ClientOs::Linux),
+        _ => anyhow::bail!("unsupported client OS family"),
     }
 }
 

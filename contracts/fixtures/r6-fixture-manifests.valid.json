@@ -125,7 +125,7 @@
     "scenario": "transport_production_07",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-transport-r6-v1",
-    "content_sha256": "59d7e350e8d604b595aff86ae2f4756acfffd05891da732a388e7c8df2135657",
+    "content_sha256": "117e57e40821f6e9f38a1e92307e2fd07940d72d55d339061a022f4fa3f96afd",
     "privacy_scan": "builtin-r6:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -225,7 +225,7 @@
     "scenario": "transport_production_12",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-transport-r6-v1",
-    "content_sha256": "7ef24fd591514eac8c2cd0705161e71dca7f60931948624eb6f57de63e7e6833",
+    "content_sha256": "2761845743b597658303272d4d380ceaffdcae7418d5019823381349ae668a90",
     "privacy_scan": "builtin-r6:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -245,7 +245,7 @@
     "scenario": "transport_production_13",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-transport-r6-v1",
-    "content_sha256": "a078222cd621857d9de840f3f205fa4ab982ccd79c80749e08018e0b52e9ab03",
+    "content_sha256": "ebd39357d7f2df3937cd1c8ae39888725a76966d0f0b3feb6e6e3e569d1ed897",
     "privacy_scan": "builtin-r6:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [

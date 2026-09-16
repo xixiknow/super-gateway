@@ -10,15 +10,10 @@ import { Icon, PaneStatus, Row, SubTable } from "./detail-kit";
 
 /* ============================================================
    规则与治理(规划 §22 / 模块 08):管理不可变政策工件
-   - 规则集:结构化规则编辑 + 校验/模拟/Shadow/激活
-   - 价格:模型单价版本
+   - 规则集:结构化规则编辑 + 校验/模拟/激活
    ============================================================ */
 
-type View = "rulesets" | "prices";
-
 const RULESETS = "/admin/v1/rulesets";
-const PRICES = "/admin/v1/price-versions";
-const MODELS = "/admin/v1/models";
 const GROUPS = "/admin/v1/groups";
 
 function record(value: unknown): Row {
@@ -46,14 +41,15 @@ function shortId(value: unknown): string {
 
 const LIFECYCLE_LABELS: Record<string, [string, string]> = {
   draft: ["草稿", "Draft"], validating: ["校验中", "Validating"], eligible: ["待发布", "Eligible"],
-  shadow: ["Shadow", "Shadow"], canary: ["Canary", "Canary"], active: ["生效中", "Active"],
+  active: ["生效中", "Active"],
   retired: ["已退役", "Retired"], quarantined: ["已隔离", "Quarantined"],
 };
 
 function lifecycleLabel(value: unknown, zh: boolean): string {
   const raw = String(value ?? "");
-  const pair = LIFECYCLE_LABELS[raw];
-  return pair ? pair[zh ? 0 : 1] : raw;
+  const normalized = raw === "shadow" || raw === "canary" ? "eligible" : raw;
+  const pair = LIFECYCLE_LABELS[normalized];
+  return pair ? pair[zh ? 0 : 1] : normalized;
 }
 
 function parseJsonOrString(text: string): unknown {
@@ -66,10 +62,9 @@ function parseJsonOrString(text: string): unknown {
   }
 }
 
-interface ModelRecord { id?: unknown; display_name?: unknown; upstream_model_id?: unknown; lifecycle?: unknown }
 interface GroupRecord { id?: unknown; name?: unknown; status?: unknown }
 
-/** 生命周期动作统一执行器:If-Match 用工件版本乐观锁,高风险动作附审批单 */
+/** 生命周期动作统一执行器:If-Match 用工件版本乐观锁,仅激活需要确认 */
 function useArtifactActions(endpoint: string) {
   const { locale, t } = useI18n();
   const toast = useToast();
@@ -81,19 +76,23 @@ function useArtifactActions(endpoint: string) {
     const version = typeof row.version === "number" ? row.version : undefined;
     const id = String(row.id ?? "");
     if (version === undefined || !id) return;
-    const result = await confirm({
-      titleKey: options?.titleKey ?? "group.version.confirmBody",
-      bodyKey: "group.version.confirmBody",
-      withReason: true,
-      danger: options?.danger,
-    });
-    if (!result.ok) return;
+    let reason = "";
+    if (suffix === "activate") {
+      const result = await confirm({
+        titleKey: options?.titleKey ?? "group.version.confirmBody",
+        bodyKey: "group.version.confirmBody",
+        withReason: true,
+        danger: true,
+      });
+      if (!result.ok) return;
+      reason = result.reason;
+    }
     setBusy(true);
     try {
       await api(`${endpoint}/${encodeURIComponent(id)}:${suffix}`, {
         method: "POST",
         headers: { "If-Match": `"rev-${version}"` },
-        body: JSON.stringify({ reason: result.reason, expected_revision: version }),
+        body: JSON.stringify({ reason, expected_revision: version }),
       });
       toast.success(t("action.success"));
       await queryClient.invalidateQueries({ queryKey: [endpoint] });
@@ -447,18 +446,18 @@ function RulesetsPane() {
       <PaneStatus loading={list.isLoading} error={list.error}>
         <SubTable
           rows={rows}
-          columns={["name", "scope", "version", "lifecycle", "is_active", "rule_count", "validated_at", "shadow_started_at"]}
+          columns={["name", "scope", "version", "lifecycle", "is_active", "rule_count", "validated_at"]}
           empty={t("gov.ruleset.empty")}
           rowTail={(row) => {
             const lifecycle = String(row.lifecycle_code ?? "");
             const isActive = row.is_active === true;
             return (
               <div className="row-actions">
-                {["eligible", "shadow", "canary", "active"].includes(lifecycle) && (
+                {["eligible", "active"].includes(lifecycle) && (
                   <ActionButton tip={t("group.version.validate")} icon="check" disabled={actions.busy} onClick={() => void actions.run(row, "validate", { titleKey: "group.version.validate" })} />
                 )}
                 <ActionButton tip={t("group.version.simulate")} icon="activity" disabled={actions.busy} onClick={() => setSimulateRow(row)} />
-                {!isActive && ["eligible", "shadow", "canary"].includes(lifecycle) && (
+                {!isActive && lifecycle === "eligible" && (
                   <ActionButton tip={t("group.version.activate")} icon="play" disabled={actions.busy} onClick={() => void actions.run(row, "activate", { titleKey: "group.version.activate", danger: true })} />
                 )}
               </div>
@@ -472,164 +471,12 @@ function RulesetsPane() {
   );
 }
 
-/* ============================================================
-   价格版本:模型单价(美元/百万 token)
-   ============================================================ */
-
-function PriceCreateDialog({ latest, onClose, onCreated }: { latest: Row | undefined; onClose(): void; onCreated(): Promise<void> }) {
-  const { locale, t } = useI18n();
-  const toast = useToast();
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const models = useQuery({ queryKey: [MODELS], queryFn: () => api<ModelRecord[]>(MODELS), retry: false });
-  const published = (models.data ?? []).filter((model) => model.lifecycle === "published");
-  const latestEntries = new Map(items(latest?.entries).map((entry) => [String(entry.model_id ?? ""), entry]));
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const entries = published
-      .map((model) => {
-        const id = String(model.id ?? "");
-        const value = (field: string) => String(data.get(`${field}:${id}`) ?? "").trim();
-        return {
-          model_id: id,
-          input_per_million: value("input"),
-          output_per_million: value("output"),
-          cache_write_per_million: value("cache_write"),
-          cache_read_per_million: value("cache_read"),
-        };
-      })
-      .filter((entry) => entry.input_per_million || entry.output_per_million || entry.cache_write_per_million || entry.cache_read_per_million);
-    if (entries.length === 0 || entries.some((entry) => !entry.input_per_million || !entry.output_per_million || !entry.cache_write_per_million || !entry.cache_read_per_million)) {
-      setError(t("gov.price.entryRequired"));
-      return;
-    }
-    const effectiveFrom = String(data.get("effective_from") ?? "");
-    setError(null);
-    setSubmitting(true);
-    try {
-      await api(PRICES, {
-        method: "POST",
-        body: JSON.stringify({
-          currency: "USD",
-          entries,
-          effective_from: new Date(effectiveFrom).toISOString(),
-          source_uri: String(data.get("source_uri") ?? "").trim() || null,
-          reason: String(data.get("reason") ?? "").trim(),
-        }),
-      });
-      toast.success(t("action.success"));
-      await onCreated();
-      onClose();
-    } catch (cause) {
-      setError(rowActionError(cause, locale));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <GovernanceDialog titleKey="gov.price.createTitle" wide onClose={onClose}>
-      <form onSubmit={(event) => void submit(event)}>
-        <div className="modal-body">
-          <p className="muted">{t("gov.price.createDescription")}</p>
-          {error && <div className="alert alert-err" role="alert"><Icon name="alert" /><div><div className="ad">{error}</div></div></div>}
-          <div className="config-draft-grid">
-            <div className="field"><label htmlFor="gov-price-from">{t("gov.price.effectiveFrom")}</label>
-              <input id="gov-price-from" name="effective_from" className="inp" type="datetime-local" required /></div>
-            <div className="field"><label htmlFor="gov-price-source">{t("gov.price.sourceUri")}</label>
-              <input id="gov-price-source" name="source_uri" className="inp mono" placeholder="https://docs.claude.com/pricing" /></div>
-            <div className="field form-wide"><label htmlFor="gov-price-reason">{t("action.reason.create")}</label>
-              <input id="gov-price-reason" name="reason" className="inp" maxLength={2048} /></div>
-          </div>
-          <PaneStatus loading={models.isLoading} error={models.error}>
-            {published.length === 0
-              ? <p className="muted">{t("group.config.noPublishedModels")}</p>
-              : (
-                <div className="tbl-wrap">
-                  <table className="tbl">
-                    <thead><tr>
-                      <th scope="col">{t("gov.price.model")}</th>
-                      <th scope="col">{t("gov.price.input")}</th>
-                      <th scope="col">{t("gov.price.output")}</th>
-                      <th scope="col">{t("gov.price.cacheWrite")}</th>
-                      <th scope="col">{t("gov.price.cacheRead")}</th>
-                    </tr></thead>
-                    <tbody>
-                      {published.map((model) => {
-                        const id = String(model.id ?? "");
-                        const previous = record(latestEntries.get(id));
-                        const cell = (field: string, previousValue: unknown) => (
-                          <td><input className="inp mono gov-price-input" name={`${field}:${id}`} inputMode="decimal" placeholder="0"
-                            aria-label={`${String(model.display_name ?? id)} ${field}`} defaultValue={typeof previousValue === "string" ? previousValue : ""} /></td>
-                        );
-                        return (
-                          <tr key={id}>
-                            <td>{String(model.display_name ?? model.upstream_model_id ?? id)}</td>
-                            {cell("input", previous.input_per_million)}
-                            {cell("output", previous.output_per_million)}
-                            {cell("cache_write", previous.cache_write_per_million)}
-                            {cell("cache_read", previous.cache_read_per_million)}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-          </PaneStatus>
-          <p className="muted governance-pane-hint">{t("gov.price.unitHint")}</p>
-        </div>
-        <div className="modal-foot">
-          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={submitting}>{t("common.cancel")}</button>
-          <button type="submit" className="btn btn-primary" disabled={submitting}>{submitting ? t("common.submitting") : t("gov.price.submit")}</button>
-        </div>
-      </form>
-    </GovernanceDialog>
-  );
-}
-
-function PricePane() {
-  const { t } = useI18n();
-  const list = useQuery({ queryKey: [PRICES], queryFn: () => api<Row[]>(PRICES), retry: false });
-  const [createOpen, setCreateOpen] = useState(false);
-  const queryClient = useQueryClient();
-  const rows = items(list.data).map((row) => ({ ...row, entry_count: items(row.entries).length }));
-
-  return (
-    <GovernanceCard title={t("gov.tab.prices")} createLabel={t("gov.price.createButton")} onCreate={() => setCreateOpen(true)}
-      refreshing={list.isFetching} onRefresh={() => void list.refetch()}>
-      <p className="muted governance-pane-hint">{t("gov.price.hint")}</p>
-      <PaneStatus loading={list.isLoading} error={list.error}>
-        <SubTable
-          rows={rows}
-          columns={["price_version", "currency", "entry_count", "effective_from", "effective_to", "source_uri", "created_at"]}
-          empty={t("gov.price.empty")}
-        />
-      </PaneStatus>
-      {createOpen && <PriceCreateDialog latest={items(list.data)[0]} onClose={() => setCreateOpen(false)} onCreated={async () => { await queryClient.invalidateQueries({ queryKey: [PRICES] }); }} />}
-    </GovernanceCard>
-  );
-}
-
 export function GovernancePage() {
   const { t } = useI18n();
-  const [view, setView] = useState<View>("rulesets");
-  const tabs: { key: View; label: MessageKey }[] = [
-    { key: "rulesets", label: "gov.tab.rulesets" },
-    { key: "prices", label: "gov.tab.prices" },
-  ];
   return (
     <div className="page-stack">
       <header className="page-heading"><div><p className="eyebrow mono">GOVERNANCE / POLICY</p><h1>{t("nav.governance")}</h1><p>{t("gov.description")}</p></div></header>
-      <div className="segmented local" role="group" aria-label={t("nav.governance")}>
-        {tabs.map((tab) => (
-          <button key={tab.key} type="button" className={view === tab.key ? "active" : ""} aria-pressed={view === tab.key} onClick={() => setView(tab.key)}>{t(tab.label)}</button>
-        ))}
-      </div>
-      {view === "rulesets" && <RulesetsPane />}
-      {view === "prices" && <PricePane />}
+      <RulesetsPane />
     </div>
   );
 }

@@ -178,6 +178,11 @@
       "claude_code_cli",
       "non_claude_code_cli"
     ],
+    "client_os": [
+      "windows",
+      "macos",
+      "linux"
+    ],
     "base_session_kind": [
       "explicit",
       "anonymous_reuse"
@@ -212,7 +217,6 @@
     "step_up_purpose": [
       "key_secret_reveal",
       "irreversible_lifecycle",
-      "content_audit_access",
       "approval_decision",
       "key_provider_change",
       "backup_restore_security",
@@ -220,15 +224,8 @@
       "device_rebuild"
     ],
     "approval_kind": [
-      "key_full_audit",
-      "group_audit_policy",
-      "content_read",
-      "content_export",
       "device_rebuild",
-      "key_provider_change",
-      "legal_hold",
-      "manual_delete",
-      "enforcement_activate"
+      "key_provider_change"
     ],
     "approval_state": [
       "pending",
@@ -236,24 +233,6 @@
       "rejected",
       "expired",
       "revoked"
-    ],
-    "content_audit_requested_mode": [
-      "metadata_only",
-      "full_encrypted"
-    ],
-    "content_audit_group_policy": [
-      "allow",
-      "require",
-      "forbid"
-    ],
-    "content_audit_effective_mode": [
-      "metadata_only",
-      "full_encrypted"
-    ],
-    "content_audit_object_kind": [
-      "original_request",
-      "final_upstream_request",
-      "upstream_response"
     ],
     "job_status": [
       "queued",

@@ -5,7 +5,7 @@
     "scenario": "credential_lifecycle_01",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "96fb9351df35e52e4c34fb05768d258793f6cda4c115321366d48add96c55d8b",
+    "content_sha256": "548e4afc1ba4ae8a8f8638d43a18971c56f52449aac939fa77a9bb678860e84d",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -25,7 +25,7 @@
     "scenario": "credential_lifecycle_02",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "780a11fd92afb3c120bd4a12c82bd240fe5b64c516a9f2f1897b9be42ec1081f",
+    "content_sha256": "bf786e61def55ff6fadcbb12a0c1116da49a876ce83691c58ba34fd1fcb2154e",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -85,7 +85,7 @@
     "scenario": "credential_lifecycle_05",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "ac5a486aa357ce1a21c32b5fefa78680f1ac05421cdf0a05b9b17f724dee0648",
+    "content_sha256": "3c086c0e8401043e2966458c454a45e50e5ca5962b0c831d1fe5da34a10f049e",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -105,7 +105,7 @@
     "scenario": "credential_lifecycle_06",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "3ed17d0764d607a97ba649f2fe9d9984cc6e8c69c0c773c53f611aedd49778c3",
+    "content_sha256": "6ec199bd33e73825208b9659a221def8272659741bdc68a3ae9e7ad9538faae6",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -125,7 +125,7 @@
     "scenario": "credential_lifecycle_07",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "bdbf5961854ae4851a777778591b81ba58e9354c33d52141cef1b3c850b5d37f",
+    "content_sha256": "e3bba33101a4cf5a47dbe18c2f88d184984a506947acafce9afcee22fe6c0584",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -165,7 +165,7 @@
     "scenario": "credential_lifecycle_09",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "1d6ec0c307dd80f0902d5df73f7edd99cc8256ceb857bcbd0ddc5bada478fae1",
+    "content_sha256": "b473d99432d004c5e75aef47b32eac9b09da707e54d1e2d4df718fb2677bfd90",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -205,7 +205,7 @@
     "scenario": "credential_lifecycle_11",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "14cb75a4b9382d3e86d3304fe28302d2c67a095f53520027958992890284871b",
+    "content_sha256": "7b0a5c54589e41728511c1b8ec647abb817935ee663aa8b7825e7500d3d8d0ce",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -225,7 +225,7 @@
     "scenario": "credential_lifecycle_12",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "ed853397085190a34c83cc6448ab78ae373ebb3a7570d7aa5ad410d270fa4ca8",
+    "content_sha256": "e0d7fc2482b965e8f78e340d30b51b23778de64504e39a51e96e97a098e45dd6",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -245,7 +245,7 @@
     "scenario": "credential_lifecycle_13",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "3c1f428b73c105f79638b925d611c79910a10d04bc0a7a598af0e6e6a33ab1cd",
+    "content_sha256": "99b508ea6b5e825b8d1e90821707e429dc8b067a3b1eb3d20d5c0b793bb06a05",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -265,7 +265,7 @@
     "scenario": "credential_lifecycle_14",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "3b908e574b02bf0dd3c3a59d9c0e50a8952cd5d828d84a78a1400a31c1eb29c3",
+    "content_sha256": "162c54ae2aade835157df9e14491e1d07555ca490084040cacacd35dc94d74f2",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -285,7 +285,7 @@
     "scenario": "credential_lifecycle_15",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "aab99056f524980d9da96a30d03aab1fce667cbd814679714525ae3d23ea49db",
+    "content_sha256": "9309a9f5d7ae57f822b5a61656c0efbd966c59c403afcc86825138e46826a4ab",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -305,7 +305,7 @@
     "scenario": "credential_lifecycle_16",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "d8f22bd4cc13c3b0091756dceb4aa8e5f7499dd7663f14593e1e497e8e443ea6",
+    "content_sha256": "7c9155580b8d1749a8af72a1beff6ce0c9241790f9a848cf7b014107a6548c07",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -325,7 +325,7 @@
     "scenario": "credential_lifecycle_17",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "47533095991e29a42f2e002ab43d5ba73b79724aa053ca73d28d89273bbe4fbd",
+    "content_sha256": "89580c51a595e9d2ff7a20e6c947ca479e7aa75cb397e50c7e48968610620829",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -345,7 +345,7 @@
     "scenario": "credential_lifecycle_18",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-credential-r5-v1",
-    "content_sha256": "748819a2b1fef1a01a39287e6fbc3383c72cebf215fd639f3961134d5a320930",
+    "content_sha256": "98431d5e52155da5046bed7ec4ea1b65a7d54be95d12091cc70fd0537e88ad02",
     "privacy_scan": "builtin-r5:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [

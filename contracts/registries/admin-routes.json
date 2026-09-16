@@ -205,76 +205,6 @@
       "explicit_role": ""
     },
     {
-      "method": "get",
-      "path": "/admin/v1/content-audit/legal-holds",
-      "description": "查询或创建 Legal Hold；创建需双人审批",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/content-audit/legal-holds",
-      "description": "查询或创建 Legal Hold；创建需双人审批",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "get",
-      "path": "/admin/v1/content-audit/legal-holds/{id}",
-      "description": "范围、复核、到期与 active object count",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/content-audit/legal-holds/{id}:release",
-      "description": "双人审批后解除",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/content-audit/legal-holds/{id}:review",
-      "description": "定期复核并记录理由",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/content-audit/purge-jobs",
-      "description": "到期或管理员明确清理 Job",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "get",
-      "path": "/admin/v1/content-audit/records/{id}",
-      "description": "解密单条记录，强审计",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/content-audit/records/{id}:export",
-      "description": "双重确认后的独立导出",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "post",
-      "path": "/admin/v1/content-audit/search-sessions",
-      "description": "step-up + 理由，创建短时检索 Session",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
-      "method": "get",
-      "path": "/admin/v1/content-audit/search-sessions/{id}/records",
-      "description": "在授权范围内查询",
-      "tag": "Content Audit",
-      "explicit_role": ""
-    },
-    {
       "method": "post",
       "path": "/admin/v1/credential-enrollments",
       "description": "发起添加流程",
@@ -1004,6 +934,20 @@
     },
     {
       "method": "get",
+      "path": "/admin/v1/price-sync/status",
+      "description": "LiteLLM 价格同步状态",
+      "tag": "RuleSet 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/price-sync:run",
+      "description": "立即触发 LiteLLM 价格同步",
+      "tag": "RuleSet 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
       "path": "/admin/v1/price-versions",
       "description": "模型价格版本",
       "tag": "RuleSet 与 Price",
@@ -1109,6 +1053,13 @@
     },
     {
       "method": "get",
+      "path": "/admin/v1/requests/{id}/body",
+      "description": "请求三阶段正文与上游响应正文",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
       "path": "/admin/v1/rulesets",
       "description": "规则候选",
       "tag": "RuleSet 与 Price",
@@ -1140,6 +1091,34 @@
       "path": "/admin/v1/rulesets/{id}:validate",
       "description": "静态验证",
       "tag": "RuleSet 与 Price",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/settings/body-capture",
+      "description": "正文采集设置",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "put",
+      "path": "/admin/v1/settings/body-capture",
+      "description": "更新正文采集设置",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/settings/runtime",
+      "description": "运行时阈值设置（价格同步周期、第三方拒绝告警阈值）",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "put",
+      "path": "/admin/v1/settings/runtime",
+      "description": "更新运行时阈值设置",
+      "tag": "查询",
       "explicit_role": ""
     },
     {

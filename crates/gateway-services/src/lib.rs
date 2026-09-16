@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 //! Application services shared by data, control and background paths.
 
-pub mod content_audit;
 pub mod credential;
 pub mod credential_enrollment;
 pub mod credential_enrollment_postgres;

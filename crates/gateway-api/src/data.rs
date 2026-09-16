@@ -2,16 +2,16 @@
 #![allow(missing_docs, clippy::doc_markdown)]
 
 use std::{
-    collections::BTreeSet,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    collections::{BTreeSet, HashMap},
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
 };
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use gateway_domain::{
-    AgentId, ClientClass, GenericAdjustedRequest, GroupId, PlatformKeyId, RequestId, SecretBytes, SecretValue,
-    SessionId, UserId,
+    AgentId, ClientClass, ClientOs, GenericAdjustedRequest, GroupId, OsResolution, PlatformKeyId, RequestId,
+    SecretBytes, SecretValue, SessionId, SystemClock, UserId,
 };
 use gateway_policy::RequestPolicy;
 use gateway_services::security::lookup_digest;
@@ -24,6 +24,14 @@ use subtle::ConstantTimeEq as _;
 pub enum EndpointPermission {
     Messages,
     Models,
+}
+
+/// Northbound business endpoint carried through dispatch so transport can
+/// select the matching upstream path and telemetry label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchEndpoint {
+    Messages,
+    CountTokens,
 }
 
 /// Token-bucket configuration.
@@ -45,18 +53,12 @@ impl RateLimit {
         requests_per_minute: 60,
         burst: 10,
     };
-}
 
-/// Effective request-frozen Content Audit decision. Group policy and a valid
-/// two-person Key grant are resolved before the request can enter a queue.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ContentAuditMode {
-    /// Metadata is retained, but request/response bodies are not captured.
-    #[default]
-    MetadataOnly,
-    /// Original/final request and upstream response are encrypted for the
-    /// frozen retention period.
-    FullEncrypted { retention_days: u16 },
+    /// Independent `/v1/messages/count_tokens` default.
+    pub const DEFAULT_COUNT_TOKENS: Self = Self {
+        requests_per_minute: 120,
+        burst: 20,
+    };
 }
 
 /// Fully resolved, request-frozen Platform Key/User/Group access projection.
@@ -73,15 +75,15 @@ pub struct AccessGrant {
     /// Effective Body cap, still bounded by the platform hard cap.
     pub body_limit_bytes: usize,
     pub messages_rate: RateLimit,
+    /// Independent Count Tokens RPM bucket.
+    pub count_tokens_rate: RateLimit,
     pub models_rate: RateLimit,
     /// Per-Key hard upper bound; defaults to five when created.
     pub concurrency_limit: u32,
     /// Empty means no source-IP restriction.
     pub ip_allowlist: Vec<IpNet>,
     pub accepted_client_classes: BTreeSet<ClientClass>,
-    pub content_audit: ContentAuditMode,
-    /// Key-scoped approval expiry. Group-required full audit has no expiry.
-    pub content_audit_expires_at_unix_seconds: Option<u64>,
+    pub default_os_family: ClientOs,
     /// Frozen policy/catalog artifact set.
     pub policy: Arc<RequestPolicy>,
 }
@@ -166,7 +168,7 @@ impl AccessResolver for InMemoryAccessResolver {
         let mut found = None;
         for (digest, grant) in self.entries.iter() {
             if bool::from(digest.as_ref().ct_eq(&candidate)) {
-                found = Some(freeze_content_audit(grant));
+                found = Some(grant.clone());
             }
         }
         found
@@ -212,25 +214,11 @@ impl AccessResolver for VersionedDigestAccessResolver {
         let mut found = None;
         for (digest, grant) in self.entries.iter() {
             if bool::from(digest.as_ref().ct_eq(&candidate)) {
-                found = Some(freeze_content_audit(grant));
+                found = Some(grant.clone());
             }
         }
         found
     }
-}
-
-fn freeze_content_audit(grant: &Arc<AccessGrant>) -> Arc<AccessGrant> {
-    let expired = grant.content_audit_expires_at_unix_seconds.is_some_and(|expires| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(true, |now| now.as_secs() >= expires)
-    });
-    if !expired {
-        return grant.clone();
-    }
-    let mut frozen = grant.as_ref().clone();
-    frozen.content_audit = ContentAuditMode::MetadataOnly;
-    Arc::new(frozen)
 }
 
 /// Published model projection used by `/v1/models`.
@@ -320,6 +308,7 @@ impl std::fmt::Debug for ManagementRuntimeBridge {
 /// Credential-neutral dispatch input. Original identity headers have no representation here.
 #[derive(Clone, Debug)]
 pub struct DispatchRequest {
+    pub endpoint: DispatchEndpoint,
     pub request_id: RequestId,
     pub owner_user_id: UserId,
     pub platform_key_id: PlatformKeyId,
@@ -327,13 +316,16 @@ pub struct DispatchRequest {
     pub base_session_id: SessionId,
     pub agent_id: AgentId,
     pub client_class: ClientClass,
+    /// Client application hint used only for the controlled Claude Code x-app header.
+    pub client_app: Option<Box<str>>,
+    pub client_os: ClientOs,
+    pub os_resolution: OsResolution,
+    pub os_mismatch: bool,
     pub identity_conflict: bool,
     pub accepted_at: Duration,
     pub pre_upstream_deadline: Duration,
-    /// Effective audit policy frozen at authentication time.
-    pub content_audit: ContentAuditMode,
-    /// Exact authenticated client body before policy adjustment. It is retained
-    /// only for the optional encrypted Content Audit latch.
+    /// Exact authenticated client body before policy adjustment, retained for
+    /// the optional plaintext body capture.
     pub original_body: Arc<[u8]>,
     pub generic: Arc<GenericAdjustedRequest>,
     pub anthropic_version: Option<Box<str>>,
@@ -353,11 +345,6 @@ pub trait MessageDispatcher: Send + Sync {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DispatchError {
     Unavailable,
-    /// Request-frozen full Content Audit could not durably latch before the
-    /// first upstream byte. The client may retry after the advertised delay.
-    AuditUnavailable {
-        retry_after_seconds: u64,
-    },
     Overloaded {
         retry_after_seconds: u64,
     },
@@ -370,6 +357,7 @@ pub enum DispatchError {
     QueueFull {
         retry_after_seconds: u64,
     },
+    BundleUnavailable,
     /// A pre-upstream capacity wait exhausted the shared Group deadline. No
     /// Anthropic request byte has been written.
     PreUpstreamTimeout {
@@ -399,10 +387,90 @@ pub struct DataPlaneState {
     pub dispatcher: Arc<dyn MessageDispatcher>,
     pub observability: gateway_services::observability::DataPlaneObservability,
     pub business_rates: crate::BusinessRateLimiter,
+    pub client_os_sessions: ClientOsSessionCache,
     pub concurrency: crate::KeyConcurrencyLimiter,
     pub spend_authorizer: Arc<dyn SpendAuthorizer>,
     pub trusted_proxies: crate::TrustedProxyConfig,
     pub platform_body_limit_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ClientOsSessionEntry {
+    os: ClientOs,
+    last_seen: Duration,
+}
+
+/// Bounded, process-local OS affinity keyed by a digest of the client base session.
+#[derive(Clone)]
+pub struct ClientOsSessionCache {
+    clock: Arc<dyn gateway_domain::Clock>,
+    entries: Arc<Mutex<HashMap<Box<str>, ClientOsSessionEntry>>>,
+    ttl: Duration,
+    capacity: usize,
+}
+
+impl std::fmt::Debug for ClientOsSessionCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ClientOsSessionCache")
+            .field("ttl", &self.ttl)
+            .field("capacity", &self.capacity)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for ClientOsSessionCache {
+    fn default() -> Self {
+        Self::new(Arc::new(SystemClock::new()), Duration::from_hours(24), 32_768)
+    }
+}
+
+impl ClientOsSessionCache {
+    #[must_use]
+    pub fn new(clock: Arc<dyn gateway_domain::Clock>, ttl: Duration, capacity: usize) -> Self {
+        Self {
+            clock,
+            entries: Arc::new(Mutex::new(HashMap::new())),
+            ttl,
+            capacity: capacity.max(1),
+        }
+    }
+
+    pub(crate) fn remember(&self, session_digest: &str, os: ClientOs) {
+        let now = self.clock.now().monotonic;
+        let mut entries = lock_os_sessions(&self.entries);
+        prune_os_sessions(&mut entries, now, self.ttl);
+        if entries.len() >= self.capacity
+            && !entries.contains_key(session_digest)
+            && let Some(oldest) = entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_seen)
+                .map(|(key, _)| key.clone())
+        {
+            entries.remove(&oldest);
+        }
+        entries.insert(session_digest.into(), ClientOsSessionEntry { os, last_seen: now });
+    }
+
+    pub(crate) fn resolve(&self, session_digest: &str) -> Option<ClientOs> {
+        let now = self.clock.now().monotonic;
+        let mut entries = lock_os_sessions(&self.entries);
+        prune_os_sessions(&mut entries, now, self.ttl);
+        let entry = entries.get_mut(session_digest)?;
+        entry.last_seen = now;
+        Some(entry.os)
+    }
+}
+
+fn lock_os_sessions(
+    entries: &Mutex<HashMap<Box<str>, ClientOsSessionEntry>>,
+) -> MutexGuard<'_, HashMap<Box<str>, ClientOsSessionEntry>> {
+    entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn prune_os_sessions(entries: &mut HashMap<Box<str>, ClientOsSessionEntry>, now: Duration, ttl: Duration) {
+    let stale_before = now.saturating_sub(ttl);
+    entries.retain(|_, entry| entry.last_seen >= stale_before);
 }
 
 impl std::fmt::Debug for DataPlaneState {

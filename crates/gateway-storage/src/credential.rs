@@ -7,7 +7,7 @@
 )]
 
 use gateway_domain::{
-    AuthKind, CredentialPurpose, EgressPolicy, EnrollmentAuthMethod, EnrollmentMode, ManagementClass,
+    AuthKind, ClientOs, CredentialPurpose, EgressPolicy, EnrollmentAuthMethod, EnrollmentMode, ManagementClass,
 };
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -41,6 +41,7 @@ pub struct CredentialEnrollmentCreate {
     pub expected_credential_revision: Option<i64>,
     pub expires_in_seconds: i32,
     pub callback_window_seconds: i32,
+    pub os_family: ClientOs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +60,7 @@ pub struct EgressAllocationRequest {
     pub binding_id: Uuid,
     pub expected_enrollment_revision: i64,
     pub expected_credential_revision: i64,
+    pub os_family: ClientOs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +95,40 @@ pub struct CredentialProfileProvision {
     pub expected_enrollment_revision: i64,
     pub expected_credential_revision: i64,
     pub durable_job_fence: Option<DurableJobFence>,
+    pub os_family: ClientOs,
+}
+
+/// Provision an additional `(credential, OS)` profile for an already enrolled
+/// Credential. The egress route is cloned from the Credential's existing
+/// stable binding so every OS device of the same account leaves through the
+/// same network path.
+#[derive(Clone, Debug)]
+pub struct OsProfileProvision {
+    pub credential_id: Uuid,
+    pub os_family: ClientOs,
+    pub profile_id: Uuid,
+    pub device_identity_id: Uuid,
+    pub egress_binding_id: Uuid,
+    pub archetype_version_id: Uuid,
+    pub installation_secret_id: Uuid,
+    pub client_secret_id: Uuid,
+    pub profile_seed_secret_id: Uuid,
+    pub session_hmac_secret_id: Uuid,
+    pub installation_digest: Vec<u8>,
+    pub client_digest: Vec<u8>,
+    pub capture_cohort: String,
+    pub allocation_evidence: Value,
+}
+
+/// Outcome of [`PgStorage::provision_os_profile`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OsProfileProvisionOutcome {
+    /// A new profile, device identity and egress binding were created.
+    Provisioned,
+    /// The Credential already had a profile for this OS family.
+    AlreadyPresent,
+    /// The Credential has no stable egress binding to clone yet.
+    EgressNotReady,
 }
 
 #[derive(Clone, Debug)]
@@ -894,7 +930,7 @@ impl PgStorage {
                         .ok_or(StorageError::RevisionConflict)?;
                     let row = sqlx::query(
                         "SELECT c.revision,c.auth_state_code,c.group_id,c.auth_kind_code,c.provider_profile_id, \
-                            b.id AS egress_binding_id,b.egress_epoch \
+                            p.os_family_code,b.id AS egress_binding_id,b.egress_epoch \
                      FROM gateway.anthropic_credential c \
                      JOIN gateway.credential_profile p ON p.credential_id=c.id AND p.lifecycle_code='active' \
                      JOIN gateway.device_identity d ON d.credential_id=c.id AND d.id=p.device_identity_id \
@@ -913,11 +949,13 @@ impl PgStorage {
                     let recovery_auth_kind: String = row.try_get("auth_kind_code").map_err(transaction_error)?;
                     let recovery_provider_profile_id: Option<Uuid> =
                         row.try_get("provider_profile_id").map_err(transaction_error)?;
+                    let recovery_os_family: String = row.try_get("os_family_code").map_err(transaction_error)?;
                     if revision != expected_revision
                         || auth_state != "manual_recovery_required"
                         || group_id != command.group_id
                         || recovery_auth_kind != auth_kind_code(command.auth_kind)
                         || recovery_provider_profile_id != provider_profile_id
+                        || recovery_os_family != command.os_family.as_str()
                     {
                         return Err(StorageError::InvalidLifecycle);
                     }
@@ -936,10 +974,10 @@ impl PgStorage {
             "INSERT INTO gateway.credential_enrollment \
              (id,kind_code,state_code,next_action_code,requested_group_id,recover_credential_id, \
                expected_credential_revision,auth_method_code,pending_credential_id,egress_binding_id,egress_epoch, \
-               attempt_count,expires_at,callback_expires_at,revision,created_by,provider_profile_id,created_at,updated_at) \
+               attempt_count,expires_at,callback_expires_at,revision,created_by,provider_profile_id,os_family_code,created_at,updated_at) \
               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,0, \
                       clock_timestamp()+($12*interval '1 second'), \
-                      clock_timestamp()+($13*interval '1 second'),1,$14,$15,clock_timestamp(),clock_timestamp())",
+                      clock_timestamp()+($13*interval '1 second'),1,$14,$15,$16,clock_timestamp(),clock_timestamp())",
         )
         .bind(command.enrollment_id)
         .bind(enrollment_mode_code(command.mode))
@@ -956,6 +994,7 @@ impl PgStorage {
         .bind(command.callback_window_seconds)
         .bind(command.created_by)
         .bind(provider_profile_id)
+        .bind(command.os_family.as_str())
         .execute(&mut *transaction)
         .await
         .map_err(transaction_error)?;
@@ -990,7 +1029,7 @@ impl PgStorage {
             .await
             .map_err(transaction_error)?;
         let row = sqlx::query(
-            "SELECT e.revision AS enrollment_revision,e.auth_method_code,e.requested_group_id,c.revision AS credential_revision \
+            "SELECT e.revision AS enrollment_revision,e.auth_method_code,e.requested_group_id,e.os_family_code,c.revision AS credential_revision \
              FROM gateway.credential_enrollment e JOIN gateway.anthropic_credential c ON c.id=e.pending_credential_id \
              WHERE e.id=$1 AND c.id=$2 AND e.state_code IN ('created','resolving_egress') \
                AND e.expires_at>clock_timestamp() FOR UPDATE OF e,c",
@@ -1009,6 +1048,10 @@ impl PgStorage {
             return Err(StorageError::RevisionConflict);
         }
         let auth_method: String = row.try_get("auth_method_code").map_err(transaction_error)?;
+        let enrollment_os: String = row.try_get("os_family_code").map_err(transaction_error)?;
+        if enrollment_os != command.os_family.as_str() {
+            return Err(StorageError::RevisionConflict);
+        }
         let group_id: Uuid = row.try_get("requested_group_id").map_err(transaction_error)?;
         let policy: String = sqlx::query_scalar(
             "SELECT COALESCE((SELECT config.proxy_policy_code FROM gateway.group_active_config active \
@@ -1058,13 +1101,14 @@ impl PgStorage {
         let mode = if proxy_id.is_some() { "proxy" } else { "direct" };
         sqlx::query(
             "INSERT INTO gateway.credential_egress_binding \
-             (id,credential_id,mode_code,proxy_id,stability_code,lifecycle_code,egress_epoch,revision,created_at,updated_at) \
-             VALUES ($1,$2,$3,$4,'stable','active',1,1,clock_timestamp(),clock_timestamp())",
+             (id,credential_id,mode_code,proxy_id,stability_code,lifecycle_code,egress_epoch,revision,os_family_code,created_at,updated_at) \
+             VALUES ($1,$2,$3,$4,'stable','active',1,1,$5,clock_timestamp(),clock_timestamp())",
         )
         .bind(command.binding_id)
         .bind(command.credential_id)
         .bind(mode)
         .bind(proxy_id)
+        .bind(command.os_family.as_str())
         .execute(&mut *transaction)
         .await
         .map_err(map_capacity_error)?;
@@ -1290,11 +1334,11 @@ impl PgStorage {
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
         require_durable_job_fence(&mut transaction, command.durable_job_fence.as_ref()).await?;
         let row = sqlx::query(
-            "SELECT e.revision AS enrollment_revision,e.state_code,c.revision AS credential_revision, \
-                    c.lifecycle_state_code,b.id AS binding_id,b.egress_epoch \
+            "SELECT e.revision AS enrollment_revision,e.state_code,e.os_family_code,c.revision AS credential_revision, \
+                    c.lifecycle_state_code,b.id AS binding_id,b.egress_epoch,b.os_family_code AS binding_os_family \
              FROM gateway.credential_enrollment e JOIN gateway.anthropic_credential c ON c.id=e.pending_credential_id \
-             JOIN gateway.credential_egress_binding b ON b.credential_id=c.id \
-             WHERE e.id=$1 AND c.id=$2 FOR UPDATE OF e,c,b",
+             JOIN gateway.credential_egress_binding b ON b.credential_id=c.id AND b.os_family_code=e.os_family_code \
+              WHERE e.id=$1 AND c.id=$2 FOR UPDATE OF e,c,b",
         )
         .bind(command.enrollment_id)
         .bind(command.credential_id)
@@ -1305,22 +1349,28 @@ impl PgStorage {
         let enrollment_revision: i64 = row.try_get("enrollment_revision").map_err(transaction_error)?;
         let credential_revision: i64 = row.try_get("credential_revision").map_err(transaction_error)?;
         let enrollment_state: String = row.try_get("state_code").map_err(transaction_error)?;
+        let enrollment_os: String = row.try_get("os_family_code").map_err(transaction_error)?;
+        let binding_os: String = row.try_get("binding_os_family").map_err(transaction_error)?;
         if enrollment_revision != command.expected_enrollment_revision
             || credential_revision != command.expected_credential_revision
             || enrollment_state != "provisioning_identity"
+            || enrollment_os != command.os_family.as_str()
+            || binding_os != command.os_family.as_str()
         {
             return Err(StorageError::RevisionConflict);
         }
         let archetype_eligible: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM catalog.environment_archetype_version version \
+             JOIN catalog.environment_archetype archetype ON archetype.id=version.archetype_id \
              JOIN catalog.archetype_bundle_binding binding ON binding.archetype_version_id=version.id AND binding.state_code='active' \
              JOIN catalog.transport_bundle bundle ON bundle.id=binding.transport_bundle_id AND bundle.lifecycle_code='active' \
              JOIN catalog.archetype_capacity_policy capacity ON capacity.archetype_version_id=version.id \
-             WHERE version.id=$1 AND version.lifecycle_code='active' \
+              WHERE version.id=$1 AND version.lifecycle_code='active' AND archetype.os_family_code=$2 \
                AND (SELECT count(*) FROM gateway.credential_profile profile WHERE profile.archetype_version_id=version.id \
                     AND profile.lifecycle_code IN ('pending','active','upgrading')) < capacity.max_credentials)",
         )
         .bind(command.archetype_version_id)
+        .bind(command.os_family.as_str())
         .fetch_one(&mut *transaction)
         .await
         .map_err(transaction_error)?;
@@ -1330,8 +1380,8 @@ impl PgStorage {
         sqlx::query(
             "INSERT INTO gateway.device_identity \
              (id,credential_id,installation_id_secret_id,client_id_secret_id,profile_seed_secret_id,session_hmac_secret_id, \
-              installation_id_digest,client_id_digest,device_epoch,revision,created_at,updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,1,clock_timestamp(),clock_timestamp())",
+              installation_id_digest,client_id_digest,device_epoch,revision,os_family_code,created_at,updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,1,$9,clock_timestamp(),clock_timestamp())",
         )
         .bind(command.device_identity_id)
         .bind(command.credential_id)
@@ -1341,6 +1391,7 @@ impl PgStorage {
         .bind(command.session_hmac_secret_id)
         .bind(&command.installation_digest)
         .bind(&command.client_digest)
+        .bind(command.os_family.as_str())
         .execute(&mut *transaction)
         .await
         .map_err(transaction_error)?;
@@ -1349,14 +1400,16 @@ impl PgStorage {
         sqlx::query(
             "INSERT INTO gateway.credential_profile \
              (id,credential_id,archetype_version_id,device_identity_id,egress_binding_id,profile_epoch,lifecycle_code, \
+              os_family_code, \
               capture_cohort,session_derivation_version,allocation_evidence,revision,created_at,updated_at) \
-             VALUES ($1,$2,$3,$4,$5,1,'active',$6,1,$7,1,clock_timestamp(),clock_timestamp())",
+             VALUES ($1,$2,$3,$4,$5,1,'active',$6,$7,1,$8,1,clock_timestamp(),clock_timestamp())",
         )
         .bind(command.profile_id)
         .bind(command.credential_id)
         .bind(command.archetype_version_id)
         .bind(command.device_identity_id)
         .bind(binding_id)
+        .bind(command.os_family.as_str())
         .bind(&command.capture_cohort)
         .bind(&command.allocation_evidence)
         .execute(&mut *transaction)
@@ -1391,6 +1444,177 @@ impl PgStorage {
         )
         .await?;
         transaction.commit().await.map_err(transaction_error)
+    }
+
+    /// Credentials of one Group that are eligible for scheduling but lack a
+    /// profile for `os_family`.
+    pub async fn credentials_missing_os_profile(
+        &self,
+        group_id: Uuid,
+        os_family: ClientOs,
+    ) -> Result<Vec<Uuid>, StorageError> {
+        sqlx::query_scalar(
+            "SELECT c.id FROM gateway.anthropic_credential c \
+             WHERE c.group_id=$1 AND c.attachment_state_code='attached' AND c.lifecycle_state_code='active' \
+               AND c.account_uuid IS NOT NULL \
+               AND NOT EXISTS(SELECT 1 FROM gateway.credential_profile p \
+                              WHERE p.credential_id=c.id AND p.os_family_code=$2 \
+                                AND p.lifecycle_code IN ('pending','active','upgrading')) \
+             ORDER BY c.created_at,c.id",
+        )
+        .bind(group_id)
+        .bind(os_family.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(transaction_error)
+    }
+
+    /// Create the `(credential, OS)` profile triple in one transaction. Secrets
+    /// must already be stored; callers destroy them when this returns an error
+    /// or [`OsProfileProvisionOutcome::AlreadyPresent`] /
+    /// [`OsProfileProvisionOutcome::EgressNotReady`].
+    pub async fn provision_os_profile(
+        &self,
+        command: &OsProfileProvision,
+    ) -> Result<OsProfileProvisionOutcome, StorageError> {
+        if command.installation_digest.is_empty() || command.client_digest.is_empty() {
+            return Err(StorageError::InvalidLifecycle);
+        }
+        let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
+        let credential = sqlx::query(
+            "SELECT revision,lifecycle_state_code,attachment_state_code FROM gateway.anthropic_credential \
+             WHERE id=$1 FOR UPDATE",
+        )
+        .bind(command.credential_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(transaction_error)?
+        .ok_or(StorageError::InvalidLifecycle)?;
+        let lifecycle: String = credential.try_get("lifecycle_state_code").map_err(transaction_error)?;
+        let attachment: String = credential.try_get("attachment_state_code").map_err(transaction_error)?;
+        if lifecycle != "active" || attachment != "attached" {
+            return Err(StorageError::InvalidLifecycle);
+        }
+        let credential_revision: i64 = credential.try_get("revision").map_err(transaction_error)?;
+        let existing: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM gateway.credential_profile WHERE credential_id=$1 AND os_family_code=$2)",
+        )
+        .bind(command.credential_id)
+        .bind(command.os_family.as_str())
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(transaction_error)?;
+        if existing {
+            transaction.rollback().await.map_err(transaction_error)?;
+            return Ok(OsProfileProvisionOutcome::AlreadyPresent);
+        }
+        let archetype_matches: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM catalog.environment_archetype_version version \
+             JOIN catalog.environment_archetype root ON root.id=version.archetype_id \
+             WHERE version.id=$1 AND version.lifecycle_code='active' AND root.os_family_code=$2)",
+        )
+        .bind(command.archetype_version_id)
+        .bind(command.os_family.as_str())
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(transaction_error)?;
+        if !archetype_matches {
+            return Err(StorageError::InvalidLifecycle);
+        }
+        // Clone the route of the Credential's stable binding: same proxy or
+        // direct egress, fresh epoch for the new OS device.
+        let Some(source) = sqlx::query(
+            "SELECT id,mode_code,proxy_id FROM gateway.credential_egress_binding \
+             WHERE credential_id=$1 AND lifecycle_code='active' AND stability_code='stable' \
+             ORDER BY CASE os_family_code WHEN 'windows' THEN 0 WHEN 'macos' THEN 1 ELSE 2 END LIMIT 1",
+        )
+        .bind(command.credential_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(transaction_error)?
+        else {
+            transaction.rollback().await.map_err(transaction_error)?;
+            return Ok(OsProfileProvisionOutcome::EgressNotReady);
+        };
+        let source_id: Uuid = source.try_get("id").map_err(transaction_error)?;
+        let mode: String = source.try_get("mode_code").map_err(transaction_error)?;
+        let proxy_id: Option<Uuid> = source.try_get("proxy_id").map_err(transaction_error)?;
+        let cloned = sqlx::query(
+            "INSERT INTO gateway.credential_egress_binding \
+             (id,credential_id,mode_code,proxy_id,stability_code,lifecycle_code,egress_epoch,expected_egress_ip, \
+              observed_egress_ip,revision,os_family_code,created_at,updated_at) \
+             SELECT $1,$2,mode_code,proxy_id,'stable','active',1,expected_egress_ip,observed_egress_ip,1,$3, \
+                    clock_timestamp(),clock_timestamp() \
+             FROM gateway.credential_egress_binding WHERE id=$4",
+        )
+        .bind(command.egress_binding_id)
+        .bind(command.credential_id)
+        .bind(command.os_family.as_str())
+        .bind(source_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(transaction_error)?;
+        if cloned.rows_affected() != 1 {
+            return Err(StorageError::TransactionFailed);
+        }
+        sqlx::query(
+            "INSERT INTO gateway.device_identity \
+             (id,credential_id,installation_id_secret_id,client_id_secret_id,profile_seed_secret_id,session_hmac_secret_id, \
+              installation_id_digest,client_id_digest,device_epoch,revision,os_family_code,created_at,updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,1,$9,clock_timestamp(),clock_timestamp())",
+        )
+        .bind(command.device_identity_id)
+        .bind(command.credential_id)
+        .bind(command.installation_secret_id)
+        .bind(command.client_secret_id)
+        .bind(command.profile_seed_secret_id)
+        .bind(command.session_hmac_secret_id)
+        .bind(&command.installation_digest)
+        .bind(&command.client_digest)
+        .bind(command.os_family.as_str())
+        .execute(&mut *transaction)
+        .await
+        .map_err(transaction_error)?;
+        sqlx::query(
+            "INSERT INTO gateway.credential_profile \
+             (id,credential_id,archetype_version_id,device_identity_id,egress_binding_id,profile_epoch,lifecycle_code, \
+              os_family_code,capture_cohort,session_derivation_version,allocation_evidence,revision,created_at,updated_at) \
+             VALUES ($1,$2,$3,$4,$5,1,'active',$6,$7,1,$8,1,clock_timestamp(),clock_timestamp())",
+        )
+        .bind(command.profile_id)
+        .bind(command.credential_id)
+        .bind(command.archetype_version_id)
+        .bind(command.device_identity_id)
+        .bind(command.egress_binding_id)
+        .bind(command.os_family.as_str())
+        .bind(&command.capture_cohort)
+        .bind(&command.allocation_evidence)
+        .execute(&mut *transaction)
+        .await
+        .map_err(transaction_error)?;
+        let next_revision: i64 = sqlx::query_scalar(
+            "UPDATE gateway.anthropic_credential SET revision=revision+1,updated_at=clock_timestamp() \
+             WHERE id=$1 AND revision=$2 RETURNING revision",
+        )
+        .bind(command.credential_id)
+        .bind(credential_revision)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(transaction_error)?;
+        append_credential_event(
+            &mut transaction,
+            command.credential_id,
+            None,
+            None,
+            "os_profile_provisioned",
+            next_revision,
+            json!({"profile_id": command.profile_id, "device_identity_id": command.device_identity_id,
+                   "egress_binding_id": command.egress_binding_id, "archetype_version_id": command.archetype_version_id,
+                   "os_family": command.os_family.as_str(), "egress_mode": mode, "proxy_id": proxy_id}),
+        )
+        .await?;
+        transaction.commit().await.map_err(transaction_error)?;
+        Ok(OsProfileProvisionOutcome::Provisioned)
     }
 
     pub async fn create_or_join_maintenance_operation(
@@ -2402,8 +2626,10 @@ impl PgStorage {
                     c.capacity_state_code,c.transport_state_code,c.management_class_code,c.token_version,c.revision, \
                     p.profile_epoch,d.device_epoch,b.egress_epoch \
              FROM gateway.anthropic_credential c LEFT JOIN gateway.credential_profile p ON p.credential_id=c.id \
-             LEFT JOIN gateway.device_identity d ON d.credential_id=c.id \
-             LEFT JOIN gateway.credential_egress_binding b ON b.credential_id=c.id WHERE c.id=$1",
+             LEFT JOIN gateway.device_identity d ON d.id=p.device_identity_id \
+             LEFT JOIN gateway.credential_egress_binding b ON b.id=p.egress_binding_id WHERE c.id=$1 \
+             ORDER BY CASE p.os_family_code WHEN 'windows' THEN 0 WHEN 'macos' THEN 1 WHEN 'linux' THEN 2 ELSE 3 END, p.id \
+             LIMIT 1",
         )
         .bind(credential_id)
         .fetch_optional(&self.pool)
@@ -2459,9 +2685,14 @@ impl PgStorage {
              JOIN gateway.device_identity d ON d.id=p.device_identity_id \
              JOIN gateway.credential_egress_binding b ON b.id=p.egress_binding_id \
              JOIN catalog.environment_archetype_version current_version ON current_version.id=p.archetype_version_id \
-             WHERE c.id=$1 FOR UPDATE OF c,p,d,b",
+             JOIN catalog.environment_archetype_version target_version ON target_version.id=$2 \
+             JOIN catalog.environment_archetype target_root ON target_root.id=target_version.archetype_id \
+               AND target_root.os_family_code=p.os_family_code \
+             WHERE c.id=$1 AND p.profile_epoch=$3 FOR UPDATE OF c,p,d,b",
         )
         .bind(command.credential_id)
+        .bind(command.target_archetype_version_id)
+        .bind(command.expected_profile_epoch)
         .fetch_optional(&mut *transaction)
         .await
         .map_err(transaction_error)?
@@ -2641,9 +2872,11 @@ impl PgStorage {
              FROM gateway.anthropic_credential c JOIN gateway.credential_profile p ON p.credential_id=c.id \
              JOIN gateway.device_identity d ON d.id=p.device_identity_id \
              JOIN gateway.credential_egress_binding b ON b.id=p.egress_binding_id \
-             WHERE c.id=$1 FOR UPDATE OF c,p,d,b",
+             WHERE c.id=$1 AND p.profile_epoch=$2 AND d.device_epoch=$3 FOR UPDATE OF c,p,d,b",
         )
         .bind(command.credential_id)
+        .bind(command.expected_profile_epoch)
+        .bind(command.expected_device_epoch)
         .fetch_optional(&mut **transaction)
         .await
         .map_err(transaction_error)?
@@ -2835,15 +3068,18 @@ impl PgStorage {
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
         let row = sqlx::query(
             "SELECT c.revision,c.lifecycle_state_code,c.auth_state_code,c.management_class_code,c.active_auth_version_id, \
-                    c.attachment_state_code,g.status_code AS group_state,p.lifecycle_code AS profile_state, \
-                    b.lifecycle_code AS egress_state,version.lifecycle_code AS archetype_state,bundle.lifecycle_code AS bundle_state \
+                    c.attachment_state_code,g.status_code AS group_state \
              FROM gateway.anthropic_credential c JOIN gateway.credential_group g ON g.id=c.group_id \
-             JOIN gateway.credential_profile p ON p.credential_id=c.id \
-             JOIN gateway.credential_egress_binding b ON b.id=p.egress_binding_id \
-             JOIN catalog.environment_archetype_version version ON version.id=p.archetype_version_id \
-             JOIN catalog.archetype_bundle_binding pointer ON pointer.archetype_version_id=version.id AND pointer.state_code='active' \
-             JOIN catalog.transport_bundle bundle ON bundle.id=pointer.transport_bundle_id \
-             WHERE c.id=$1 FOR UPDATE OF c,p,b",
+             WHERE c.id=$1 AND EXISTS( \
+               SELECT 1 FROM gateway.credential_profile p \
+               JOIN gateway.credential_egress_binding b ON b.id=p.egress_binding_id \
+               JOIN catalog.environment_archetype_version version ON version.id=p.archetype_version_id \
+               JOIN catalog.archetype_bundle_binding pointer ON pointer.archetype_version_id=version.id AND pointer.state_code='active' \
+               JOIN catalog.transport_bundle bundle ON bundle.id=pointer.transport_bundle_id \
+               WHERE p.credential_id=c.id AND p.lifecycle_code='active' AND b.lifecycle_code='active' \
+                 AND version.lifecycle_code IN ('canary','active') \
+                 AND bundle.lifecycle_code IN ('canary','active')) \
+             FOR UPDATE OF c",
         )
         .bind(command.credential_id)
         .fetch_optional(&mut *transaction)
@@ -2870,16 +3106,6 @@ impl PgStorage {
                 .is_some()
             && row.try_get::<String, _>("attachment_state_code").ok().as_deref() == Some("attached")
             && row.try_get::<String, _>("group_state").ok().as_deref() == Some("active")
-            && row.try_get::<String, _>("profile_state").ok().as_deref() == Some("active")
-            && row.try_get::<String, _>("egress_state").ok().as_deref() == Some("active")
-            && row
-                .try_get::<String, _>("archetype_state")
-                .ok()
-                .is_some_and(|state| matches!(state.as_str(), "canary" | "active"))
-            && row
-                .try_get::<String, _>("bundle_state")
-                .ok()
-                .is_some_and(|state| matches!(state.as_str(), "canary" | "active"))
             && (management != "fully_managed" || strategy_healthy);
         if !ready {
             return Err(StorageError::InvalidLifecycle);

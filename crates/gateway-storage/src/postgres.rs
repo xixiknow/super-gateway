@@ -30,7 +30,7 @@ use crate::{StorageError, StorageHealth, StorageState};
 /// First schema version accepted by this binary.
 pub const MINIMUM_SCHEMA_VERSION: i64 = 20_260_824_000_100;
 /// Latest schema version understood by this binary.
-pub const CURRENT_SCHEMA_VERSION: i64 = 20_260_824_004_300;
+pub const CURRENT_SCHEMA_VERSION: i64 = 20_260_907_000_100;
 const BOOTSTRAP_ADVISORY_LOCK: i64 = 0x4757_4254_5354_5250;
 const BUSINESS_KEY_ADVISORY_LOCK: i64 = 0x4757_4255_534b_4559;
 const AUDIT_SEAL_ADVISORY_LOCK: i64 = 0x4757_4155_4453_454c;
@@ -877,10 +877,10 @@ impl PgStorage {
             return Err(StorageError::RevisionConflict);
         }
         let existing = sqlx::query(
-            "SELECT id,egress_epoch FROM gateway.credential_egress_binding WHERE credential_id=$1 FOR UPDATE",
+            "SELECT id,egress_epoch,proxy_id FROM gateway.credential_egress_binding WHERE credential_id=$1 FOR UPDATE",
         )
         .bind(credential_id)
-        .fetch_optional(&mut *transaction)
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|_| StorageError::TransactionFailed)?;
         let proxy = sqlx::query(
@@ -919,24 +919,54 @@ impl PgStorage {
         if active_bindings >= i64::from(max_bindings) {
             return Err(StorageError::CapacityExceeded);
         }
-        let next_epoch = if let Some(row) = existing {
-            let existing_id: Uuid = row.try_get("id").map_err(|_| StorageError::TransactionFailed)?;
-            let current_epoch: i64 = row
-                .try_get("egress_epoch")
-                .map_err(|_| StorageError::TransactionFailed)?;
-            let existing_proxy: Option<Uuid> =
-                sqlx::query_scalar("SELECT proxy_id FROM gateway.credential_egress_binding WHERE credential_id=$1")
-                    .bind(credential_id)
-                    .fetch_one(&mut *transaction)
-                    .await
-                    .map_err(|_| StorageError::TransactionFailed)?;
-            if existing_proxy == Some(proxy_id) {
+        let next_epoch = if existing.is_empty() {
+            sqlx::query(
+                "INSERT INTO gateway.credential_egress_binding \
+                 (id,credential_id,mode_code,proxy_id,stability_code,lifecycle_code,egress_epoch,revision,created_at,updated_at) \
+                 VALUES ($1,$2,'proxy',$3,'pending','pending',1,1,clock_timestamp(),clock_timestamp())",
+            )
+            .bind(binding_id)
+            .bind(credential_id)
+            .bind(proxy_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| StorageError::TransactionFailed)?;
+            let next_revision: i64 = sqlx::query_scalar(
+                "UPDATE gateway.anthropic_credential SET revision=revision+1,updated_at=clock_timestamp() \
+                 WHERE id=$1 RETURNING revision",
+            )
+            .bind(credential_id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| StorageError::TransactionFailed)?;
+            super::credential::append_credential_event(
+                &mut transaction,
+                credential_id,
+                None,
+                None,
+                "egress_reserved",
+                next_revision,
+                json!({"binding_id": binding_id, "proxy_id": proxy_id, "egress_epoch": 1}),
+            )
+            .await?;
+            1
+        } else {
+            let already_bound = existing
+                .iter()
+                .all(|row| row.try_get::<Option<Uuid>, _>("proxy_id").ok().flatten() == Some(proxy_id));
+            let current_epoch = existing
+                .iter()
+                .filter_map(|row| row.try_get::<i64, _>("egress_epoch").ok())
+                .max()
+                .ok_or(StorageError::TransactionFailed)?;
+            if already_bound {
                 transaction
                     .commit()
                     .await
                     .map_err(|_| StorageError::TransactionFailed)?;
                 return Ok(current_epoch);
             }
+            let existing_id: Uuid = existing[0].try_get("id").map_err(|_| StorageError::TransactionFailed)?;
             let next = current_epoch.checked_add(1).ok_or(StorageError::TransactionFailed)?;
             sqlx::query(
                 "UPDATE gateway.credential_egress_binding SET mode_code='proxy',proxy_id=$2, \
@@ -950,16 +980,16 @@ impl PgStorage {
             .execute(&mut *transaction)
             .await
             .map_err(|_| StorageError::TransactionFailed)?;
-            if let Some(profile) = sqlx::query(
+            let profiles = sqlx::query(
                 "UPDATE gateway.credential_profile SET profile_epoch=profile_epoch+1,revision=revision+1, \
                  updated_at=clock_timestamp() WHERE credential_id=$1 \
                  RETURNING id,archetype_version_id,profile_epoch",
             )
             .bind(credential_id)
-            .fetch_optional(&mut *transaction)
+            .fetch_all(&mut *transaction)
             .await
-            .map_err(|_| StorageError::TransactionFailed)?
-            {
+            .map_err(|_| StorageError::TransactionFailed)?;
+            for profile in profiles {
                 let profile_id: Uuid = profile.try_get("id").map_err(|_| StorageError::TransactionFailed)?;
                 let archetype_id: Uuid = profile
                     .try_get("archetype_version_id")
@@ -1005,37 +1035,6 @@ impl PgStorage {
             )
             .await?;
             next
-        } else {
-            sqlx::query(
-                "INSERT INTO gateway.credential_egress_binding \
-                 (id,credential_id,mode_code,proxy_id,stability_code,lifecycle_code,egress_epoch,revision,created_at,updated_at) \
-                 VALUES ($1,$2,'proxy',$3,'pending','pending',1,1,clock_timestamp(),clock_timestamp())",
-            )
-            .bind(binding_id)
-            .bind(credential_id)
-            .bind(proxy_id)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|_| StorageError::TransactionFailed)?;
-            let next_revision: i64 = sqlx::query_scalar(
-                "UPDATE gateway.anthropic_credential SET revision=revision+1,updated_at=clock_timestamp() \
-                 WHERE id=$1 RETURNING revision",
-            )
-            .bind(credential_id)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(|_| StorageError::TransactionFailed)?;
-            super::credential::append_credential_event(
-                &mut transaction,
-                credential_id,
-                None,
-                None,
-                "egress_reserved",
-                next_revision,
-                json!({"binding_id": binding_id, "proxy_id": proxy_id, "egress_epoch": 1}),
-            )
-            .await?;
-            1
         };
         transaction
             .commit()
@@ -1186,6 +1185,49 @@ impl PgStorage {
         let event_id = append_audit_outbox(&mut transaction, record).await?;
         transaction.commit().await.map_err(transaction_error)?;
         Ok(event_id)
+    }
+
+    /// Mark active platform keys whose configured expiration has passed and
+    /// append one immutable audit event for every transition.
+    pub async fn expire_platform_keys(&self, limit: i64) -> Result<u64, StorageError> {
+        if limit < 1 {
+            return Ok(0);
+        }
+        let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
+        let rows = sqlx::query(
+            "UPDATE iam.platform_key SET status_code='expired',revision=revision+1,updated_at=clock_timestamp() \
+             WHERE id IN (SELECT id FROM iam.platform_key \
+                          WHERE status_code='active' AND expires_at IS NOT NULL \
+                            AND expires_at<=clock_timestamp() ORDER BY expires_at,id FOR UPDATE SKIP LOCKED LIMIT $1) \
+             RETURNING id,revision",
+        )
+        .bind(limit)
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(transaction_error)?;
+        for row in &rows {
+            let key_id: Uuid = row.try_get("id").map_err(transaction_error)?;
+            let revision: i64 = row.try_get("revision").map_err(transaction_error)?;
+            self.append_audit_outbox_in(
+                &mut transaction,
+                &AuditOutboxRecord {
+                    actor_type: "system".to_owned(),
+                    actor_id: None,
+                    action: "platform_key_expired".to_owned(),
+                    object_type: "platform_key".to_owned(),
+                    object_id: Some(key_id.to_string()),
+                    outcome: "success".to_owned(),
+                    redacted_detail: json!({"reason":"expires_at_reached"}),
+                    topic: "platform_key.expired".to_owned(),
+                    aggregate_id: key_id,
+                    aggregate_revision: revision,
+                    payload: json!({"object_id":key_id,"revision":revision,"status":"expired"}),
+                },
+            )
+            .await?;
+        }
+        transaction.commit().await.map_err(transaction_error)?;
+        u64::try_from(rows.len()).map_err(|_| StorageError::TransactionFailed)
     }
 
     /// Claim runnable durable jobs with `SKIP LOCKED` and a generation fence.

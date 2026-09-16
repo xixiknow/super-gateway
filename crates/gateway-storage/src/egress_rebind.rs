@@ -52,11 +52,14 @@ impl PgStorage {
                AND job.state_code='leased' AND job.lease_generation=$3 \
                AND credential.lifecycle_state_code IN ('active','disabled') \
                AND profile.lifecycle_code='active' AND binding.lifecycle_code='active' \
+               AND profile.profile_epoch=$4 AND binding.egress_epoch=$5 \
              FOR UPDATE OF job,credential,profile,device,binding",
         )
         .bind(commit.credential_id)
         .bind(commit.job_id)
         .bind(commit.generation)
+        .bind(commit.expected_profile_epoch)
+        .bind(commit.expected_egress_epoch)
         .fetch_optional(&mut *transaction)
         .await
         .map_err(map_sqlx)?

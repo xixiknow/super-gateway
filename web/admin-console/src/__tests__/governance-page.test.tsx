@@ -80,7 +80,7 @@ describe("governance page", () => {
     });
   });
 
-  it("shows release-chain actions for an eligible validated ruleset and sends validate with If-Match", async () => {
+  it("shows lifecycle actions for an eligible ruleset and validates without a confirmation step", async () => {
     const fetchMock = mockApi([{
       id: "ruleset-1", kind: "ruleset", version: 3, lifecycle: "eligible", scope_type: "group", scope_id: GROUP_ID,
       payload: { name: "默认规则", rules: [{ id: "r1" }], source_refs: [] },
@@ -95,9 +95,7 @@ describe("governance page", () => {
     expect(screen.getByRole("button", { name: "激活" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "校验" }));
-    const confirm = await screen.findByRole("alertdialog", { name: "校验" });
-    await user.type(within(confirm).getByLabelText(/操作原因/), "上线前校验");
-    await user.click(within(confirm).getByRole("button", { name: "确认" }));
+    expect(screen.queryByRole("alertdialog", { name: "校验" })).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([path, init]) => String(path).includes("/admin/v1/rulesets/ruleset-1:validate") && init?.method === "POST")).toBe(true);
@@ -105,6 +103,6 @@ describe("governance page", () => {
     const call = fetchMock.mock.calls.find(([path]) => String(path).includes(":validate"));
     const headers = new Headers(call?.[1]?.headers);
     expect(headers.get("If-Match")).toBe('"rev-3"');
-    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ reason: "上线前校验", expected_revision: 3 });
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ reason: "", expected_revision: 3 });
   });
 });

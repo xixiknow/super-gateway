@@ -23,14 +23,12 @@ use std::{
 
 #[cfg(target_os = "linux")]
 use axum::http::Method;
-use base64::Engine as _;
 #[cfg(target_os = "linux")]
-use base64::engine::general_purpose::STANDARD;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gateway_domain::SecretValue;
 #[cfg(target_os = "linux")]
 use gateway_domain::{EgressRouteSnapshot, SecretBytes};
 use gateway_services::ReadinessCoordinator;
-use gateway_services::content_audit::{AuditCaptureKind, AuditObjectContext, AuditObjectManifest, ContentAuditStore};
 use gateway_services::credential::CredentialServiceError;
 use gateway_services::export::{
     ExportArtifactContext, ExportArtifactStore, ExportError, ExportFormat, UsageExportRow, encode_usage_export,
@@ -67,10 +65,18 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::price_sync;
 use crate::production_dispatcher::ProductionDispatcher;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use crate::provider_http::PgProviderHttpPort;
 #[cfg(target_os = "linux")]
 use crate::provider_http::resolve_proxy_route;
 pub(crate) type ManagedBrowserExecutor = crate::managed_browser::CommandManagedBrowserExecutor;
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) type PriceHttp = Arc<PgProviderHttpPort>;
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+type PriceHttp = ();
 
 const WORKER_LEASE_SECONDS: i32 = DEFAULT_JOB_LEASE.as_secs() as i32;
 
@@ -219,7 +225,6 @@ pub fn spawn_operations_runtime(
     storage: Arc<PgStorage>,
     audit_integrity_key: SecretValue,
     integrity_guard: IntegrityGuard,
-    content_audit_store: Option<Arc<ContentAuditStore>>,
     export_store: Arc<ExportArtifactStore>,
     enrollment_executor: Arc<dyn CredentialEnrollmentJobExecutor>,
     plan_collector: Option<Arc<PgPlanCollector>>,
@@ -227,6 +232,7 @@ pub fn spawn_operations_runtime(
     managed_browser_executor: Option<Arc<ManagedBrowserExecutor>>,
     backup_executor: Arc<dyn BackupOperationsExecutor>,
     credential_runtime: Arc<ProductionDispatcher>,
+    price_http: Option<PriceHttp>,
     readiness: ReadinessCoordinator,
     proxy_probe_target: ProxyProbeTarget,
     cancellation: &CancellationToken,
@@ -248,7 +254,6 @@ pub fn spawn_operations_runtime(
     let jobs = tokio::spawn(async move {
         run_job_loop(
             job_storage,
-            content_audit_store,
             export_store,
             enrollment_executor,
             plan_collector,
@@ -256,6 +261,7 @@ pub fn spawn_operations_runtime(
             managed_browser_executor,
             backup_executor,
             credential_runtime,
+            price_http,
             readiness,
             proxy_probe_target,
             job_cancel,
@@ -381,7 +387,6 @@ async fn maintain_freshness_alert(storage: &PgStorage, fingerprint: &str, fresh:
 
 async fn run_job_loop(
     storage: Arc<PgStorage>,
-    content_audit_store: Option<Arc<ContentAuditStore>>,
     export_store: Arc<ExportArtifactStore>,
     enrollment_executor: Arc<dyn CredentialEnrollmentJobExecutor>,
     plan_collector: Option<Arc<PgPlanCollector>>,
@@ -389,6 +394,7 @@ async fn run_job_loop(
     managed_browser_executor: Option<Arc<ManagedBrowserExecutor>>,
     backup_executor: Arc<dyn BackupOperationsExecutor>,
     credential_runtime: Arc<ProductionDispatcher>,
+    price_http: Option<PriceHttp>,
     readiness: ReadinessCoordinator,
     proxy_probe_target: ProxyProbeTarget,
     cancellation: CancellationToken,
@@ -398,6 +404,7 @@ async fn run_job_loop(
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut next_plan_scan = tokio::time::Instant::now();
     let mut next_enrollment_expiry_scan = tokio::time::Instant::now();
+    let mut next_price_scan = tokio::time::Instant::now();
     loop {
         tokio::select! {
             () = cancellation.cancelled() => return,
@@ -412,7 +419,16 @@ async fn run_job_loop(
                     if let Err(error) = storage.expire_credential_enrollments(100).await {
                         tracing::warn!(event="credential_enrollment_expiry_failed", error=%error);
                     }
+                    if let Err(error) = storage.expire_platform_keys(100).await {
+                        tracing::warn!(event="platform_key_expiry_failed", error=%error);
+                    }
                     next_enrollment_expiry_scan = tokio::time::Instant::now() + Duration::from_secs(30);
+                }
+                if price_http.is_some() && tokio::time::Instant::now() >= next_price_scan {
+                    if let Err(error) = schedule_due_price_sync(&storage).await {
+                        tracing::warn!(event="price_sync_schedule_failed", error=%error);
+                    }
+                    next_price_scan = tokio::time::Instant::now() + Duration::from_secs(60);
                 }
                 if let Ok(expired) = storage.expire_usage_exports(100).await {
                     for object_uri in expired {
@@ -421,12 +437,14 @@ async fn run_job_loop(
                         }
                     }
                 }
+                if let Err(error) = storage.purge_expired_body_captures(1000).await {
+                    tracing::warn!(event="body_capture_retention_cleanup_failed", error=%error);
+                }
                 match storage.claim_jobs(&worker_id, 16, WORKER_LEASE_SECONDS).await {
                     Ok(jobs) => {
                         let mut in_flight = JoinSet::new();
                         for job in jobs {
                             let storage = storage.clone();
-                            let content_audit_store = content_audit_store.clone();
                             let export_store = export_store.clone();
                             let enrollment_executor = enrollment_executor.clone();
                             let plan_collector = plan_collector.clone();
@@ -434,6 +452,7 @@ async fn run_job_loop(
                             let managed_browser_executor = managed_browser_executor.clone();
                             let backup_executor = backup_executor.clone();
                             let credential_runtime = credential_runtime.clone();
+                            let price_http = price_http.clone();
                             let readiness = readiness.clone();
                             let proxy_probe_target = proxy_probe_target.clone();
                             let worker_id = worker_id.clone();
@@ -441,7 +460,6 @@ async fn run_job_loop(
                             in_flight.spawn(async move {
                                 process_job_with_heartbeat(
                                     storage,
-                                    content_audit_store,
                                     export_store,
                                     enrollment_executor,
                                     plan_collector,
@@ -449,6 +467,7 @@ async fn run_job_loop(
                                     managed_browser_executor,
                                     backup_executor,
                                     credential_runtime,
+                                    price_http,
                                     readiness,
                                     proxy_probe_target,
                                     job,
@@ -549,7 +568,6 @@ async fn schedule_due_plan_collections(storage: &PgStorage) -> Result<(), sqlx::
 
 async fn process_job_with_heartbeat(
     storage: Arc<PgStorage>,
-    content_audit_store: Option<Arc<ContentAuditStore>>,
     export_store: Arc<ExportArtifactStore>,
     enrollment_executor: Arc<dyn CredentialEnrollmentJobExecutor>,
     plan_collector: Option<Arc<PgPlanCollector>>,
@@ -557,6 +575,7 @@ async fn process_job_with_heartbeat(
     managed_browser_executor: Option<Arc<ManagedBrowserExecutor>>,
     backup_executor: Arc<dyn BackupOperationsExecutor>,
     credential_runtime: Arc<ProductionDispatcher>,
+    price_http: Option<PriceHttp>,
     readiness: ReadinessCoordinator,
     proxy_probe_target: ProxyProbeTarget,
     job: JobLease,
@@ -565,7 +584,6 @@ async fn process_job_with_heartbeat(
 ) {
     let mut processing = Box::pin(process_job(
         &storage,
-        content_audit_store.as_deref(),
         export_store.as_ref(),
         enrollment_executor.as_ref(),
         plan_collector.as_deref(),
@@ -573,6 +591,7 @@ async fn process_job_with_heartbeat(
         managed_browser_executor.as_deref(),
         backup_executor.as_ref(),
         credential_runtime.as_ref(),
+        price_http.as_ref(),
         &readiness,
         &proxy_probe_target,
         job.clone(),
@@ -612,7 +631,6 @@ async fn process_job_with_heartbeat(
 
 async fn process_job(
     storage: &PgStorage,
-    content_audit_store: Option<&ContentAuditStore>,
     export_store: &ExportArtifactStore,
     enrollment_executor: &dyn CredentialEnrollmentJobExecutor,
     plan_collector: Option<&PgPlanCollector>,
@@ -620,6 +638,7 @@ async fn process_job(
     managed_browser_executor: Option<&ManagedBrowserExecutor>,
     backup_executor: &dyn BackupOperationsExecutor,
     credential_runtime: &ProductionDispatcher,
+    price_http: Option<&PriceHttp>,
     readiness: &ReadinessCoordinator,
     proxy_probe_target: &ProxyProbeTarget,
     job: JobLease,
@@ -629,6 +648,9 @@ async fn process_job(
     let _ = proxy_probe_target;
 
     match job.kind.as_str() {
+        "price_sync" => {
+            process_price_sync(storage, price_http, &job).await;
+        }
         "audit_integrity_verify" | "audit_daily_seal" => {
             let _ = storage
                 .complete_job(job.job_id, job.generation, "maintenance_loop_owns_execution")
@@ -847,29 +869,6 @@ async fn process_job(
                 )
                 .await;
         }
-        "content_audit_purge" => {
-            let Some(store) = content_audit_store else {
-                let _ = storage
-                    .retry_job(job.job_id, job.generation, 30, "content_audit_store_unavailable", None)
-                    .await;
-                return;
-            };
-            match process_content_audit_purge(storage, store, &job).await {
-                Ok(()) => {
-                    let _ = storage.complete_job(job.job_id, job.generation, "purge_complete").await;
-                }
-                Err(error_code) if job.attempt < job.max_attempts => {
-                    let _ = storage
-                        .retry_job(job.job_id, job.generation, 30, error_code, None)
-                        .await;
-                }
-                Err(error_code) => {
-                    let _ = storage
-                        .dead_letter_job(job.job_id, job.generation, error_code, None)
-                        .await;
-                }
-            }
-        }
         "business_key_rotation" => match process_business_key_rotation(storage, &job, worker_id).await {
             Ok(()) => {
                 let _ = storage
@@ -986,15 +985,6 @@ async fn process_job(
         "usage_export_generate" => {
             process_usage_export(storage, export_store, &job).await;
         }
-        "content_audit_export_generate" => {
-            let Some(store) = content_audit_store else {
-                let _ = storage
-                    .retry_job(job.job_id, job.generation, 30, "content_audit_store_unavailable", None)
-                    .await;
-                return;
-            };
-            process_content_audit_export(storage, store, export_store, &job).await;
-        }
         "upgrade_preflight_v1" => process_upgrade_preflight(storage, readiness, &job).await,
         "backup_create" => process_backup_create(storage, backup_executor, &job).await,
         "restore_manifest_validation" | "restore_full_drill" => {
@@ -1011,6 +1001,62 @@ async fn process_job(
         _ => {
             let _ = storage
                 .dead_letter_job(job.job_id, job.generation, "unsupported_job_kind", None)
+                .await;
+        }
+    }
+}
+
+async fn schedule_due_price_sync(storage: &PgStorage) -> Result<(), sqlx::Error> {
+    // The interval is an operator setting (`price_sync.interval_hours`); the
+    // default of 24 hours applies until it is written.
+    let due: bool = sqlx::query_scalar(
+        "SELECT COALESCE(last_completed_at IS NULL OR last_completed_at < clock_timestamp()-make_interval(hours => \
+           GREATEST(1,LEAST(168,COALESCE((SELECT (value #>> '{}')::int FROM ops.system_setting WHERE key='price_sync.interval_hours'),24)))),true) \
+         FROM ops.price_sync_state WHERE id=true",
+    )
+    .fetch_one(&storage.pool())
+    .await?;
+    if due {
+        let _ = price_sync::enqueue_job(storage, "scheduled").await?;
+    }
+    Ok(())
+}
+
+async fn process_price_sync(storage: &PgStorage, http: Option<&PriceHttp>, job: &JobLease) {
+    let Some(http) = http else {
+        let _ = storage
+            .dead_letter_job(job.job_id, job.generation, "price_sync_transport_unavailable", None)
+            .await;
+        return;
+    };
+    let _ = sqlx::query("UPDATE ops.price_sync_state SET last_started_at=clock_timestamp(),state_code='running',result_code=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE id=true")
+        .execute(&storage.pool()).await;
+    match price_sync::fetch_and_commit(storage, http.as_ref()).await {
+        Ok((version, mapped, missing, hash)) => {
+            let _ = sqlx::query("UPDATE ops.price_sync_state SET last_completed_at=clock_timestamp(),state_code='succeeded',result_code=CASE WHEN $1=0 THEN 'unchanged' ELSE 'updated' END,source_hash=decode($2,'hex'),created_price_version=CASE WHEN $1=0 THEN created_price_version ELSE $3 END,mapped_count=CASE WHEN $1=0 THEN mapped_count ELSE $1 END,missing_models=$4,updated_at=clock_timestamp() WHERE id=true")
+                .bind(i32::try_from(mapped).unwrap_or(i32::MAX)).bind(&hash).bind(version).bind(json!(missing)).execute(&storage.pool()).await;
+            let _ = storage
+                .complete_job(
+                    job.job_id,
+                    job.generation,
+                    &format!("price_sync_succeeded:version={version}:mapped={mapped}"),
+                )
+                .await;
+        }
+        Err(error) if job.attempt < job.max_attempts => {
+            let code = format!("price_sync_{error}");
+            let _ = sqlx::query("UPDATE ops.price_sync_state SET state_code='failed',result_code='failed',error_code=$1,updated_at=clock_timestamp() WHERE id=true").bind(&code).execute(&storage.pool()).await;
+            upsert_critical_alert(storage, "price_sync_failed", "LiteLLM price synchronization failed").await;
+            let _ = storage
+                .retry_job(job.job_id, job.generation, 300, "price_sync_failed", None)
+                .await;
+        }
+        Err(error) => {
+            let code = format!("price_sync_{error}");
+            let _ = sqlx::query("UPDATE ops.price_sync_state SET state_code='failed',result_code='failed',error_code=$1,updated_at=clock_timestamp() WHERE id=true").bind(&code).execute(&storage.pool()).await;
+            upsert_critical_alert(storage, "price_sync_failed", "LiteLLM price synchronization failed").await;
+            let _ = storage
+                .dead_letter_job(job.job_id, job.generation, "price_sync_exhausted", None)
                 .await;
         }
     }
@@ -2773,267 +2819,6 @@ async fn process_usage_export(storage: &PgStorage, store: &ExportArtifactStore, 
     }
 }
 
-struct ContentAuditExportWork {
-    export_id: Uuid,
-    requested_by: Uuid,
-    query_sha256: Vec<u8>,
-    object_id: Uuid,
-    request_id: Uuid,
-    attempt_id: Option<Uuid>,
-    object_kind: String,
-    object_uri: String,
-    encrypted_dek: Vec<u8>,
-    cipher_suite: String,
-    content_sha256: Vec<u8>,
-    content_length: i64,
-    frame_manifest: serde_json::Value,
-}
-
-async fn load_content_audit_export_work(
-    storage: &PgStorage,
-    export_id: Uuid,
-    job: &JobLease,
-) -> Result<ContentAuditExportWork, StorageError> {
-    let mut transaction = storage
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| StorageError::ConnectionFailed)?;
-    let row = sqlx::query(
-        "SELECT export.requested_by,export.dataset_code,export.format_code,export.query_sha256, \
-                object.id AS object_id,object.request_id,object.attempt_id,object.object_kind_code,object.object_uri,object.encrypted_dek, \
-                object.cipher_suite_code,object.content_sha256,object.content_length,object.frame_manifest \
-         FROM ops.export_job export \
-         JOIN ops.durable_job job ON job.id=export.durable_job_id \
-         JOIN security.content_audit_export_binding binding ON binding.export_job_id=export.id \
-         JOIN security.content_audit_search_session session ON session.id=binding.search_session_id \
-         JOIN security.content_audit_search_candidate candidate \
-           ON candidate.search_session_id=session.id AND candidate.content_audit_object_id=binding.content_audit_object_id \
-         JOIN security.content_audit_object object ON object.id=binding.content_audit_object_id \
-         WHERE export.id=$1 AND job.id=$2 AND job.state_code='leased' AND job.lease_generation=$3 \
-           AND export.state_code IN ('queued','running') AND export.dataset_code='content_audit_record_v1' \
-           AND export.format_code='raw' AND session.actor_user_id=export.requested_by \
-           AND session.expires_at>clock_timestamp() AND object.scope_code='full_encrypted' \
-           AND object.storage_state_code='finalized' AND object.state_code IN ('active','held') \
-           AND object.deleted_at IS NULL \
-           AND (object.state_code='held' OR object.legal_hold_count>0 OR object.expires_at>clock_timestamp()) \
-         FOR UPDATE OF export,job",
-    )
-    .bind(export_id)
-    .bind(job.job_id)
-    .bind(job.generation)
-    .fetch_optional(&mut *transaction)
-    .await
-    .map_err(|_| StorageError::ConnectionFailed)?
-    .ok_or(StorageError::RevisionConflict)?;
-    sqlx::query(
-        "UPDATE ops.export_job SET state_code='running',revision=revision+1 WHERE id=$1 AND state_code='queued'",
-    )
-    .bind(export_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|_| StorageError::ConnectionFailed)?;
-    let work = ContentAuditExportWork {
-        export_id,
-        requested_by: row
-            .try_get("requested_by")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        query_sha256: row
-            .try_get("query_sha256")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        object_id: row.try_get("object_id").map_err(|_| StorageError::IntegrityViolation)?,
-        request_id: row
-            .try_get("request_id")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        attempt_id: row
-            .try_get("attempt_id")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        object_kind: row
-            .try_get("object_kind_code")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        object_uri: row
-            .try_get("object_uri")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        encrypted_dek: row
-            .try_get("encrypted_dek")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        cipher_suite: row
-            .try_get("cipher_suite_code")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        content_sha256: row
-            .try_get("content_sha256")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        content_length: row
-            .try_get("content_length")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-        frame_manifest: row
-            .try_get("frame_manifest")
-            .map_err(|_| StorageError::IntegrityViolation)?,
-    };
-    transaction.commit().await.map_err(|_| StorageError::ConnectionFailed)?;
-    Ok(work)
-}
-
-async fn process_content_audit_export(
-    storage: &PgStorage,
-    content_store: &ContentAuditStore,
-    export_store: &ExportArtifactStore,
-    job: &JobLease,
-) {
-    let Some(export_id) = job
-        .payload
-        .get("export_job_id")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|value| Uuid::parse_str(value).ok())
-    else {
-        let _ = storage
-            .dead_letter_job(job.job_id, job.generation, "content_audit_export_payload_invalid", None)
-            .await;
-        return;
-    };
-    let work = match load_content_audit_export_work(storage, export_id, job).await {
-        Ok(work) => work,
-        Err(_) if job.attempt < job.max_attempts => {
-            let _ = storage
-                .retry_job(job.job_id, job.generation, 30, "content_audit_export_load_failed", None)
-                .await;
-            return;
-        }
-        Err(_) => {
-            let _ = storage
-                .fail_usage_export(
-                    export_id,
-                    job.job_id,
-                    job.generation,
-                    "content_audit_export_load_failed",
-                )
-                .await;
-            return;
-        }
-    };
-    let manifest: AuditObjectManifest = match work
-        .frame_manifest
-        .get("manifest")
-        .cloned()
-        .and_then(|value| serde_json::from_value(value).ok())
-    {
-        Some(manifest) => manifest,
-        None => {
-            let _ = storage
-                .fail_usage_export(export_id, job.job_id, job.generation, "content_audit_source_invalid")
-                .await;
-            return;
-        }
-    };
-    let internal_kind = work
-        .frame_manifest
-        .get("capture_kind")
-        .and_then(serde_json::Value::as_str);
-    let (capture_kind, contract_kind) = match internal_kind {
-        Some("original_request") => (AuditCaptureKind::OriginalRequest, "original_request"),
-        Some("final_request" | "final_upstream_request") => (AuditCaptureKind::FinalRequest, "final_upstream_request"),
-        Some("response" | "upstream_response") => (AuditCaptureKind::Response, "upstream_response"),
-        _ => {
-            let _ = storage
-                .fail_usage_export(export_id, job.job_id, job.generation, "content_audit_source_invalid")
-                .await;
-            return;
-        }
-    };
-    let policy_version = work
-        .frame_manifest
-        .get("policy_version")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty());
-    let manifest_dek = base64::engine::general_purpose::STANDARD
-        .decode(manifest.wrapped_dek_base64.as_bytes())
-        .ok();
-    if work.query_sha256.len() != 32
-        || manifest.object_id != work.object_id
-        || manifest.object_uri.as_ref() != work.object_uri
-        || manifest_dek.as_deref() != Some(work.encrypted_dek.as_slice())
-        || manifest.cipher_suite.as_ref() != work.cipher_suite
-        || work.object_kind != contract_kind
-        || u64::try_from(work.content_length).ok() != Some(manifest.plaintext_length)
-        || policy_version.is_none()
-    {
-        let _ = storage
-            .fail_usage_export(export_id, job.job_id, job.generation, "content_audit_source_invalid")
-            .await;
-        return;
-    }
-    let context = AuditObjectContext {
-        object_id: work.object_id,
-        request_id: work.request_id,
-        attempt_id: work.attempt_id,
-        kind: capture_kind,
-        policy_version: policy_version.unwrap_or_default().to_owned().into_boxed_str(),
-    };
-    let plaintext = match content_store.read(&context, &manifest).await {
-        Ok(plaintext) if sha2::Sha256::digest(&plaintext).as_slice() == work.content_sha256.as_slice() => plaintext,
-        _ => {
-            let _ = storage
-                .fail_usage_export(export_id, job.job_id, job.generation, "content_audit_source_invalid")
-                .await;
-            return;
-        }
-    };
-    let key_version: i64 = match sqlx::query_scalar(
-        "SELECT key_version FROM security.business_key_material \
-         WHERE provider_code='database' AND state_code='active'",
-    )
-    .fetch_optional(&storage.pool())
-    .await
-    {
-        Ok(Some(value)) => value,
-        _ => {
-            finish_usage_export_transient(storage, export_id, job, "content_audit_export_key_unavailable").await;
-            return;
-        }
-    };
-    let root_key = match storage.load_database_business_key(key_version).await {
-        Ok(value) => value,
-        Err(_) => {
-            finish_usage_export_transient(storage, export_id, job, "content_audit_export_key_unavailable").await;
-            return;
-        }
-    };
-    let artifact_context = ExportArtifactContext {
-        export_id: work.export_id,
-        requested_by: work.requested_by,
-        dataset: "content_audit_record_v1".into(),
-        format: ExportFormat::Raw,
-        query_sha256_hex: lower_hex(&work.query_sha256).into_boxed_str(),
-    };
-    let artifact = match export_store
-        .put(&artifact_context, &plaintext, &root_key, key_version)
-        .await
-    {
-        Ok(artifact) => artifact,
-        Err(_) => {
-            finish_usage_export_transient(storage, export_id, job, "content_audit_export_store_failed").await;
-            return;
-        }
-    };
-    let commit = UsageExportArtifactCommit {
-        export_id,
-        job_id: job.job_id,
-        generation: job.generation,
-        object_uri: artifact.object_uri.to_string(),
-        content_sha256: artifact.content_sha256,
-        row_count: 1,
-        content_length: artifact.content_length,
-        cipher_suite: artifact.cipher_suite.to_string(),
-        nonce: artifact.nonce,
-        wrapped_dek: artifact.wrapped_dek,
-        key_version: artifact.key_version,
-    };
-    if storage.commit_usage_export(&commit).await.is_err() {
-        let _ = export_store.remove_uri(&commit.object_uri).await;
-        finish_usage_export_transient(storage, export_id, job, "content_audit_export_commit_failed").await;
-    }
-}
-
 async fn finish_usage_export_transient(storage: &PgStorage, export_id: Uuid, job: &JobLease, error_code: &'static str) {
     if job.attempt < job.max_attempts {
         let _ = storage
@@ -3191,157 +2976,6 @@ async fn finish_enrollment_job_attempt(storage: &PgStorage, job: &JobLease, deci
                 .await;
         }
     }
-}
-
-async fn process_content_audit_purge(
-    storage: &PgStorage,
-    store: &ContentAuditStore,
-    job: &JobLease,
-) -> Result<(), &'static str> {
-    let object_ids = job
-        .payload
-        .get("object_ids")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("purge_payload_invalid")?
-        .iter()
-        .map(|value| value.as_str().and_then(|value| Uuid::parse_str(value).ok()))
-        .collect::<Option<Vec<_>>>()
-        .ok_or("purge_payload_invalid")?;
-    for object_id in object_ids {
-        let mut transaction = storage.pool().begin().await.map_err(|_| "purge_database_unavailable")?;
-        let current_job: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM ops.durable_job \
-             WHERE id=$1 AND state_code='leased' AND lease_generation=$2 FOR SHARE",
-        )
-        .bind(job.job_id)
-        .bind(job.generation)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(|_| "purge_database_unavailable")?;
-        if current_job != Some(job.job_id) {
-            return Err("purge_job_lease_lost");
-        }
-        let row = sqlx::query(
-            "SELECT object_uri,content_sha256,state_code,legal_hold_count FROM security.content_audit_object \
-             WHERE id=$1 FOR UPDATE",
-        )
-        .bind(object_id)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(|_| "purge_database_unavailable")?
-        .ok_or("purge_object_missing")?;
-        let state: String = sqlx::Row::try_get(&row, "state_code").map_err(|_| "purge_projection_invalid")?;
-        let legal_hold_count: i32 =
-            sqlx::Row::try_get(&row, "legal_hold_count").map_err(|_| "purge_projection_invalid")?;
-        if legal_hold_count != 0 {
-            return Err("purge_object_held");
-        }
-        let digest: Vec<u8> = sqlx::Row::try_get(&row, "content_sha256").map_err(|_| "purge_projection_invalid")?;
-        let digest: [u8; 32] = digest.try_into().map_err(|_| "purge_projection_invalid")?;
-        if state == "deleted" {
-            storage
-                .append_deletion_ledger_in(
-                    &mut transaction,
-                    "content_audit_object",
-                    &object_id.to_string(),
-                    &digest,
-                    "object_deleted",
-                    &json!({"job_id":job.job_id,"reconciled":true}),
-                )
-                .await
-                .map_err(|_| "deletion_ledger_unavailable")?;
-            transaction.commit().await.map_err(|_| "purge_database_unavailable")?;
-            continue;
-        }
-        if !matches!(state.as_str(), "active" | "deletion_pending") {
-            return Err("purge_object_state_conflict");
-        }
-        let uri: String = sqlx::Row::try_get::<Option<String>, _>(&row, "object_uri")
-            .map_err(|_| "purge_projection_invalid")?
-            .ok_or("purge_projection_invalid")?;
-        storage
-            .append_deletion_ledger_in(
-                &mut transaction,
-                "content_audit_object",
-                &object_id.to_string(),
-                &digest,
-                "scheduled",
-                &json!({"job_id":job.job_id}),
-            )
-            .await
-            .map_err(|_| "deletion_ledger_unavailable")?;
-        if state == "active" {
-            let destroyed = sqlx::query(
-                "UPDATE security.content_audit_object SET encrypted_dek=NULL,state_code='deletion_pending' \
-                 WHERE id=$1 AND legal_hold_count=0 AND state_code='active'",
-            )
-            .bind(object_id)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|_| "purge_database_unavailable")?;
-            if destroyed.rows_affected() != 1 {
-                return Err("purge_object_state_conflict");
-            }
-        }
-        storage
-            .append_deletion_ledger_in(
-                &mut transaction,
-                "content_audit_object",
-                &object_id.to_string(),
-                &digest,
-                "key_destroyed",
-                &json!({"job_id":job.job_id}),
-            )
-            .await
-            .map_err(|_| "deletion_ledger_unavailable")?;
-        transaction.commit().await.map_err(|_| "purge_database_unavailable")?;
-        let still_current: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM ops.durable_job \
-             WHERE id=$1 AND state_code='leased' AND lease_generation=$2 AND lease_expires_at>=clock_timestamp())",
-        )
-        .bind(job.job_id)
-        .bind(job.generation)
-        .fetch_one(&storage.pool())
-        .await
-        .map_err(|_| "purge_database_unavailable")?;
-        if !still_current {
-            return Err("purge_job_lease_lost");
-        }
-        store.remove_uri(&uri).await.map_err(|_| "purge_object_delete_failed")?;
-        let mut finalize = storage.pool().begin().await.map_err(|_| "purge_database_unavailable")?;
-        let finalized = sqlx::query(
-            "UPDATE security.content_audit_object SET object_uri=NULL,state_code='deleted',storage_state_code='destroyed', \
-               deleted_at=clock_timestamp() WHERE id=$1 AND state_code='deletion_pending' AND legal_hold_count=0",
-        )
-        .bind(object_id)
-        .execute(&mut *finalize)
-        .await
-        .map_err(|_| "purge_database_unavailable")?;
-        if finalized.rows_affected() == 0 {
-            let state: Option<String> =
-                sqlx::query_scalar("SELECT state_code FROM security.content_audit_object WHERE id=$1 FOR UPDATE")
-                    .bind(object_id)
-                    .fetch_optional(&mut *finalize)
-                    .await
-                    .map_err(|_| "purge_database_unavailable")?;
-            if state.as_deref() != Some("deleted") {
-                return Err("purge_object_state_conflict");
-            }
-        }
-        storage
-            .append_deletion_ledger_in(
-                &mut finalize,
-                "content_audit_object",
-                &object_id.to_string(),
-                &digest,
-                "object_deleted",
-                &json!({"job_id":job.job_id}),
-            )
-            .await
-            .map_err(|_| "deletion_ledger_unavailable")?;
-        finalize.commit().await.map_err(|_| "purge_database_unavailable")?;
-    }
-    Ok(())
 }
 
 async fn run_outbox_loop(storage: Arc<PgStorage>, cancellation: CancellationToken) {

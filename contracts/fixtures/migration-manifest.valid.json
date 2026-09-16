@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "postgres_minimum_major": 16,
   "minimum_compatible_version": 20260824000100,
-  "current_version": 20260901000100,
+  "current_version": 20260907000100,
   "migrations": [
     {
       "version": 20260824000100,
@@ -309,6 +309,48 @@
       "version": 20260901000100,
       "name": "20260901000100_retire_enforcement_and_background.sql",
       "sha256": "2affb81393c6c4d61ca7aee940039b1571c63c29f86386884166750babe9f458",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260903000100,
+      "name": "20260903000100_count_tokens_endpoint.sql",
+      "sha256": "bf9b676df0dafdc1395922632b4ab039a81a48cd54d7c210757cedfde1a48732",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260904000100,
+      "name": "20260904000100_t3_system_alignment.sql",
+      "sha256": "43f8bed7ce5ebf4ddee614c973368847bd236740b20a6d221fb3a611d7abaeb8",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260904000200,
+      "name": "20260904000200_t4_multi_os.sql",
+      "sha256": "5f60eb1c1f23be661e9d83ea2eb33076dc5d497325f5ff6764f66041fb19caae",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260904000300,
+      "name": "20260904000300_t6_body_capture.sql",
+      "sha256": "3f71f7779d989df382a8aa7bcd49941c69bb5dae666b2f9700310d0c054956b4",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260904000400,
+      "name": "20260904000400_price_sync.sql",
+      "sha256": "9f496b5c89eb61158c1b2836226afe2203ccf5fa435c39972ab51c2e8bb73ac4",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20260907000100,
+      "name": "20260907000100_t6_retire_content_audit.sql",
+      "sha256": "243ecb791aaf8a75b450377870b61fce60ad780080ed4a37a96672ed14cc3fbc",
       "direction": "forward_only",
       "transactional": true
     }

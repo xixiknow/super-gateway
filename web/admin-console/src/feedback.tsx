@@ -84,13 +84,11 @@ export interface ConfirmOptions {
   confirmKey?: MessageKey;
   danger?: boolean;
   withReason?: boolean;
-  /** 要求输入当前密码(用于 step-up 高风险操作,如审批批准/拒绝) */
+  /** 要求输入当前密码(用于仍需要 step-up 的高风险操作) */
   withPassword?: boolean;
-  /** 要求输入已批准的审批单 ID(高风险变更的双人审批联动) */
-  withApprovalCase?: boolean;
 }
 
-export type ConfirmResult = { ok: true; reason: string; password: string; approvalCaseId: string } | { ok: false };
+export type ConfirmResult = { ok: true; reason: string; password: string } | { ok: false };
 
 interface ConfirmRequest extends ConfirmOptions {
   id: number;
@@ -109,7 +107,6 @@ function ConfirmDialog({ request, onResolve }: { request: ConfirmRequest; onReso
   const { t } = useI18n();
   const titleId = useId();
   const [passwordError, setPasswordError] = useState(false);
-  const [approvalError, setApprovalError] = useState(false);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onResolve({ ok: false }); };
@@ -122,10 +119,8 @@ function ConfirmDialog({ request, onResolve }: { request: ConfirmRequest; onReso
     const form = new FormData(event.currentTarget);
     const reason = request.withReason ? String(form.get("reason") ?? "").trim() : "";
     const password = request.withPassword ? String(form.get("current_password") ?? "") : "";
-    const approvalCaseId = request.withApprovalCase ? String(form.get("approval_case_id") ?? "").trim() : "";
     if (request.withPassword && !password) { setPasswordError(true); return; }
-    if (request.withApprovalCase && !approvalCaseId) { setApprovalError(true); return; }
-    onResolve({ ok: true, reason, password, approvalCaseId });
+    onResolve({ ok: true, reason, password });
   }
 
   return createPortal(
@@ -151,20 +146,6 @@ function ConfirmDialog({ request, onResolve }: { request: ConfirmRequest; onReso
                     onChange={() => setPasswordError(false)}
                   />
                   {passwordError && <small className="field-error" role="alert">{t("confirm.passwordRequired")}</small>}
-                </div>
-              )}
-              {request.withApprovalCase && (
-                <div className="field confirm-reason">
-                  <label htmlFor={`${titleId}-approval`}>{t("confirm.approvalCase")}<span className="hint">{t("confirm.approvalCaseHint")}</span></label>
-                  <input
-                    id={`${titleId}-approval`}
-                    name="approval_case_id"
-                    className="inp mono"
-                    autoComplete="off"
-                    placeholder="00000000-0000-0000-0000-000000000000"
-                    onChange={() => setApprovalError(false)}
-                  />
-                  {approvalError && <small className="field-error" role="alert">{t("confirm.approvalCaseRequired")}</small>}
                 </div>
               )}
               {request.withReason && (

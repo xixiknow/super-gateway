@@ -8,7 +8,7 @@
 
 本文冻结管理控制台的信息架构、角色、页面、表单、状态、动作确认、审批、导出和 API 依赖。控制台是管理 API 的客户端，不直接访问数据库、Secret Store、Transport 或 Browser context。
 
-资源术语保持：User 拥有 Platform Key；Platform Key 固定绑定一个 Credential Group；Group 包含多个 Anthropic Credential；每个 Credential 拥有一个 Profile、Device Identity 和 Egress Binding；Archetype/Bundle 可以共享。
+资源术语保持：User 拥有 Platform Key；Platform Key 绑定一个 Credential Group，Platform Admin 可在可用 Group 间调整绑定；Group 包含多个 Anthropic Credential；每个 Credential 拥有一个 Profile、Device Identity 和 Egress Binding；Archetype/Bundle 可以共享。
 
 ## 2. 首版范围与非目标
 
@@ -17,14 +17,14 @@
 - `platform_admin`：平台、User、Key、Group、Credential、策略、安全和运维；
 - `key_owner`：本人身份、本人 Key、本人请求/usage/导出。
 
-首版无 Viewer、AccessSubject、应用主体、Tenant、自助注册、自定义 RBAC、Key 转移、Key 原位换 Group、Key secret 轮换、管理员密码/MFA 重置。需要换 owner、Group 或 secret 时创建新 Key，并按原 Key 生命周期处理。
+首版无 Viewer、AccessSubject、应用主体、Tenant、自助注册、自定义 RBAC、Key owner 转移、Key secret 轮换、管理员密码/MFA 重置。Key owner 与 secret 仍不可变；Platform Admin 可原位调整 Key 的 Group。
 
 ## 3. 用户心智模型
 
 ```text
 User
-├─ Platform Key A ──固定──> Group X
-└─ Platform Key B ──固定──> Group Y
+├─ Platform Key A ──绑定──> Group X
+└─ Platform Key B ──绑定──> Group Y
 
 Group X
 ├─ Credential 1 ──> Profile/Device/Egress
@@ -113,7 +113,7 @@ GATEWAY_BOOTSTRAP_ADMIN_PASSWORD
 
 缺失时实例保持 not-ready 并给出不含 secret 的配置诊断；不生成或打印随机管理密码。首次事务创建唯一初始 Admin，状态 `mfa_pending`、`password_change_required=true`。首次登录只能修改密码、绑定/确认 TOTP、查看本人状态和登出；完成后转 active。
 
-普通 User 由 Admin 创建，状态 `invited`，使用一次性临时密码，首次登录同样完成改密与 TOTP。用户名和角色创建后只读。首版没有“忘记密码”、Admin 重置密码或 MFA 重绑入口；丢失时按离线运维恢复流程处理。
+普通 User 由 Admin 创建，使用一次性临时密码；角色、单 Key 并发/RPM 上限和余额由 Admin 管理。严格部署模式首次登录完成改密与 TOTP；显式 `local` 模式仅要求改密，不启用第二因素。用户名创建后只读。首版没有“忘记密码”、Admin 重置密码或 MFA 重绑入口；丢失时按离线运维恢复流程处理。
 
 ## 8. Step-up 与动作确认
 
@@ -122,7 +122,6 @@ Step-up 要求当前密码 + TOTP + 明确 purpose，默认有效 5 分钟。pur
 ```text
 key_secret_reveal
 irreversible_lifecycle
-content_audit_access
 approval_decision
 key_provider_change
 backup_restore_security
@@ -160,20 +159,21 @@ UI 显示用途和剩余时间。不同高风险域不可默认共享授权。�
 
 ## 11. User 管理
 
-列表字段：username、display name、email、role、status、Key 总数/active 数、最后登录、创建/更新时间。筛选 q、role、status、时间。
+列表字段：username、display name、email、role、status、最后使用时间、单 Key 并发上限、单 Key RPM 上限、余额与累计消费。筛选 q、role、status。
 
-动作：创建、修改 display name/email、disable、reactivate、unlock、撤销全部 Session、archive。规则：
+动作：创建、修改 display name/email/role/单 Key 并发上限/单 Key RPM 上限/余额、disable、reactivate、unlock、撤销全部 Session、archive。规则：
 
 - disable 先展示名下 Key 数量与影响；确认后同步禁用 Key；
 - reactivate User 不自动恢复 Key；
 - archive 前必须 User 已 disabled 且全部 Key revoked；
-- username/role 保持只读；
+- username 保持只读；角色变更会撤销该用户现有 Session，且系统必须保留至少一个 active Platform Admin；
+- User 的并发与 RPM 是其名下每个 Key 可配置值的硬上限；余额为空表示不限额，余额耗尽后拒绝新的 Messages 请求；
 - 锁定是登录安全状态，不等价于业务 disable；
 - 所有 lifecycle action要求 reason、If-Match、Idempotency-Key。
 
 ## 12. Platform Key 列表与创建
 
-列表：name、ID/prefix、owner、Group、status/expiry、endpoint permission、model scope、并发、Messages/Models RPM、IP allowlist摘要、请求/usage、最后使用、观察到的客户端类别。
+列表：name、Group、status/expiry、并发、Messages RPM、消费上限、今日/近 30 天/累计消费、最后使用。列表不展示内部 ID 或 secret prefix。
 
 创建默认：
 
@@ -188,17 +188,17 @@ UI 显示用途和剩余时间。不同高风险域不可默认共享授权。�
 | IP allowlist | empty |
 | content audit request | metadata_only |
 
-首版仅 Admin 创建 Key，并选择 owner 与固定 Group；Owner 只管理本人既有 Key 的名称、过期时间、生命周期与 secret reveal。表单没有客户端类型和 secret 自定义字段。创建完成只显示 prefix；完整 secret 通过独立 reveal 获取。
+当前登录用户创建 Key 时自动成为 owner，并选择 Group；Owner 管理本人 Key 的名称、过期时间、并发、RPM、消费上限、生命周期与 secret reveal，Platform Admin 还可切换 Group。并发/RPM 不得超过 owner 的 User 级硬上限。表单没有客户端类型和 secret 自定义字段。完整 secret 仅通过独立 reveal 获取。
 
 ## 13. Platform Key 详情与 Secret Reveal
 
 详情分三区：
 
-1. 基础：ID/prefix、owner、Group、状态、时间；
+1. 基础：owner、Group、状态、时间与最近使用；
 2. 权限与限制：endpoint、model、body、RPM、并发、IP、RuleSet、audit；
 3. 安全与生命周期：reveal、disable/reactivate/revoke、配置历史、审计、客户端配置。
 
-owner、Group 与 secret ref 不可编辑；Key 不支持转移和轮换。reveal 流程：step-up → 填用途 → no-store response → 60 秒倒计时 → 允许复制 → 自动隐藏。前端持久存储、日志、analytics 与 crash report 全部排除 secret。
+owner 与 secret ref 不可编辑；Key 不支持 owner 转移和 secret 轮换，Platform Admin 可切换 Group。reveal 流程：step-up → 填用途 → no-store response → 60 秒倒计时 → 允许复制 → 自动隐藏。前端持久存储、日志、analytics 与 crash report 全部排除 secret。
 
 Credential token、Browser material、Proxy password、Device seed 与 Session HMAC 只有覆盖/使用，没有 reveal UI。
 
@@ -291,6 +291,10 @@ Egress Binding 详情区分 `Direct|ProxyStatic|ProxyDynamic`。固定代表稳�
 
 Model 状态：`discovered|reviewing|published|deprecated|disabled`。列表展示 ID、display name、发现时间/来源、能力版本、价格版本、授权 Group、近期请求、review overdue 与上游消失状态。
 
+- 默认同步 Anthropic 官方公开模型目录，不依赖 Credential；除当前主力模型外，继续读取 overview 中标记为 still available 的 legacy 型号详情。公开源异常时使用带版本的内置快照，并在列表明确展示实际来源；
+- 模型行直接展示公开上下文窗口与最大输出；能力按钮打开右侧抽屉，分区展示供应商公开能力（目录状态、thinking、default effort）和网关能力版本/规则 JSON；
+- “同步公开目录”单击后直接创建后台 Job，不要求操作人填写审计原因；按钮轮询 Job 至终态，只有 `succeeded` 后才刷新模型表格并提示完成。系统使用固定机器原因保留审计事件；
+- Credential Models API 仅用于可选的账号可用性验证，不作为模型目录初始化的前置条件；
 - 新模型自动发现后进入 reviewing，管理员确认官方能力和 evidence后 publish；
 - `all_published` Group 自动获得新 published 模型；allowlist Group仍需显式加入；
 - deprecated/disabled 不接受新请求；
@@ -351,24 +355,13 @@ partial/unknown 显示“部分/未知”，不用 0 填充。取消估算与后
 
 导出：当前筛选为默认；聚合 CSV，请求明细 CSV/JSONL。预计 ≤10,000 行同步，否则异步 Job；产物加密、默认 24 小时、短时一次性 URL。Owner 强制本人 scope，Admin可选全局。普通导出不包含 Content Audit Body。
 
-## 27. 审批、Content Audit 与管理审计
+## 27. 审批、正文记录与管理审计
 
-审批中心分“待我审批”“我发起”“已完成”。Case 显示 kind、target、before/after、payload digest、resource revision、理由、发起人、过期和执行状态；发起人与批准人必须不同且均为 active Admin，批准时需要 step-up。
+审批中心分“待我审批”“我发起”“已完成”。Case 显示 kind、target、before/after、payload digest、resource revision、理由、发起人、过期和执行状态；发起人与批准人必须不同且均为 active Admin，批准时需要 step-up。审批种类只剩 `device_rebuild`（设备身份重建）与 `key_provider_change`（业务主密钥提供方变更）。
 
-Content Audit 模型：
+正文记录（替代已退役的加密 Content Audit）：原始请求 / 策略产物 / 最终上行请求 / 上游响应按系统设置「正文采集」（开关、保留天数、单条上限）明文写入 `telemetry.request_body`，在请求明细里直接查看，到期后台清理；Key 与 Group 不再携带任何审计模式或策略字段。
 
-```text
-Key requested mode: metadata_only | full_encrypted
-Group policy: allow | require | forbid
-effective:
-  allow   → Key request决定，默认 metadata_only
-  require → full_encrypted
-  forbid  → metadata_only
-```
-
-全文启用、Group require/forbid、脱敏放宽、续期、正文检索/读取/导出、Legal Hold、手工删除均需两名 Admin。Key grant默认 7 天、单次最长 30 天；正文默认留存 7 天、Group 可配 1–365 天。
-
-独立 Audit Case 授权短时 search session；每次解密读取再次审计。管理审计为 append-only hash chain视图，支持 actor/action/resource/time/result搜索，不显示 secret或正文。
+管理审计为 append-only hash chain 视图，支持 actor/action/resource/time/result 搜索，不显示 secret。
 
 ## 28. 告警、静默与通知
 
@@ -417,10 +410,11 @@ Alert Center 显示 severity、state、rule、对象、首次/最近、次数、
 | Model/Rules | `/models*`、capability/ruleset/enforcement/background/price versions |
 | Archetype/Bundle | `/environment-archetypes*`、`/transport-bundles*` |
 | Request/Usage/Export | `/requests*`、`/usage/*`、`/exports*` |
-| Approval/Audit | `/approval-cases*`、`/content-audit/*`、`/audit-events` |
+| Approval/Audit | `/approval-cases*`、`/audit-events` |
+| Settings | `/settings/body-capture`、`/settings/runtime` |
 | Alert/Ops | `/alerts*`、`/alert-silences*`、`/notifications*`、`/operations/*` |
 
-dashboard、全局 audit、alert silence、站内 inbox、PLAN Mapping、Profile 集合、系统状态、备份/演练历史和 Legal Hold typed routes 已冻结在 API 契约中；实现与 UI 路由必须逐项通过合同测试。
+dashboard、全局 audit、alert silence、站内 inbox、PLAN Mapping、Profile 集合、系统状态、备份/演练历史 typed routes 已冻结在 API 契约中；实现与 UI 路由必须逐项通过合同测试。
 
 ### 30.3 可访问性
 

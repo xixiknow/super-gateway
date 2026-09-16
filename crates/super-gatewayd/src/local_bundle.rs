@@ -310,13 +310,13 @@ async fn upsert_archetype(
     sqlx::query(
         "INSERT INTO catalog.environment_archetype_version \
            (id,archetype_id,version,lifecycle_code,runtime_code,runtime_version,client_version,protocol_profile, \
-            evidence_set_id,content_hash,created_at,activated_at,os_build,architecture_code,client_family_code,capture_cohort,profile_schema_version) \
+            evidence_set_id,content_hash,created_at,activated_at,os_build,architecture_code,client_family_code,capture_cohort,profile_schema_version,shell) \
          VALUES ($1,$2,1,'active','native','claude-code-native',$3,$4,$5,$6,clock_timestamp(),clock_timestamp(), \
-            '10.0.26200.9168','x86_64','claude_code_cli',$7,2) \
+            '10.0.26200.9168','x86_64','claude_code_cli',$7,2,'PowerShell') \
          ON CONFLICT (id) DO UPDATE SET lifecycle_code='active',runtime_code='native',runtime_version='claude-code-native', \
            client_version=EXCLUDED.client_version,protocol_profile=EXCLUDED.protocol_profile,evidence_set_id=EXCLUDED.evidence_set_id, \
            content_hash=EXCLUDED.content_hash,activated_at=COALESCE(catalog.environment_archetype_version.activated_at,clock_timestamp()), \
-           os_build=EXCLUDED.os_build,architecture_code='x86_64',client_family_code='claude_code_cli',capture_cohort=EXCLUDED.capture_cohort,profile_schema_version=2",
+           os_build=EXCLUDED.os_build,architecture_code='x86_64',client_family_code='claude_code_cli',capture_cohort=EXCLUDED.capture_cohort,profile_schema_version=2,shell='PowerShell'",
     )
     .bind(ids.version)
     .bind(ids.archetype)

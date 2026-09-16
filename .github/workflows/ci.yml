@@ -121,6 +121,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes postgresql-client
       - name: PostgreSQL R2 contract
         run: cargo test --locked -p gateway-storage --test postgres_r2 -- --nocapture
+      - name: Audit retirement upgrade with historical data
+        shell: bash
+        run: |
+          createdb --maintenance-db "$TEST_DATABASE_ADMIN_URL" gateway_ci_t6
+          TEST_T6_DATABASE_ADMIN_URL="postgres://postgres:gateway-ci-fixture@127.0.0.1:5432/gateway_ci_t6" \
+            cargo test --locked -p gateway-storage --test retire_content_audit_pg -- --nocapture
       - name: Business key rotation and resumable DEK rewrap
         shell: bash
         run: |

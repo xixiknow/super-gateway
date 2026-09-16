@@ -4,11 +4,11 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use gateway_domain::{
-    AppliedChange, ChangeRisk, ClientClass, CredentialId, Digest, GenericAdjustedRequest, PinReason, Portability,
-    RequestReplayBody, RequestSnapshotSet,
+    AppliedChange, ChangeRisk, ClientClass, ClientOs, CredentialId, Digest, GenericAdjustedRequest, PinReason,
+    Portability, RequestReplayBody, RequestSnapshotSet,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use thiserror::Error;
 
 use crate::{
@@ -16,6 +16,7 @@ use crate::{
     JsonType, ParseError, ParsedRequest,
     capability::{EvaluationContext, RuntimeCapabilityError, condition_matches, validate_condition},
     parse_messages_request,
+    system_rewrite::{is_empty_replacement, replace_system_static, strip_client_system},
 };
 
 /// Unknown-extension behavior.
@@ -231,6 +232,7 @@ impl CompiledRuleSet {
 #[derive(Clone, Debug)]
 pub struct PolicyContext {
     pub client_class: ClientClass,
+    pub client_os: ClientOs,
     pub protocol_headers: std::collections::BTreeMap<Box<str>, Value>,
     pub affinity_credential: Option<CredentialId>,
 }
@@ -249,6 +251,10 @@ impl PolicyContext {
             ),
         );
         request.insert(Box::<str>::from("model"), Value::String(model.to_owned()));
+        request.insert(
+            Box::<str>::from("client_os"),
+            Value::String(self.client_os.as_str().to_owned()),
+        );
         request.insert(Box::<str>::from("stream"), Value::Bool(stream));
         EvaluationContext {
             headers: self.protocol_headers.clone(),
@@ -327,13 +333,37 @@ impl RequestPolicy {
     ///
     /// Returns stable client/policy errors without acquiring business resources.
     pub fn process(&self, raw_body: Arc<[u8]>, context: &PolicyContext) -> Result<GenericAdjustedRequest, PolicyError> {
+        self.process_with_options(raw_body, context, true)
+    }
+
+    /// Process a count-tokens request. Unlike Messages, this endpoint does not
+    /// require a `max_tokens` field, while retaining the same model, system,
+    /// capability, and mutation protections.
+    ///
+    /// # Errors
+    /// Returns client parsing, validation, or policy errors before acquiring resources.
+    pub fn process_count_tokens(
+        &self,
+        raw_body: Arc<[u8]>,
+        context: &PolicyContext,
+    ) -> Result<GenericAdjustedRequest, PolicyError> {
+        self.process_with_options(raw_body, context, false)
+    }
+
+    fn process_with_options(
+        &self,
+        raw_body: Arc<[u8]>,
+        context: &PolicyContext,
+        require_max_tokens: bool,
+    ) -> Result<GenericAdjustedRequest, PolicyError> {
         let parsed = parse_messages_request(raw_body, self.schema_mode == SchemaMode::Strict)?;
-        let (model_id, stream) = validate_base_structure(&parsed)?;
+        let (model_id, stream) = validate_base_structure(&parsed, require_max_tokens)?;
         let capability = self.capabilities.get(&model_id).ok_or(PolicyError::ModelUnavailable)?;
         let evaluation = context.evaluation(&model_id, stream);
         let precheck = capability
             .validate(&parsed.tree, &evaluation, false)
             .map_err(map_runtime_error)?;
+        let precheck = filter_count_tokens_diagnostics(precheck, require_max_tokens);
         if !precheck.is_empty() {
             return Err(PolicyError::Capability(precheck));
         }
@@ -344,13 +374,19 @@ impl RequestPolicy {
         if let Some(ruleset) = &self.ruleset {
             apply_rules(ruleset, &mut tree, &evaluation, &mut changes)?;
         }
-        let attribution_suppressed = apply_enforcement(&self.enforcement, &mut tree, &mut changes)?;
+        let enforcement = apply_enforcement(&self.enforcement, &mut tree, &mut changes)?;
+        // Any semantic mutation causes a re-serialization. Keep the Claude
+        // request's conventional top-level ordering stable in that case.
+        if !changes.is_empty() {
+            canonicalize_system_order(&mut tree);
+        }
         if tree.get("model").and_then(Value::as_str) != Some(original_model.as_ref()) {
             return Err(PolicyError::CapabilityRuntimeConflict);
         }
         let final_diagnostics = capability
             .validate(&tree, &evaluation, true)
             .map_err(map_runtime_error)?;
+        let final_diagnostics = filter_count_tokens_diagnostics(final_diagnostics, require_max_tokens);
         if !final_diagnostics.is_empty() {
             return Err(PolicyError::Capability(final_diagnostics));
         }
@@ -371,7 +407,8 @@ impl RequestPolicy {
             model_id: original_model,
             stream,
             portability,
-            attribution_suppressed,
+            attribution_suppressed: enforcement.attribution_suppressed,
+            system_template_pending: enforcement.system_template_pending,
             change_set: changes.into(),
             snapshot_set: self.snapshots.clone(),
         })
@@ -408,7 +445,7 @@ fn allowed_rule(id: &str, path: &str, kinds: &[JsonType]) -> crate::CapabilityRu
     }
 }
 
-fn validate_base_structure(parsed: &ParsedRequest) -> Result<(Box<str>, bool), PolicyError> {
+fn validate_base_structure(parsed: &ParsedRequest, require_max_tokens: bool) -> Result<(Box<str>, bool), PolicyError> {
     let object = parsed.tree.as_object().ok_or(PolicyError::InvalidStructure)?;
     let model = object
         .get("model")
@@ -417,7 +454,10 @@ fn validate_base_structure(parsed: &ParsedRequest) -> Result<(Box<str>, bool), P
         .map(Box::from)
         .ok_or(PolicyError::InvalidStructure)?;
     if !object.get("messages").is_some_and(Value::is_array)
-        || object.get("max_tokens").is_none_or(|value| value.as_u64().is_none())
+        || (require_max_tokens && object.get("max_tokens").is_none())
+        || object
+            .get("max_tokens")
+            .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
     {
         return Err(PolicyError::InvalidStructure);
     }
@@ -429,11 +469,34 @@ fn validate_base_structure(parsed: &ParsedRequest) -> Result<(Box<str>, bool), P
     Ok((model, stream))
 }
 
+fn filter_count_tokens_diagnostics(
+    diagnostics: Vec<CapabilityDiagnostic>,
+    require_max_tokens: bool,
+) -> Vec<CapabilityDiagnostic> {
+    if require_max_tokens {
+        diagnostics
+    } else {
+        diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.path.as_ref() != "body:/max_tokens")
+            .collect()
+    }
+}
+
 fn validate_mutation_path(path: &str) -> Result<(), CapabilityCompileError> {
     let Some(pointer) = path.strip_prefix("body:") else {
         return Err(CapabilityCompileError::InvalidPath);
     };
-    if !pointer.starts_with('/') || pointer.contains('*') || pointer == "/model" || pointer.starts_with("/model/") {
+    // Message content is immutable policy input. Besides protecting prompt
+    // attribution, this keeps the client-provided first user text stable for
+    // downstream billing fingerprints.
+    if !pointer.starts_with('/')
+        || pointer.contains('*')
+        || pointer == "/model"
+        || pointer.starts_with("/model/")
+        || pointer == "/messages"
+        || pointer.starts_with("/messages/")
+    {
         return Err(CapabilityCompileError::InvalidPath);
     }
     Ok(())
@@ -490,11 +553,18 @@ fn apply_rules(
     Ok(())
 }
 
+/// Result of applying the Group System policy at the Credential-neutral stage.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct EnforcementOutcome {
+    attribution_suppressed: bool,
+    system_template_pending: bool,
+}
+
 fn apply_enforcement(
     enforcement: &Enforcement,
     tree: &mut Value,
     changes: &mut Vec<AppliedChange>,
-) -> Result<bool, PolicyError> {
+) -> Result<EnforcementOutcome, PolicyError> {
     let current = tree.get("system").cloned();
     if current
         .as_ref()
@@ -502,11 +572,27 @@ fn apply_enforcement(
     {
         return Err(PolicyError::InvalidStructure);
     }
-    let (next, suppressed, reason) = match &enforcement.system {
-        SystemPolicy::Preserve => return Ok(false),
-        SystemPolicy::StripClient => (None, false, "system_strip_client"),
-        SystemPolicy::Replace { content, .. } => (Some(content.clone()), false, "system_replace"),
-        SystemPolicy::StripAll => (None, true, "system_strip_all"),
+    let mut outcome = EnforcementOutcome::default();
+    let (next, reason) = match &enforcement.system {
+        SystemPolicy::Preserve => return Ok(outcome),
+        // The Claude Code billing block survives so the dispatcher can still
+        // align attribution; everything the client authored is dropped.
+        SystemPolicy::StripClient => (current.as_ref().and_then(strip_client_system), "system_strip_client"),
+        SystemPolicy::Replace { content, .. } => {
+            if is_empty_replacement(content) {
+                // Empty administrator content defers to the captured static
+                // template of the Archetype selected at dispatch time.
+                outcome.system_template_pending = true;
+                return Ok(outcome);
+            }
+            let mut next = current.clone().unwrap_or(Value::Null);
+            replace_system_static(&mut next, content);
+            (Some(next), "system_replace")
+        }
+        SystemPolicy::StripAll => {
+            outcome.attribution_suppressed = true;
+            (None, "system_strip_all")
+        }
     };
     match &next {
         Some(value) => set_pointer(tree, "/system", value.clone())?,
@@ -523,7 +609,31 @@ fn apply_enforcement(
             ChangeRisk::High,
         ));
     }
-    Ok(suppressed)
+    Ok(outcome)
+}
+
+/// Keep `system` immediately before `messages` after any in-place rewrite.
+pub fn canonicalize_system_order(tree: &mut Value) {
+    let Some(object) = tree.as_object_mut() else {
+        return;
+    };
+    if !object.contains_key("system") || !object.contains_key("messages") {
+        return;
+    }
+    let original = std::mem::take(object);
+    let system = original.get("system").cloned();
+    let mut reordered = Map::with_capacity(original.len());
+    for (key, value) in original {
+        if key == "messages"
+            && let Some(system) = system.clone()
+        {
+            reordered.insert("system".to_owned(), system);
+        }
+        if key != "system" {
+            reordered.insert(key, value);
+        }
+    }
+    *object = reordered;
 }
 
 fn classify_portability(
@@ -667,10 +777,11 @@ fn map_runtime_error(error: RuntimeCapabilityError) -> PolicyError {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, reason = "test fixtures must have the asserted shape")]
 mod tests {
     use std::sync::Arc;
 
-    use gateway_domain::{ChangeRisk, ClientClass, Portability, RequestSnapshotSet, SnapshotVersion};
+    use gateway_domain::{ChangeRisk, ClientClass, ClientOs, Portability, RequestSnapshotSet, SnapshotVersion};
     use serde_json::{Value, json};
 
     use super::{
@@ -696,6 +807,7 @@ mod tests {
     fn context() -> PolicyContext {
         PolicyContext {
             client_class: ClientClass::NonClaudeCodeCli,
+            client_os: ClientOs::Windows,
             protocol_headers: std::collections::BTreeMap::default(),
             affinity_credential: None,
         }
@@ -737,6 +849,89 @@ mod tests {
             assert_eq!(generic.replay_body.tree().get("system"), expected.as_ref());
             assert_eq!(generic.attribution_suppressed, suppressed);
         }
+        Ok(())
+    }
+
+    fn claude_code_raw() -> Arc<[u8]> {
+        raw(concat!(
+            r##", "system": ["##,
+            r##"{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.220.a3f; cc_entrypoint=cli;"},"##,
+            r##"{"type":"text","text":"You are Claude Code.\n# Tone and style\n","cache_control":{"type":"ephemeral"}},"##,
+            r##"{"type":"text","text":"# Environment\n - Platform: win32\n"}"##,
+            r##"]"##
+        ))
+    }
+
+    #[test]
+    fn strip_client_keeps_the_claude_code_billing_block() -> Result<(), Box<dyn std::error::Error>> {
+        let mut policy = RequestPolicy::base_for_models(["m"], snapshots())?;
+        policy.enforcement = Enforcement {
+            system: SystemPolicy::StripClient,
+        };
+        let generic = policy.process(claude_code_raw(), &context())?;
+        let system = generic.replay_body.tree()["system"]
+            .as_array()
+            .cloned()
+            .expect("system array");
+        assert_eq!(system.len(), 1);
+        assert!(
+            system[0]["text"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("x-anthropic-billing-header:"))
+        );
+        assert!(!generic.attribution_suppressed);
+        assert!(!generic.system_template_pending);
+        Ok(())
+    }
+
+    #[test]
+    fn replace_swaps_the_static_segment_and_keeps_environment() -> Result<(), Box<dyn std::error::Error>> {
+        let mut policy = RequestPolicy::base_for_models(["m"], snapshots())?;
+        policy.enforcement = Enforcement {
+            system: SystemPolicy::Replace {
+                platform_system_ref: Box::from("system-v1"),
+                content: json!("platform static"),
+            },
+        };
+        let generic = policy.process(claude_code_raw(), &context())?;
+        let system = generic.replay_body.tree()["system"]
+            .as_array()
+            .cloned()
+            .expect("system array");
+        assert_eq!(system.len(), 3);
+        assert_eq!(system[1]["text"], "platform static");
+        assert_eq!(system[1]["cache_control"]["type"], "ephemeral");
+        assert!(
+            system[2]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("Platform: win32"))
+        );
+        assert_eq!(generic.change_set.len(), 1);
+        let keys = generic
+            .replay_body
+            .tree()
+            .as_object()
+            .map(|object| object.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let system_at = keys.iter().position(|key| key == "system");
+        let messages_at = keys.iter().position(|key| key == "messages");
+        assert!(system_at < messages_at, "system must precede messages: {keys:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn empty_replace_content_defers_to_the_archetype_template() -> Result<(), Box<dyn std::error::Error>> {
+        let mut policy = RequestPolicy::base_for_models(["m"], snapshots())?;
+        policy.enforcement = Enforcement {
+            system: SystemPolicy::Replace {
+                platform_system_ref: Box::from("system-v1"),
+                content: json!(""),
+            },
+        };
+        let generic = policy.process(claude_code_raw(), &context())?;
+        assert!(generic.system_template_pending);
+        assert!(generic.replay_body.reused_original());
+        assert!(generic.change_set.is_empty());
         Ok(())
     }
 
@@ -800,6 +995,21 @@ mod tests {
             risk: ChangeRisk::High,
         };
         assert!(CompiledRuleSet::compile("bad", vec![invalid]).is_err());
+
+        for path in ["body:/messages", "body:/messages/0", "body:/messages/0/content/0/text"] {
+            let invalid = RuleDefinition {
+                id: Box::from("rewrite-message"),
+                phase: RulePhase::Default,
+                action: RuleAction::Remove { path: Box::from(path) },
+                when: CapabilityCondition::Always,
+                reason: Box::from("bad"),
+                risk: ChangeRisk::High,
+            };
+            assert!(
+                CompiledRuleSet::compile("bad-message", vec![invalid]).is_err(),
+                "path {path}"
+            );
+        }
         Ok(())
     }
 

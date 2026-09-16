@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0.0",
   "postgres_major": 16,
-  "schema_version_value": 20260901000100,
-  "migration_manifest_sha256": "376f2665a04125cca5b1033b290cd816875af4f5926e5ed2488c1a7450b2f6d4",
-  "required_table_count": 116,
+  "schema_version_value": 20260907000100,
+  "migration_manifest_sha256": "f59fb0bc0c9867d0e9ccaf7a831356af95d75d9c4b13fcbab2d4df7c489b98b5",
+  "required_table_count": 112,
   "partition_count": 5,
   "fixture_id": "FIX-R2-POSTGRES-001",
   "automation": "cargo test --locked -p gateway-storage --test postgres_r2",

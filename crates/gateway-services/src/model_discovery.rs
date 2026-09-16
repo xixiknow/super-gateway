@@ -481,10 +481,10 @@ fn merge_item_count(mut manifest: Value, item_count: usize) -> Result<Value, Mod
 }
 
 fn request_capability_matrix() -> Result<RequestCapabilityMatrix, ModelDiscoveryRetry> {
-    let matrix: RequestCapabilityMatrix =
-        serde_json::from_slice(REQUEST_CAPABILITY_MATRIX).map_err(|_| schema_retry())?;
     const THINKING_MODES: &[&str] = &["adaptive", "enabled", "disabled"];
     const EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+    let matrix: RequestCapabilityMatrix =
+        serde_json::from_slice(REQUEST_CAPABILITY_MATRIX).map_err(|_| schema_retry())?;
     if matrix.schema_version != 1
         || matrix.profile_version.is_empty()
         || matrix.profile_version.len() > 64
@@ -673,6 +673,10 @@ fn build_gateway_capability_candidate(
     }))
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "capability numeric bounds use f64; provider token limits are well below 2^53"
+)]
 fn base_messages_rules(model: &ModelDocument) -> Vec<CapabilityRule> {
     vec![
         capability_rule(
@@ -1233,7 +1237,7 @@ fn parse_public_model_detail(body: &[u8], display_name: &str, catalog_status: &s
 
 fn parse_public_release_date(markdown: &str, rows: &[Vec<String>]) -> Result<String, ()> {
     let table_value = public_detail_value(rows, "Released")
-        .or_else(|_| public_detail_value(rows, "Release date"))
+        .or_else(|()| public_detail_value(rows, "Release date"))
         .ok();
     table_value
         .into_iter()
@@ -1467,6 +1471,11 @@ fn retry_after(headers: &[(Box<str>, Box<[u8]>)]) -> Option<u32> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::needless_pass_by_value,
+    reason = "test helpers accept inline JSON fixtures and assert their validity"
+)]
 mod tests {
     use gateway_policy::{CapabilityRule, CompiledCapabilitySnapshot};
     use serde_json::{Value, json};
@@ -1479,7 +1488,7 @@ mod tests {
 
     #[test]
     fn parses_the_public_models_markdown_table_without_credentials() {
-        let markdown = br#"
+        let markdown = br"
 | Feature | Claude Opus Fixture | Claude Haiku Fixture |
 | :-- | :-- | :-- |
 | Claude API ID | `claude-opus-fixture` | `claude-haiku-fixture` |
@@ -1490,7 +1499,7 @@ mod tests {
 | Model page | [Opus](https://platform.claude.com/docs/en/models/opus-fixture/overview) | [Haiku](/docs/en/models/haiku-fixture/overview) |
 
 Legacy models (still available): [Claude Opus Legacy](https://platform.claude.com/docs/en/models/opus-legacy/overview).
-"#;
+";
         let directory = parse_public_model_directory(markdown).expect("public model table");
         assert_eq!(directory.models.len(), 2);
         assert_eq!(directory.models[0].id, "claude-opus-fixture");
@@ -1510,7 +1519,7 @@ Legacy models (still available): [Claude Opus Legacy](https://platform.claude.co
 
     #[test]
     fn parses_legacy_model_details_with_provider_limits() {
-        let markdown = br#"
+        let markdown = br"
 Model ID: `claude-opus-legacy`
 
 **Legacy.** Released November 24, 2025.
@@ -1519,7 +1528,7 @@ Model ID: `claude-opus-legacy`
 | Max output | 128K tokens |
 | [Thinking](https://example.test) | Adaptive |
 | [Default effort](https://example.test) | `high` |
-"#;
+";
         let model =
             parse_public_model_detail(markdown, "Claude Opus Legacy", "legacy_available").expect("legacy model detail");
         assert_eq!(model.id, "claude-opus-legacy");
@@ -1663,6 +1672,10 @@ Model ID: `claude-opus-legacy`
         CompiledCapabilitySnapshot::compile("candidate", model.id.clone(), rules).expect("compiled")
     }
 
+    #[allow(
+        clippy::default_trait_access,
+        reason = "the context type is not re-exported by gateway-policy"
+    )]
     fn validate(snapshot: &CompiledCapabilitySnapshot, body: Value) -> Vec<String> {
         snapshot
             .validate(&body, &Default::default(), true)

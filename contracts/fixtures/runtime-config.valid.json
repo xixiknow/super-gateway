@@ -125,26 +125,6 @@
       "default": null
     },
     {
-      "name": "GATEWAY_CONTENT_AUDIT_KEY_FILE",
-      "kind": "secret_file",
-      "required": false,
-      "secret": true,
-      "readiness_gate": true,
-      "relationship": "pair",
-      "related_to": "GATEWAY_CONTENT_AUDIT_DIR",
-      "default": null
-    },
-    {
-      "name": "GATEWAY_CONTENT_AUDIT_DIR",
-      "kind": "path",
-      "required": false,
-      "secret": false,
-      "readiness_gate": true,
-      "relationship": "pair",
-      "related_to": "GATEWAY_CONTENT_AUDIT_KEY_FILE",
-      "default": null
-    },
-    {
       "name": "GATEWAY_BACKUP_KEY_FILE",
       "kind": "secret_file",
       "required": false,

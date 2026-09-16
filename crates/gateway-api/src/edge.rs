@@ -17,17 +17,18 @@ use axum::{
 use bytes::Bytes;
 use futures_core::Stream;
 use gateway_domain::{
-    AgentId, ClientClass, Clock, Digest, PlatformKeyId, RequestId, SecretValue, SessionId, SystemClock,
+    AgentId, ClientClass, ClientOs, Clock, Digest, OsResolution, PlatformKeyId, RequestId, SecretValue, SessionId,
+    SystemClock,
 };
-use gateway_policy::{PolicyContext, PolicyError};
+use gateway_policy::{OsFamily, PolicyContext, PolicyError, parse_system_segments};
 use ipnet::IpNet;
 use serde::Serialize;
 use serde_json::Value;
 use subtle::ConstantTimeEq as _;
 
 use crate::{
-    AccessGrant, AccessResolver, DataPlaneState, DispatchError, DispatchRequest, EndpointPermission, ModelCatalog,
-    RateLimit, data::ModelRecord, probes::probe_router,
+    AccessGrant, AccessResolver, DataPlaneState, DispatchEndpoint, DispatchError, DispatchRequest, EndpointPermission,
+    ModelCatalog, RateLimit, data::ModelRecord, probes::probe_router,
 };
 
 const DEFAULT_PEER: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -196,13 +197,24 @@ async fn edge_entry(State(state): State<DataPlaneState>, mut request: Request) -
         return GatewayError::permission().response(&request_id);
     }
     match route {
-        BusinessRoute::Messages => messages(state, request, grant, request_id).await,
+        BusinessRoute::Messages => messages(state, request, grant, request_id, DispatchEndpoint::Messages).await,
+        BusinessRoute::CountTokens => messages(state, request, grant, request_id, DispatchEndpoint::CountTokens).await,
         BusinessRoute::Models => models(&state, runtime.models.as_ref(), request.uri(), &grant, &request_id),
         BusinessRoute::Unknown => GatewayError::not_found().response(&request_id),
     }
 }
 
-async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGrant>, request_id: String) -> Response {
+#[allow(
+    clippy::too_many_lines,
+    reason = "the ordered request gates share one resource acquisition boundary"
+)]
+async fn messages(
+    state: DataPlaneState,
+    request: Request,
+    grant: Arc<AccessGrant>,
+    request_id: String,
+    endpoint: DispatchEndpoint,
+) -> Response {
     let accepted_at = state.business_rates.now();
     if let Err(error) = validate_framing(request.headers()) {
         return error.response(&request_id);
@@ -223,6 +235,7 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
     };
     let classified_client = classify_client(&classification_headers, &classification_tree, &grant.platform_key_id);
     let client_class = classified_client.class;
+    let client_app = header_string(&classification_headers, "x-app");
     if !grant.accepted_client_classes.contains(&client_class) {
         return GatewayError::permission().response(&request_id);
     }
@@ -232,21 +245,49 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
     if !model_in_scope(model, &grant.group_model_scope) || !model_in_scope(model, &grant.key_model_scope) {
         return GatewayError::model_unavailable().response(&request_id);
     }
+    let (client_os, os_resolution, os_mismatch) = resolve_client_os(
+        &classification_headers,
+        &classification_tree,
+        grant.default_os_family,
+        classified_client.session_cache_key.as_deref(),
+        &state.client_os_sessions,
+    );
     let context = PolicyContext {
         client_class,
+        client_os,
         protocol_headers,
         affinity_credential: None,
     };
     let original_body = body.clone();
-    let generic = match grant.policy.process(body, &context) {
+    let generic = match if matches!(endpoint, DispatchEndpoint::CountTokens) {
+        grant.policy.process_count_tokens(body, &context)
+    } else {
+        grant.policy.process(body, &context)
+    } {
         Ok(generic) => Arc::new(generic),
         Err(error) => return map_policy_error(error).response(&request_id),
     };
-    if let Err(error) = authorize_spend(&state, &grant).await {
+    if matches!(endpoint, DispatchEndpoint::Messages)
+        && let Err(error) = authorize_spend(&state, &grant).await
+    {
         return error.response(&request_id);
     }
-    let rate_key = format!("messages:{}", grant.platform_key_id).into_boxed_str();
-    if let RateDecision::Limited { retry_after } = state.business_rates.allow(rate_key, grant.messages_rate) {
+    let rate_key = format!(
+        "{}:{}",
+        if matches!(endpoint, DispatchEndpoint::CountTokens) {
+            "count_tokens"
+        } else {
+            "messages"
+        },
+        grant.platform_key_id
+    )
+    .into_boxed_str();
+    let rate = if matches!(endpoint, DispatchEndpoint::CountTokens) {
+        grant.count_tokens_rate
+    } else {
+        grant.messages_rate
+    };
+    if let RateDecision::Limited { retry_after } = state.business_rates.allow(rate_key, rate) {
         return GatewayError::rate_limited(retry_after).response(&request_id);
     }
     let Some(permit) = state
@@ -256,6 +297,7 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
         return GatewayError::rate_limited(2).response(&request_id);
     };
     let dispatch = DispatchRequest {
+        endpoint,
         request_id: RequestId::new(request_id.clone()).unwrap_or_else(|_| unreachable_request("req_fallback")),
         owner_user_id: grant.owner_user_id.clone(),
         platform_key_id: grant.platform_key_id.clone(),
@@ -263,10 +305,13 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
         base_session_id: classified_client.base_session,
         agent_id: classified_client.agent,
         client_class,
+        client_app,
+        client_os,
+        os_resolution,
+        os_mismatch,
         identity_conflict: classified_client.identity_conflict,
         accepted_at,
         pre_upstream_deadline: accepted_at.saturating_add(Duration::from_secs(30)),
-        content_audit: grant.content_audit,
         original_body,
         generic,
         anthropic_version: header_string(&classification_headers, "anthropic-version"),
@@ -279,11 +324,11 @@ async fn messages(state: DataPlaneState, request: Request, grant: Arc<AccessGran
             Err(()) => GatewayError::unavailable_without_retry().response(&request_id),
         },
         Err(DispatchError::Unavailable) => GatewayError::unavailable(1).response(&request_id),
+        Err(DispatchError::BundleUnavailable) => GatewayError::bundle_unavailable().response(&request_id),
         Err(
             DispatchError::Overloaded { retry_after_seconds }
             | DispatchError::QueueFull { retry_after_seconds }
-            | DispatchError::PreUpstreamTimeout { retry_after_seconds }
-            | DispatchError::AuditUnavailable { retry_after_seconds },
+            | DispatchError::PreUpstreamTimeout { retry_after_seconds },
         ) => GatewayError::unavailable(retry_after_seconds).response(&request_id),
         Err(
             DispatchError::GroupRateLimited { retry_after_seconds }
@@ -351,6 +396,7 @@ fn models(
 #[derive(Clone, Copy)]
 enum BusinessRoute {
     Messages,
+    CountTokens,
     Models,
     Unknown,
 }
@@ -358,14 +404,14 @@ enum BusinessRoute {
 impl BusinessRoute {
     fn expected_method(self) -> &'static Method {
         match self {
-            Self::Messages => &Method::POST,
+            Self::Messages | Self::CountTokens => &Method::POST,
             Self::Models | Self::Unknown => &Method::GET,
         }
     }
 
     fn permission(self) -> Option<EndpointPermission> {
         match self {
-            Self::Messages => Some(EndpointPermission::Messages),
+            Self::Messages | Self::CountTokens => Some(EndpointPermission::Messages),
             Self::Models => Some(EndpointPermission::Models),
             Self::Unknown => None,
         }
@@ -373,7 +419,7 @@ impl BusinessRoute {
 
     fn method_error(self) -> GatewayError {
         match self {
-            Self::Messages => GatewayError::method("POST"),
+            Self::Messages | Self::CountTokens => GatewayError::method("POST"),
             Self::Models => GatewayError::method("GET"),
             Self::Unknown => GatewayError::not_found(),
         }
@@ -383,6 +429,7 @@ impl BusinessRoute {
 fn classify_route(path: &str) -> BusinessRoute {
     match path {
         "/v1/messages" => BusinessRoute::Messages,
+        "/v1/messages/count_tokens" => BusinessRoute::CountTokens,
         "/v1/models" => BusinessRoute::Models,
         _ => BusinessRoute::Unknown,
     }
@@ -522,6 +569,7 @@ struct ClassifiedClient {
     class: ClientClass,
     base_session: SessionId,
     agent: AgentId,
+    session_cache_key: Option<Box<str>>,
     identity_conflict: bool,
 }
 
@@ -556,6 +604,10 @@ fn classify_client(headers: &HeaderMap, tree: &Value, platform_key_id: &Platform
     };
     let header_session =
         header_string(headers, "x-claude-code-session-id").filter(|value| valid_identity_component(value));
+    let session_cache_key = header_session.as_deref().map(|session| {
+        let digest = Digest::of(format!("client-os-session:v1|{session}").as_bytes());
+        Box::<str>::from(digest.as_str())
+    });
     let metadata_session = metadata_session_id(tree).filter(|value| valid_identity_component(value));
     let identity_conflict = header_session
         .as_deref()
@@ -583,7 +635,59 @@ fn classify_client(headers: &HeaderMap, tree: &Value, platform_key_id: &Platform
         class,
         base_session,
         agent,
+        session_cache_key,
         identity_conflict,
+    }
+}
+
+fn resolve_client_os(
+    headers: &HeaderMap,
+    tree: &Value,
+    default_os: ClientOs,
+    session_cache_key: Option<&str>,
+    sessions: &crate::ClientOsSessionCache,
+) -> (ClientOs, OsResolution, bool) {
+    let header_os = header_string(headers, "x-stainless-os").and_then(|value| parse_client_os(&value));
+    let environment_os = tree
+        .get("system")
+        .map(parse_system_segments)
+        .and_then(|segments| {
+            segments
+                .environment
+                .and_then(|environment| environment.platform_normalized)
+        })
+        .map(|os| match os {
+            OsFamily::Windows => ClientOs::Windows,
+            OsFamily::Macos => ClientOs::MacOs,
+            OsFamily::Linux => ClientOs::Linux,
+        });
+    let mismatch = header_os
+        .zip(environment_os)
+        .is_some_and(|(header, environment)| header != environment);
+    if let Some(os) = header_os {
+        if let Some(key) = session_cache_key {
+            sessions.remember(key, os);
+        }
+        return (os, OsResolution::Header, mismatch);
+    }
+    if let Some(os) = environment_os {
+        if let Some(key) = session_cache_key {
+            sessions.remember(key, os);
+        }
+        return (os, OsResolution::EnvironmentOnly, false);
+    }
+    if let Some(os) = session_cache_key.and_then(|key| sessions.resolve(key)) {
+        return (os, OsResolution::SessionSticky, false);
+    }
+    (default_os, OsResolution::GroupDefault, false)
+}
+
+fn parse_client_os(value: &str) -> Option<ClientOs> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "windows" => Some(ClientOs::Windows),
+        "macos" | "mac_os" | "mac os" => Some(ClientOs::MacOs),
+        "linux" => Some(ClientOs::Linux),
+        _ => None,
     }
 }
 
@@ -999,6 +1103,14 @@ impl GatewayError {
         )
     }
 
+    fn bundle_unavailable() -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "bundle_unavailable",
+            "The requested client environment is temporarily unavailable.",
+        )
+    }
+
     fn too_large() -> Self {
         Self::new(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -1080,14 +1192,15 @@ mod tests {
     use std::{
         collections::BTreeSet,
         sync::{Arc, Mutex},
+        time::Duration,
     };
 
     use async_trait::async_trait;
     use axum::{body::Body, http::Request};
     use bytes::Bytes;
     use gateway_domain::{
-        ApplicationLifecycle, ClientClass, InternalReadiness, RequestSnapshotSet, SecretValue, SnapshotVersion,
-        SystemClock,
+        ApplicationLifecycle, ClientClass, ClientOs, InternalReadiness, RequestSnapshotSet, SecretValue,
+        SnapshotVersion, SystemClock,
     };
     use gateway_policy::RequestPolicy;
     use gateway_services::ReadinessCoordinator;
@@ -1098,9 +1211,9 @@ mod tests {
 
     use super::{BusinessRateLimiter, KeyConcurrencyLimiter, TrustedProxyConfig, classify_client, data_plane_router};
     use crate::{
-        AccessGrant, DataPlaneState, DispatchError, DispatchRequest, EndpointPermission, InMemoryAccessResolver,
-        MessageDispatcher, ModelRecord, ProbeRateLimit, ProbeRateLimiter, ProbeState, RateLimit, StaticModelCatalog,
-        UpstreamResponse,
+        AccessGrant, DataPlaneState, DispatchEndpoint, DispatchError, DispatchRequest, EndpointPermission,
+        InMemoryAccessResolver, MessageDispatcher, ModelRecord, ProbeRateLimit, ProbeRateLimiter, ProbeState,
+        RateLimit, StaticModelCatalog, UpstreamResponse,
     };
 
     #[derive(Default)]
@@ -1169,12 +1282,15 @@ mod tests {
                 requests_per_minute: 10_000,
                 burst: 100,
             },
+            count_tokens_rate: RateLimit {
+                requests_per_minute: 10_000,
+                burst: 100,
+            },
             models_rate: RateLimit::DEFAULT_MODELS,
             concurrency_limit: 5,
             ip_allowlist: Vec::new(),
             accepted_client_classes: BTreeSet::from([ClientClass::ClaudeCodeCli, ClientClass::NonClaudeCodeCli]),
-            content_audit: crate::ContentAuditMode::MetadataOnly,
-            content_audit_expires_at_unix_seconds: None,
+            default_os_family: ClientOs::Windows,
             policy,
         });
         let access = Arc::new(InMemoryAccessResolver::new(vec![(
@@ -1191,7 +1307,6 @@ mod tests {
             active_configuration_ready: true,
             transport_core_ready: true,
             required_bundles_ready: true,
-            content_audit_ready: true,
         });
         let clock: Arc<dyn gateway_domain::Clock> = Arc::new(SystemClock::new());
         let probe = ProbeState::new(
@@ -1218,7 +1333,8 @@ mod tests {
             runtime,
             dispatcher,
             observability: gateway_services::observability::DataPlaneObservability::default(),
-            business_rates: BusinessRateLimiter::new(clock),
+            business_rates: BusinessRateLimiter::new(clock.clone()),
+            client_os_sessions: crate::ClientOsSessionCache::new(clock, Duration::from_hours(24), 1_024),
             concurrency: KeyConcurrencyLimiter::default(),
             spend_authorizer: Arc::new(crate::AllowAllSpendAuthorizer),
             trusted_proxies: TrustedProxyConfig::default(),
@@ -1239,23 +1355,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn route_and_method_are_auth_first_and_count_tokens_is_hidden() -> Result<(), Box<dyn std::error::Error>> {
-        let app = test_app(Arc::new(CapturingDispatcher::default()));
+    async fn route_and_method_are_auth_first_and_count_tokens_is_forwarded() -> Result<(), Box<dyn std::error::Error>> {
+        let dispatcher = Arc::new(CapturingDispatcher::default());
+        let app = test_app(dispatcher.clone());
         let invalid_unknown = app
             .clone()
             .oneshot(Request::post("/v1/messages/count_tokens").body(Body::empty())?)
             .await?;
         assert_eq!(invalid_unknown.status(), 401);
-        let valid_unknown = app
+        let valid_count_tokens = app
             .clone()
             .oneshot(
                 Request::post("/v1/messages/count_tokens")
                     .header("x-api-key", "platform-secret")
-                    .body(Body::empty())?,
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        br#"{"model":"model-a","messages":[{"role":"user","content":"hello"}]}"#.as_slice(),
+                    ))?,
             )
             .await?;
-        assert_eq!(valid_unknown.status(), 404);
-        assert!(!valid_unknown.headers().contains_key("allow"));
+        assert_eq!(valid_count_tokens.status(), 200);
+        {
+            let captured = dispatcher
+                .captured
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert_eq!(captured.len(), 1);
+            assert_eq!(captured[0].endpoint, DispatchEndpoint::CountTokens);
+        }
         let invalid_method = app
             .oneshot(
                 Request::get("/v1/messages")

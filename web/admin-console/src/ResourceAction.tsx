@@ -7,7 +7,7 @@ import { Locale, MessageKey, useI18n } from "./i18n";
 import { rowActionError } from "./row-actions";
 import { SelectField } from "./select-field";
 
-type FieldType = "text" | "email" | "password" | "number" | "select" | "checkbox-group" | "radio-cards" | "datetime-local" | "json" | "resource";
+type FieldType = "text" | "email" | "password" | "number" | "select" | "checkbox-group" | "radio-cards" | "datetime-local" | "json" | "resource" | "textarea" | "model-checkboxes";
 type ResourceSource = "groups";
 
 interface ActionField {
@@ -69,7 +69,7 @@ class InvalidJsonFieldError extends Error {
 const text = (data: FormData, name: string): string => String(data.get(name) ?? "").trim();
 const integer = (data: FormData, name: string): number => Number.parseInt(text(data, name), 10);
 const optionalText = (data: FormData, name: string): string | null => text(data, name) || null;
-const stringList = (data: FormData, name: string): string[] => data.getAll(name).flatMap((value) => String(value).split(",")).map((item) => item.trim()).filter(Boolean);
+const stringList = (data: FormData, name: string): string[] => data.getAll(name).flatMap((value) => String(value).split(/[,\r\n]/)).map((item) => item.trim()).filter(Boolean);
 const isoDate = (data: FormData, name: string): string | null => {
   const value = text(data, name);
   return value ? new Date(value).toISOString() : null;
@@ -86,10 +86,7 @@ const authMethods = [
   { value: "console_api_key", labelKey: "action.auth.consoleKey" },
 ] satisfies ActionField["options"];
 
-const approvalKinds = [
-  "key_full_audit", "group_audit_policy", "content_read", "content_export", "device_rebuild",
-  "key_provider_change", "legal_hold", "manual_delete", "enforcement_activate",
-].map((value) => ({ value }));
+const approvalKinds = ["device_rebuild", "key_provider_change"].map((value) => ({ value }));
 
 const actionConfigs: Record<ResourceActionKey, ResourceActionConfig> = {
   group: {
@@ -138,12 +135,16 @@ const actionConfigs: Record<ResourceActionKey, ResourceActionConfig> = {
       { name: "group_id", labelKey: "action.key.group", type: "resource", source: "groups", required: true },
       { name: "spend_limit_amount", labelKey: "key.column.spendLimit", type: "number", min: 0, step: 0.01, hintKey: "key.edit.spendHint", advanced: true },
       { name: "endpoint_permissions", labelKey: "action.key.permissions", type: "checkbox-group", required: true, defaultValue: "messages,models", hintKey: "action.key.permissionsHint", options: [{ value: "messages", labelKey: "option.endpoint.messages" }, { value: "models", labelKey: "option.endpoint.models" }], advanced: true },
+      { name: "model_allowlist", labelKey: "action.key.modelAllowlist", type: "model-checkboxes", hintKey: "action.key.modelAllowlistHint", advanced: true },
+      { name: "ip_allowlist", labelKey: "action.key.ipAllowlist", type: "textarea", hintKey: "action.key.ipAllowlistHint", advanced: true },
       { name: "expires_at", labelKey: "action.key.expires", type: "datetime-local", advanced: true },
     ],
     buildPayload: (data) => ({
       name: text(data, "name"), group_id: text(data, "group_id"),
-      endpoint_permissions: stringList(data, "endpoint_permissions"), requested_content_audit: "metadata_only",
-      expires_at: isoDate(data, "expires_at"), content_audit_approval_case_id: null, content_audit_expires_at: null,
+      endpoint_permissions: stringList(data, "endpoint_permissions"),
+      model_allowlist: stringList(data, "model_allowlist"),
+      ip_allowlist: stringList(data, "ip_allowlist"),
+      expires_at: isoDate(data, "expires_at"),
       spend_limit_amount: optionalText(data, "spend_limit_amount"),
     }),
   },
@@ -241,9 +242,7 @@ function ResourceSelect({ field, id, autoFocus }: { field: ActionField; id: stri
 
 function humanizeEnum(value: string, locale: Locale): string {
   const zh: Record<string, string> = {
-    key_full_audit: "平台密钥完整内容审计", group_audit_policy: "分组审计策略", content_read: "内容读取",
-    content_export: "内容导出", device_rebuild: "设备身份重建", key_provider_change: "密钥提供方变更",
-    legal_hold: "法律保全", manual_delete: "手动删除", enforcement_activate: "执行策略激活",
+    device_rebuild: "设备身份重建", key_provider_change: "密钥提供方变更",
   };
   if (locale === "zh-CN" && zh[value]) return zh[value];
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -254,16 +253,31 @@ function FieldControl({ field, titleId, index }: { field: ActionField; titleId: 
   const id = `${titleId}-${field.name}`;
   const label = t(field.labelKey);
   return (
-    <div className={`field ${field.type === "json" || field.type === "checkbox-group" || field.type === "radio-cards" ? "field-wide" : ""}`}>
+    <div className={`field ${field.type === "json" || field.type === "textarea" || field.type === "model-checkboxes" || field.type === "checkbox-group" || field.type === "radio-cards" ? "field-wide" : ""}`}>
       {field.type !== "checkbox-group" && field.type !== "radio-cards" && <label htmlFor={id}>{label}{field.hintKey && <span className="hint">{t(field.hintKey)}</span>}</label>}
       {field.type === "resource" ? <ResourceSelect field={field} id={id} autoFocus={index === 0} />
         : field.type === "checkbox-group" ? <fieldset className="choice-field"><legend>{label}{field.hintKey && <span className="hint">{t(field.hintKey)}</span>}</legend><div className="choice-grid">{field.options?.map((option) => <label key={option.value} className="choice-card"><input type="checkbox" name={field.name} value={option.value} defaultChecked={field.defaultValue?.split(",").includes(option.value)} /><span>{option.labelKey ? t(option.labelKey) : option.label ?? humanizeEnum(option.value, locale)}</span></label>)}</div></fieldset>
         : field.type === "radio-cards" ? <fieldset className="choice-field"><legend>{label}{field.hintKey && <span className="hint">{t(field.hintKey)}</span>}</legend><div className="choice-grid">{field.options?.map((option) => <label key={option.value} className="choice-card"><input type="radio" name={field.name} value={option.value} required={field.required} defaultChecked={field.defaultValue === option.value} /><span>{option.labelKey ? t(option.labelKey) : option.label ?? humanizeEnum(option.value, locale)}</span></label>)}</div></fieldset>
         : field.type === "select" ? <SelectField id={id} name={field.name} required={field.required} defaultValue={field.defaultValue ?? ""} autoFocus={index === 0} options={(field.options ?? []).map((option) => ({ value: option.value, label: option.labelKey ? t(option.labelKey) : option.label ?? humanizeEnum(option.value, locale) }))} />
+        : field.type === "model-checkboxes" ? <ModelAllowlistField name={field.name} label={label} hint={field.hintKey ? t(field.hintKey) : undefined} />
         : field.type === "json" ? <textarea className="inp mono" id={id} name={field.name} required={field.required} defaultValue={field.defaultValue} rows={8} autoFocus={index === 0} />
+        : field.type === "textarea" ? <textarea className="inp mono" id={id} name={field.name} required={field.required} defaultValue={field.defaultValue} rows={4} autoFocus={index === 0} placeholder="192.0.2.0/24" />
         : <input className="inp" id={id} name={field.name} type={field.type} required={field.required} defaultValue={field.defaultValue} placeholder={field.placeholderKey ? t(field.placeholderKey) : undefined} min={field.min} max={field.max} step={field.step} minLength={field.minLength} maxLength={field.maxLength} autoFocus={index === 0} autoComplete={field.type === "password" ? "new-password" : undefined} />}
     </div>
   );
+}
+
+function ModelAllowlistField({ name, label, hint }: { name: string; label: string; hint?: string }) {
+  const { t } = useI18n();
+  const models = useQuery({
+    queryKey: ["/admin/v1/models"],
+    queryFn: () => api<Array<{ id?: unknown; display_name?: unknown; upstream_model_id?: unknown; lifecycle?: unknown }>>("/admin/v1/models"),
+    retry: false,
+  });
+  const published = (models.data ?? []).filter((model) => model.lifecycle === "published");
+  return <fieldset className="choice-field"><legend>{label}{hint && <span className="hint">{hint}</span>}</legend>
+    {models.isLoading ? <p className="muted">{t("common.loading")}</p> : models.isError ? <small className="field-error" role="alert">{t("action.optionLoadFailed")}</small> : published.length === 0 ? <p className="muted">{t("action.key.noPublishedModels")}</p> : <div className="choice-grid">{published.map((model) => { const id = String(model.id ?? ""); return <label key={id} className="choice-card"><input type="checkbox" name={name} value={id} /><span>{String(model.display_name ?? model.upstream_model_id ?? id)}</span></label>; })}</div>}
+  </fieldset>;
 }
 
 function ActionIcon({ intent, icon }: { intent?: "create" | "refresh"; icon?: "plus" | "refresh" | "globe" }) {

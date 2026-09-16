@@ -1,0 +1,1 @@
+{"source":"reference-2.1.220, synthetic","headers":{"X-Stainless-OS":"Linux","x-app":"cli"},"body":{"model":"claude-haiku-4-5","max_tokens":512,"system":[{"type":"text","text":"compact summary"}],"messages":[{"role":"user","content":[{"type":"text","text":"summarize"}]}]}}

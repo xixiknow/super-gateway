@@ -78,6 +78,57 @@ pub enum ClientClass {
     NonClaudeCodeCli,
 }
 
+/// Client operating-system family used to select one coherent southbound profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientOs {
+    /// Microsoft Windows client.
+    Windows,
+    /// Apple macOS client.
+    MacOs,
+    /// Linux client.
+    Linux,
+}
+
+impl ClientOs {
+    /// Stable database and wire identifier.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Windows => "windows",
+            Self::MacOs => "macos",
+            Self::Linux => "linux",
+        }
+    }
+}
+
+/// Evidence source used to resolve the request's client operating system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OsResolution {
+    /// Valid `X-Stainless-OS` header.
+    Header,
+    /// Parsed only from the Claude Code environment System block.
+    EnvironmentOnly,
+    /// Previous result for the same client base session.
+    SessionSticky,
+    /// Credential Group configuration default.
+    GroupDefault,
+}
+
+impl OsResolution {
+    /// Stable telemetry identifier.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Header => "header",
+            Self::EnvironmentOnly => "environment_only",
+            Self::SessionSticky => "session_sticky",
+            Self::GroupDefault => "group_default",
+        }
+    }
+}
+
 /// Immutable artifact/config version selected before the first business mutation.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -234,6 +285,10 @@ pub struct GenericAdjustedRequest {
     pub portability: Portability,
     /// Whether Profile Attribution must remain suppressed.
     pub attribution_suppressed: bool,
+    /// The Group `replace` policy carried no content, so the dispatcher must
+    /// swap the static System segment for the selected Archetype's captured
+    /// template once a Credential is chosen.
+    pub system_template_pending: bool,
     /// Ordered deterministic policy changes.
     pub change_set: Arc<[AppliedChange]>,
     /// Configuration versions frozen for the whole request.

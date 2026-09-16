@@ -17,9 +17,10 @@ pub use credential::{
     BrowserReauthCommit, CredentialEnrollmentCreate, CredentialGroupMigrationBegin, CredentialLifecycleCommand,
     CredentialProfileProvision, CredentialR5Snapshot, DeviceIdentityRebuild, DurableJobFence, EgressAllocation,
     EgressAllocationRequest, EnrollmentRecord, MaintenanceFailureUpdate, MaintenanceOperationCreate,
-    MaintenanceOperationRecord, ManagedBrowserStrategyCreate, OAuthCallbackClaim, PlanMappingActivation,
-    PlanMappingActivationCommit, PlanMappingArtifactCreate, PlanMappingRecomputeCommit, PlanObservationCommit,
-    PlanObservationFence, ProfileCohortUpgrade, ProfileContinuityCommit,
+    MaintenanceOperationRecord, ManagedBrowserStrategyCreate, OAuthCallbackClaim, OsProfileProvision,
+    OsProfileProvisionOutcome, PlanMappingActivation, PlanMappingActivationCommit, PlanMappingArtifactCreate,
+    PlanMappingRecomputeCommit, PlanObservationCommit, PlanObservationFence, ProfileCohortUpgrade,
+    ProfileContinuityCommit,
 };
 pub use egress_rebind::EgressRebindCommit;
 pub use export::{UsageExportArtifactCommit, UsageExportDataRow, UsageExportDownload, UsageExportWork};
@@ -32,8 +33,9 @@ pub use postgres::{
 };
 pub use proxy::ProxyProbeCommit;
 pub use telemetry::{
-    CancelEstimateEvidencePersist, CostPersist, DeliveryComplete, DeliveryStart, PriceBasis, QuotaCurrentProjection,
-    QuotaObservationPersist, RequestCreate, RequestLifecycleComplete, SubmissionIntentArm, UsagePersist,
+    BodyCaptureConfig, CancelEstimateEvidencePersist, CostPersist, DeliveryComplete, DeliveryStart, PriceBasis,
+    QuotaCurrentProjection, QuotaObservationPersist, RequestBodyCapture, RequestCreate, RequestLifecycleComplete,
+    RuntimeSettings, SubmissionIntentArm, UsagePersist, aggregate_sse_message,
 };
 use thiserror::Error;
 pub use upgrade::{UpgradeGateCommit, UpgradePreflightCommit, UpgradePreflightWork};

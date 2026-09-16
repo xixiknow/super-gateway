@@ -198,7 +198,6 @@ mod tests {
             active_configuration_ready: true,
             transport_core_ready: true,
             required_bundles_ready: true,
-            content_audit_ready: true,
         })
     }
 

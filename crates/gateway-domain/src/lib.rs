@@ -30,8 +30,8 @@ pub use ids::{
 };
 pub use readiness::{ApplicationLifecycle, InternalReadiness, PublicReadiness, ReadinessBlocker};
 pub use request::{
-    AppliedChange, ChangeRisk, ClientClass, Digest, FieldPresence, GenericAdjustedRequest, PinReason, Portability,
-    RequestReplayBody, RequestSnapshotSet, SnapshotVersion,
+    AppliedChange, ChangeRisk, ClientClass, ClientOs, Digest, FieldPresence, GenericAdjustedRequest, OsResolution,
+    PinReason, Portability, RequestReplayBody, RequestSnapshotSet, SnapshotVersion,
 };
 pub use response::{
     BufferTier, ClientCommitState, CostEstimate, DeliveryOutcome, PriceSnapshot, RequestPhase, ResponseMode,

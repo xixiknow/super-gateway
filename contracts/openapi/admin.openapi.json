@@ -1679,595 +1679,6 @@
         }
       }
     },
-    "/admin/v1/content-audit/legal-holds": {
-      "get": {
-        "operationId": "getContentAuditLegalHolds",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "查询或创建 Legal Hold；创建需双人审批",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/PageSize"
-          },
-          {
-            "$ref": "#/components/parameters/PageAfter"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      },
-      "post": {
-        "operationId": "postContentAuditLegalHolds",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "查询或创建 Legal Hold；创建需双人审批",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LegalHoldCreateCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/content-audit/legal-holds/{id}": {
-      "get": {
-        "operationId": "getContentAuditLegalHoldsById",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "范围、复核、到期与 active object count",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/PageSize"
-          },
-          {
-            "$ref": "#/components/parameters/PageAfter"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      }
-    },
-    "/admin/v1/content-audit/legal-holds/{id}:release": {
-      "post": {
-        "operationId": "postContentAuditLegalHoldsByIdRelease",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "双人审批后解除",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LegalHoldActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/content-audit/legal-holds/{id}:review": {
-      "post": {
-        "operationId": "postContentAuditLegalHoldsByIdReview",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "定期复核并记录理由",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LegalHoldActionCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/content-audit/purge-jobs": {
-      "post": {
-        "operationId": "postContentAuditPurgeJobs",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "到期或管理员明确清理 Job",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/JobEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ContentPurgeCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/content-audit/records/{id}": {
-      "get": {
-        "operationId": "getContentAuditRecordsById",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "解密单条记录，强审计",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "search_session_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Approval-bound Content Audit search session containing this record."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      }
-    },
-    "/admin/v1/content-audit/records/{id}:export": {
-      "post": {
-        "operationId": "postContentAuditRecordsByIdExport",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "双重确认后的独立导出",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContentAuditExportEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ContentAuditExportCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/content-audit/search-sessions": {
-      "post": {
-        "operationId": "postContentAuditSearchSessions",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "step-up + 理由，创建短时检索 Session",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/CsrfToken"
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ContentAuditSearchCommand"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/content-audit/search-sessions/{id}/records": {
-      "get": {
-        "operationId": "getContentAuditSearchSessionsByIdRecords",
-        "tags": [
-          "Content Audit"
-        ],
-        "summary": "在授权范围内查询",
-        "x-roles": [
-          "platform_admin"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/PageSize"
-          },
-          {
-            "$ref": "#/components/parameters/PageAfter"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      }
-    },
     "/admin/v1/credential-enrollments": {
       "post": {
         "operationId": "postCredentialEnrollments",
@@ -8202,7 +7613,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ResourcePatchCommand"
+                "$ref": "#/components/schemas/PlatformKeyPatchCommand"
               }
             }
           }
@@ -8659,6 +8070,110 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PlatformKeyRevokeCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/price-sync/status": {
+      "get": {
+        "operationId": "getPriceSyncStatus",
+        "tags": [
+          "RuleSet 与 Price"
+        ],
+        "summary": "LiteLLM 价格同步状态",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/admin/v1/price-sync:run": {
+      "post": {
+        "operationId": "postPriceSyncRun",
+        "tags": [
+          "RuleSet 与 Price"
+        ],
+        "summary": "立即触发 LiteLLM 价格同步",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/JobEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyCommand"
               }
             }
           }
@@ -9560,6 +9075,62 @@
         }
       }
     },
+    "/admin/v1/requests/{id}/body": {
+      "get": {
+        "operationId": "getRequestsByIdBody",
+        "tags": [
+          "查询"
+        ],
+        "summary": "请求三阶段正文与上游响应正文",
+        "x-roles": [
+          "platform_admin",
+          "key_owner"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestBodyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/admin/v1/rulesets": {
       "get": {
         "operationId": "getRulesets",
@@ -9863,6 +9434,204 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RuleSetActionCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/settings/body-capture": {
+      "get": {
+        "operationId": "getSettingsBodyCapture",
+        "tags": [
+          "查询"
+        ],
+        "summary": "正文采集设置",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BodyCaptureSettingsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putSettingsBodyCapture",
+        "tags": [
+          "查询"
+        ],
+        "summary": "更新正文采集设置",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BodyCaptureSettingsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BodyCaptureSettingsCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/settings/runtime": {
+      "get": {
+        "operationId": "getSettingsRuntime",
+        "tags": [
+          "查询"
+        ],
+        "summary": "运行时阈值设置（价格同步周期、第三方拒绝告警阈值）",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putSettingsRuntime",
+        "tags": [
+          "查询"
+        ],
+        "summary": "更新运行时阈值设置",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeSettingsCommand"
               }
             }
           }
@@ -11024,6 +10793,222 @@
         "properties": {},
         "additionalProperties": false
       },
+      "BodyCaptureSettingsCommand": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "retention_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 67108864
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "retention_days",
+          "max_bytes"
+        ]
+      },
+      "BodyCaptureSettingsEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "retention_days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 365
+              },
+              "max_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 67108864
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "enabled",
+              "retention_days",
+              "max_bytes"
+            ]
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "RuntimeSettingsCommand": {
+        "type": "object",
+        "properties": {
+          "price_sync_interval_hours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 168
+          },
+          "third_party_window_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
+          },
+          "third_party_min_rejections": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "third_party_ratio_percent": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "price_sync_interval_hours",
+          "third_party_window_minutes",
+          "third_party_min_rejections",
+          "third_party_ratio_percent"
+        ]
+      },
+      "RuntimeSettingsEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "price_sync_interval_hours": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 168
+              },
+              "third_party_window_minutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1440
+              },
+              "third_party_min_rejections": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "third_party_ratio_percent": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "price_sync_interval_hours",
+              "third_party_window_minutes",
+              "third_party_min_rejections",
+              "third_party_ratio_percent"
+            ]
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "RequestBodyEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "original_request": {
+                "type": [
+                  "object",
+                  "array",
+                  "string",
+                  "null"
+                ]
+              },
+              "policy_request": {
+                "type": [
+                  "object",
+                  "array",
+                  "string",
+                  "null"
+                ]
+              },
+              "final_upstream_request": {
+                "type": [
+                  "object",
+                  "array",
+                  "string",
+                  "null"
+                ]
+              },
+              "upstream_response": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "upstream_response_final": {
+                "type": [
+                  "object",
+                  "array",
+                  "string",
+                  "null"
+                ]
+              },
+              "captured_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "body_digest_mismatch": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "request_id",
+              "original_request",
+              "policy_request",
+              "final_upstream_request",
+              "upstream_response",
+              "upstream_response_final",
+              "captured_at",
+              "body_digest_mismatch"
+            ]
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
       "ModelResource": {
         "type": "object",
         "properties": {
@@ -11156,7 +11141,6 @@
             "enum": [
               "key_secret_reveal",
               "irreversible_lifecycle",
-              "content_audit_access",
               "approval_decision",
               "key_provider_change",
               "backup_restore_security",
@@ -11266,29 +11250,27 @@
               ]
             },
             "minItems": 1,
+            "maxItems": 2,
             "uniqueItems": true
           },
-          "requested_content_audit": {
-            "type": "string",
-            "enum": [
-              "metadata_only",
-              "full_encrypted"
-            ],
-            "x-enum-registry": "content_audit_requested_mode"
+          "model_allowlist": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 256,
+            "uniqueItems": true
           },
-          "content_audit_approval_case_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "content_audit_expires_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
+          "ip_allowlist": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "maxItems": 256,
+            "uniqueItems": true
           },
           "spend_limit_amount": {
             "type": [
@@ -11302,9 +11284,77 @@
         "required": [
           "name",
           "group_id",
-          "endpoint_permissions",
-          "requested_content_audit"
+          "endpoint_permissions"
         ]
+      },
+      "PlatformKeyPatchCommand": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "group_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "endpoint_permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "messages",
+                "models"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 2,
+            "uniqueItems": true
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "messages_rpm": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "spend_limit_amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+(?:\\.[0-9]{1,12})?$"
+          },
+          "model_allowlist": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "ip_allowlist": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
       },
       "PlatformKeyRevealCommand": {
         "type": "object",
@@ -11405,6 +11455,15 @@
               "proxy_only"
             ]
           },
+          "default_os_family": {
+            "type": "string",
+            "enum": [
+              "windows",
+              "macos",
+              "linux"
+            ],
+            "default": "windows"
+          },
           "limits": {
             "type": "object",
             "properties": {
@@ -11499,31 +11558,6 @@
               "upstream_stream_idle_ms"
             ]
           },
-          "content_audit": {
-            "type": "object",
-            "properties": {
-              "policy": {
-                "type": "string",
-                "enum": [
-                  "allow",
-                  "require",
-                  "forbid"
-                ],
-                "x-enum-registry": "content_audit_group_policy"
-              },
-              "retention_days": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 365,
-                "default": 7
-              }
-            },
-            "additionalProperties": true,
-            "required": [
-              "policy",
-              "retention_days"
-            ]
-          },
           "governance": {
             "type": "object",
             "properties": {
@@ -11596,8 +11630,7 @@
           "limits",
           "credential_defaults",
           "queue",
-          "timeouts",
-          "content_audit"
+          "timeouts"
         ]
       },
       "GroupConfigRollbackCommand": {
@@ -12385,6 +12418,14 @@
             "minLength": 1,
             "maxLength": 256
           },
+          "shell": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 256
+          },
           "client_family": {
             "type": "string",
             "const": "claude_code_cli"
@@ -12416,6 +12457,13 @@
           "protocol_profile": {
             "type": "object",
             "additionalProperties": true
+          },
+          "system_template": {
+            "type": [
+              "string",
+              "array",
+              "null"
+            ]
           },
           "evidence_set_id": {
             "type": [
@@ -12571,15 +12619,8 @@
           "kind": {
             "type": "string",
             "enum": [
-              "key_full_audit",
-              "group_audit_policy",
-              "content_read",
-              "content_export",
               "device_rebuild",
-              "key_provider_change",
-              "legal_hold",
-              "manual_delete",
-              "enforcement_activate"
+              "key_provider_change"
             ],
             "x-enum-registry": "approval_kind"
           },
@@ -12625,73 +12666,6 @@
           "step_up_grant_id"
         ]
       },
-      "ContentAuditSearchFilters": {
-        "type": "object",
-        "properties": {
-          "request_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "owner_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "platform_key_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "group_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "attempt_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "object_kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "original_request",
-              "final_upstream_request",
-              "upstream_response",
-              null
-            ]
-          },
-          "created_from": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "created_to": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          }
-        },
-        "additionalProperties": false
-      },
       "ModelRefreshCommand": {
         "type": "object",
         "properties": {
@@ -12703,219 +12677,6 @@
         "additionalProperties": false,
         "required": [
           "reason"
-        ]
-      },
-      "ContentAuditSearchCommand": {
-        "type": "object",
-        "properties": {
-          "approval_case_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "step_up_grant_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2048
-          },
-          "filters": {
-            "$ref": "#/components/schemas/ContentAuditSearchFilters"
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "approval_case_id",
-          "step_up_grant_id",
-          "reason",
-          "filters"
-        ]
-      },
-      "ContentAuditExportCommand": {
-        "type": "object",
-        "properties": {
-          "search_session_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "approval_case_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "step_up_grant_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2048
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "search_session_id",
-          "approval_case_id",
-          "step_up_grant_id",
-          "reason"
-        ]
-      },
-      "ContentAuditExportEnvelope": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "format": "uuid"
-              },
-              "job_id": {
-                "type": "string",
-                "format": "uuid"
-              },
-              "dataset": {
-                "type": "string",
-                "const": "content_audit_record_v1"
-              },
-              "format": {
-                "type": "string",
-                "const": "raw"
-              },
-              "state": {
-                "type": "string",
-                "const": "queued"
-              },
-              "revision": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "created_at": {
-                "type": "string",
-                "format": "date-time"
-              }
-            },
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "job_id",
-              "dataset",
-              "format",
-              "state",
-              "revision",
-              "created_at"
-            ]
-          },
-          "meta": {
-            "$ref": "../schemas/common.schema.json#/$defs/Meta"
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "data",
-          "meta"
-        ]
-      },
-      "LegalHoldCreateCommand": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2048
-          },
-          "approval_case_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "review_due_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "objects": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 10000,
-            "items": {
-              "type": "object",
-              "properties": {
-                "content_audit_object_id": {
-                  "type": "string",
-                  "format": "uuid"
-                }
-              },
-              "additionalProperties": false,
-              "required": [
-                "content_audit_object_id"
-              ]
-            }
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "reason",
-          "approval_case_id",
-          "objects"
-        ]
-      },
-      "LegalHoldActionCommand": {
-        "type": "object",
-        "properties": {
-          "approval_case_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2048
-          },
-          "expected_revision": {
-            "type": "integer",
-            "minimum": 1
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "approval_case_id",
-          "reason",
-          "expected_revision"
-        ]
-      },
-      "ContentPurgeCommand": {
-        "type": "object",
-        "properties": {
-          "approval_case_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2048
-          },
-          "object_ids": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 10000,
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "approval_case_id",
-          "reason",
-          "object_ids"
         ]
       },
       "KeyRotationCommand": {
@@ -13821,5 +13582,5 @@
     }
   },
   "x-generated-from": "planning/api-contract.md",
-  "x-route-count": 181
+  "x-route-count": 178
 }

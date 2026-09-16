@@ -7,11 +7,12 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gateway_domain::{
-    AuthKind, CredentialPurpose, EnrollmentAuthMethod, EnrollmentMode, ManagementClass, SecretBytes, SecretValue,
+    AuthKind, ClientOs, CredentialPurpose, EnrollmentAuthMethod, EnrollmentMode, ManagementClass, SecretBytes,
+    SecretValue,
 };
 use gateway_services::{
     credential::CredentialServiceError,
-    credential_enrollment_postgres::PgCredentialEnrollmentExecutor,
+    credential_enrollment_postgres::{PgCredentialEnrollmentExecutor, provision_missing_os_profiles},
     credential_provider::{ProviderHttpPort, ProviderHttpRequest, ProviderHttpResponse},
     operations::{CredentialEnrollmentJobAttempt, CredentialEnrollmentJobExecutor, JobAttemptDecision},
     security::{EnvelopeAad, EnvelopeService, LocalAesKeyProvider},
@@ -140,6 +141,7 @@ async fn existing_oauth_job_verifies_deduplicates_provisions_and_activates() -> 
             expected_credential_revision: None,
             expires_in_seconds: 1_800,
             callback_window_seconds: 600,
+            os_family: ClientOs::Windows,
         })
         .await?;
     storage
@@ -149,6 +151,7 @@ async fn existing_oauth_job_verifies_deduplicates_provisions_and_activates() -> 
             binding_id: Uuid::now_v7(),
             expected_enrollment_revision: 1,
             expected_credential_revision: 1,
+            os_family: ClientOs::Windows,
         })
         .await?;
     let access_secret =
@@ -279,6 +282,7 @@ async fn existing_oauth_job_verifies_deduplicates_provisions_and_activates() -> 
             expected_credential_revision: Some(recovery_revision),
             expires_in_seconds: 1_800,
             callback_window_seconds: 600,
+            os_family: ClientOs::Windows,
         })
         .await?;
     assert_eq!(recovery.state, "awaiting_user_action");
@@ -344,6 +348,63 @@ async fn existing_oauth_job_verifies_deduplicates_provisions_and_activates() -> 
     );
     assert_eq!(after_recovery.try_get::<Uuid, _>("egress_binding_id")?, original_egress);
     assert_eq!(after_recovery.try_get::<String, _>("state_code")?, "succeeded");
+
+    // No capture assets means no partial device/profile/egress allocation.
+    assert!(
+        provision_missing_os_profiles(&storage, group_id, ClientOs::Linux)
+            .await?
+            .is_none()
+    );
+    for os in [ClientOs::MacOs, ClientOs::Linux] {
+        fixture_os_archetype(&storage, os).await?;
+        let (first, second) = tokio::join!(
+            provision_missing_os_profiles(&storage, group_id, os),
+            provision_missing_os_profiles(&storage, group_id, os),
+        );
+        let first = first?.ok_or("missing OS fixture")?;
+        let second = second?.ok_or("missing OS fixture")?;
+        assert_eq!(first.provisioned + second.provisioned, 1);
+        assert_eq!(first.failed + second.failed, 0);
+        let repeated = provision_missing_os_profiles(&storage, group_id, os)
+            .await?
+            .ok_or("missing OS fixture")?;
+        assert_eq!(repeated.provisioned, 0);
+    }
+    let profiles = sqlx::query(
+        "SELECT p.id,p.os_family_code,p.device_identity_id,p.egress_binding_id, \
+                d.os_family_code AS device_os,e.os_family_code AS egress_os,a.os_family_code AS archetype_os, \
+                d.credential_id AS device_credential,e.credential_id AS egress_credential \
+         FROM gateway.credential_profile p \
+         JOIN gateway.device_identity d ON d.id=p.device_identity_id \
+         JOIN gateway.credential_egress_binding e ON e.id=p.egress_binding_id \
+         JOIN catalog.environment_archetype_version v ON v.id=p.archetype_version_id \
+         JOIN catalog.environment_archetype a ON a.id=v.archetype_id WHERE p.credential_id=$1",
+    )
+    .bind(credential_id)
+    .fetch_all(&storage.pool())
+    .await?;
+    assert_eq!(profiles.len(), 3);
+    for profile in profiles {
+        let os: String = profile.try_get("os_family_code")?;
+        assert_eq!(profile.try_get::<String, _>("device_os")?, os);
+        assert_eq!(profile.try_get::<String, _>("egress_os")?, os);
+        assert_eq!(profile.try_get::<String, _>("archetype_os")?, os);
+        assert_eq!(profile.try_get::<Uuid, _>("device_credential")?, credential_id);
+        assert_eq!(profile.try_get::<Uuid, _>("egress_credential")?, credential_id);
+        if os == "windows" {
+            assert_eq!(profile.try_get::<Uuid, _>("id")?, original_profile);
+            assert_eq!(profile.try_get::<Uuid, _>("device_identity_id")?, original_device);
+            assert_eq!(profile.try_get::<Uuid, _>("egress_binding_id")?, original_egress);
+        }
+    }
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM gateway.device_identity WHERE credential_id=$1), \
+                (SELECT count(*) FROM gateway.credential_egress_binding WHERE credential_id=$1)",
+    )
+    .bind(credential_id)
+    .fetch_one(&storage.pool())
+    .await?;
+    assert_eq!(counts, (3, 3));
     Ok(())
 }
 
@@ -377,6 +438,7 @@ async fn oauth_pkce_callback_is_exchanged_once_and_resumes_from_encrypted_checkp
             expected_credential_revision: None,
             expires_in_seconds: 1_800,
             callback_window_seconds: 600,
+            os_family: ClientOs::Windows,
         })
         .await?;
     storage
@@ -386,6 +448,7 @@ async fn oauth_pkce_callback_is_exchanged_once_and_resumes_from_encrypted_checkp
             binding_id: Uuid::now_v7(),
             expected_enrollment_revision: 1,
             expected_credential_revision: 1,
+            os_family: ClientOs::Windows,
         })
         .await?;
     let verifier = stage_enrollment_secret(&storage, enrollment_id, "pkce_verifier", b"pkce-verifier-fixture").await?;
@@ -502,6 +565,7 @@ async fn setup_token_bootstrap_activates_without_refresh_material() -> Result<()
             expected_credential_revision: None,
             expires_in_seconds: 1_800,
             callback_window_seconds: 600,
+            os_family: ClientOs::Windows,
         })
         .await?;
     storage
@@ -511,6 +575,7 @@ async fn setup_token_bootstrap_activates_without_refresh_material() -> Result<()
             binding_id: Uuid::now_v7(),
             expected_enrollment_revision: 1,
             expected_credential_revision: 1,
+            os_family: ClientOs::Windows,
         })
         .await?;
     let setup_secret = stage_enrollment_secret(&storage, enrollment_id, "setup_token", b"setup-fixture").await?;
@@ -659,9 +724,14 @@ async fn lease_enrollment_job(
 }
 
 async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error::Error>> {
+    fixture_os_archetype(storage, ClientOs::Windows).await
+}
+
+async fn fixture_os_archetype(storage: &PgStorage, os: ClientOs) -> Result<(), Box<dyn std::error::Error>> {
     let archetype = Uuid::now_v7();
     let version = Uuid::now_v7();
     let bundle = Uuid::now_v7();
+    let cohort = format!("{}-r5", os.as_str());
     let mut transaction = storage.pool().begin().await?;
     // The PostgreSQL integration tests share one database and execute in
     // parallel. Serialize the max+1 artifact-version allocation so two
@@ -677,21 +747,23 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
     sqlx::query(
         "INSERT INTO catalog.environment_archetype \
          (id,name,os_family_code,architecture_code,lifecycle_code,created_at,updated_at,revision) \
-         VALUES ($1,$2,'windows','x86_64','active',clock_timestamp(),clock_timestamp(),1)",
+         VALUES ($1,$2,$3,'x86_64','active',clock_timestamp(),clock_timestamp(),1)",
     )
     .bind(archetype)
     .bind(format!("r5-enrollment-{archetype}"))
+    .bind(os.as_str())
     .execute(&mut *transaction)
     .await?;
     sqlx::query(
         "INSERT INTO catalog.environment_archetype_version \
          (id,archetype_id,version,lifecycle_code,runtime_code,runtime_version,client_version,protocol_profile, \
           content_hash,created_at,activated_at,capture_cohort) \
-         VALUES ($1,$2,1,'active','bun','1.2','2.1.220','{}'::jsonb,$3,clock_timestamp(),clock_timestamp(),'windows-r5')",
+         VALUES ($1,$2,1,'active','bun','1.2','2.1.220','{}'::jsonb,$3,clock_timestamp(),clock_timestamp(),$4)",
     )
     .bind(version)
     .bind(archetype)
     .bind(Uuid::now_v7().as_bytes().to_vec())
+    .bind(&cohort)
     .execute(&mut *transaction)
     .await?;
     sqlx::query(
@@ -699,7 +771,7 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
          (id,artifact_version,engine_abi_version,lifecycle_code,manifest,manifest_hash,signature,signing_key_id,object_uri, \
           source_archetype_version_id,capture_cohort,protocol_code,backend_id,evidence_gate_code,min_engine_build, \
           created_at,activated_at) \
-         VALUES ($1,$2,'r6-v1','active','{}'::jsonb,$3,$4,'fixture','fixture://bundle',$5,'windows-r5','h1', \
+         VALUES ($1,$2,'r6-v1','active','{}'::jsonb,$3,$4,'fixture','fixture://bundle',$5,$6,'h1', \
                  'boring-h1','passed','0.1.0',clock_timestamp(),clock_timestamp())",
     )
     .bind(bundle)
@@ -707,6 +779,7 @@ async fn fixture_archetype(storage: &PgStorage) -> Result<(), Box<dyn std::error
     .bind(Uuid::now_v7().as_bytes().to_vec())
     .bind(vec![7_u8; 32])
     .bind(version)
+    .bind(&cohort)
     .execute(&mut *transaction)
     .await?;
     sqlx::query(

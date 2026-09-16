@@ -77,6 +77,59 @@
         }
       }
     },
+    "/v1/messages/count_tokens": {
+      "post": {
+        "operationId": "countMessageTokens",
+        "summary": "Count tokens using the selected subscription credential",
+        "x-request-adjustment": "explicit-policy-only",
+        "x-response-body-passthrough": "byte-exact",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CountTokensRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Opaque Anthropic count-tokens response",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "x-opaque-passthrough": true
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "403": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "500": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "504": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "operationId": "listModels",
@@ -358,6 +411,77 @@
           "messages"
         ]
       },
+      "CountTokensRequest": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "role",
+                "content"
+              ],
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "content": {}
+              },
+              "additionalProperties": true
+            }
+          },
+          "system": {},
+          "stream": {
+            "type": "boolean",
+            "default": false
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "top_p": {
+            "type": "number"
+          },
+          "top_k": {
+            "type": "integer"
+          },
+          "stop_sequences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "tool_choice": {},
+          "thinking": {},
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "output_config": {},
+          "context_management": {}
+        },
+        "additionalProperties": true,
+        "required": [
+          "model",
+          "messages"
+        ]
+      },
       "Model": {
         "type": "object",
         "properties": {
@@ -467,7 +591,7 @@
   },
   "x-public-route-policy": {
     "unknown_v1_requires_auth": true,
-    "count_tokens_public": false,
+    "count_tokens_public": true,
     "websocket": false,
     "providers": [
       "anthropic_official"

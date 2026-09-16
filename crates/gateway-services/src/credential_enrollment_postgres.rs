@@ -6,11 +6,11 @@ use std::{sync::Arc, time::SystemTime};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_domain::{
-    AuthKind, EgressBindingId, EgressBindingSnapshot, EgressMode, ProxyEndpointId, SecretBytes, SecretValue,
+    AuthKind, ClientOs, EgressBindingId, EgressBindingSnapshot, EgressMode, ProxyEndpointId, SecretBytes, SecretValue,
 };
 use gateway_storage::{
     AuthCandidateRecord, AuthCasPrecondition, CredentialProfileProvision, DurableJobFence, MaintenanceOperationCreate,
-    PgStorage, StorageError,
+    OsProfileProvision, OsProfileProvisionOutcome, PgStorage, StorageError,
 };
 use http::Uri;
 use serde::Deserialize;
@@ -166,7 +166,7 @@ where
             }
             let allocation = allocate_device_identity(&self.storage, credential_id).await?;
             let allocated_secret_ids = allocation.all_secret_ids();
-            let archetype = select_archetype(&self.storage).await?;
+            let archetype = select_archetype(&self.storage, snapshot.os_family).await?;
             let provision = CredentialProfileProvision {
                 enrollment_id,
                 credential_id,
@@ -187,6 +187,7 @@ where
                 expected_enrollment_revision: snapshot.enrollment_revision,
                 expected_credential_revision: snapshot.credential_revision,
                 durable_job_fence: Some(durable_job_fence.clone()),
+                os_family: snapshot.os_family,
             };
             if let Err(error) = self.storage.provision_credential_profile(&provision).await {
                 destroy_secret_ids(&self.storage, &allocated_secret_ids).await;
@@ -468,6 +469,7 @@ struct EnrollmentSnapshot {
     egress_binding_id: Uuid,
     egress_epoch: i64,
     egress: EgressBindingSnapshot,
+    os_family: ClientOs,
 }
 
 async fn load_snapshot(
@@ -478,9 +480,9 @@ async fn load_snapshot(
     let row = sqlx::query(
         "SELECT e.kind_code,e.state_code,e.auth_method_code,e.revision AS enrollment_revision,e.material_secret_refs, \
                 e.identified_account_uuid,e.pkce_verifier_secret_id, \
-                e.provider_profile_id,c.revision AS credential_revision,c.token_version,c.lifecycle_state_code, \
+                 e.provider_profile_id,e.os_family_code,c.revision AS credential_revision,c.token_version,c.lifecycle_state_code, \
                 c.auth_kind_code,c.account_uuid,c.active_auth_version_id, \
-                EXISTS(SELECT 1 FROM gateway.credential_profile cp WHERE cp.credential_id=c.id) AS profile_exists, \
+                 EXISTS(SELECT 1 FROM gateway.credential_profile cp WHERE cp.credential_id=c.id AND cp.os_family_code=e.os_family_code) AS profile_exists, \
                 b.id AS egress_binding_id,b.mode_code,b.proxy_id, \
                 e.egress_epoch AS frozen_egress_epoch,b.egress_epoch AS current_egress_epoch, \
                 b.lifecycle_code AS egress_lifecycle,b.stability_code AS egress_stability, \
@@ -545,6 +547,11 @@ async fn load_snapshot(
     } else {
         None
     };
+    let os_family = parse_client_os(
+        &row.try_get::<String, _>("os_family_code")
+            .map_err(|_| EnrollmentRunError::Storage(StorageError::TransactionFailed))?,
+    )
+    .ok_or(EnrollmentRunError::EvidencePending("invalid_os_family"))?;
     Ok(EnrollmentSnapshot {
         enrollment_id,
         kind: row
@@ -595,6 +602,7 @@ async fn load_snapshot(
         egress_binding_id: binding_id,
         egress_epoch: frozen_egress_epoch,
         egress,
+        os_family,
     })
 }
 
@@ -893,21 +901,23 @@ struct ArchetypeAllocation {
     capture_cohort: String,
 }
 
-async fn select_archetype(storage: &PgStorage) -> Result<ArchetypeAllocation, EnrollmentRunError> {
+async fn select_archetype(storage: &PgStorage, os_family: ClientOs) -> Result<ArchetypeAllocation, EnrollmentRunError> {
     let row = sqlx::query(
         "SELECT version.id,COALESCE(evidence.capture_cohort,version.protocol_profile->>'capture_cohort','default') AS capture_cohort \
          FROM catalog.environment_archetype_version version \
+         JOIN catalog.environment_archetype root ON root.id=version.archetype_id \
          JOIN catalog.archetype_bundle_binding binding ON binding.archetype_version_id=version.id AND binding.state_code='active' \
          JOIN catalog.transport_bundle bundle ON bundle.id=binding.transport_bundle_id AND bundle.lifecycle_code='active' \
          JOIN catalog.archetype_capacity_policy capacity ON capacity.archetype_version_id=version.id \
          LEFT JOIN catalog.evidence_set evidence ON evidence.id=version.evidence_set_id \
-         WHERE version.lifecycle_code='active' \
+         WHERE version.lifecycle_code='active' AND root.os_family_code=$1 \
            AND (SELECT count(*) FROM gateway.credential_profile profile WHERE profile.archetype_version_id=version.id \
                 AND profile.lifecycle_code IN ('pending','active','upgrading')) < capacity.max_credentials \
          ORDER BY ((SELECT count(*) FROM gateway.credential_profile profile WHERE profile.archetype_version_id=version.id \
                     AND profile.lifecycle_code IN ('pending','active','upgrading'))::numeric/capacity.max_credentials::numeric),version.id \
          LIMIT 1",
     )
+    .bind(os_family.as_str())
     .fetch_optional(&storage.pool())
     .await
     .map_err(|_| EnrollmentRunError::Storage(StorageError::TransactionFailed))?
@@ -929,6 +939,15 @@ struct DeviceSecretAllocation {
     session_hmac_secret_id: Uuid,
     installation_digest: Vec<u8>,
     client_digest: Vec<u8>,
+}
+
+fn parse_client_os(value: &str) -> Option<ClientOs> {
+    match value {
+        "windows" => Some(ClientOs::Windows),
+        "macos" => Some(ClientOs::MacOs),
+        "linux" => Some(ClientOs::Linux),
+        _ => None,
+    }
 }
 
 impl DeviceSecretAllocation {
@@ -1250,6 +1269,92 @@ async fn insert_secret(
     .await
     .map_err(|_| EnrollmentRunError::Storage(StorageError::TransactionFailed))?;
     Ok(())
+}
+
+/// Summary of one `(group, OS)` auto-provisioning pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OsProfileProvisionReport {
+    /// Credentials that received a new profile for the OS family.
+    pub provisioned: usize,
+    /// Credentials skipped because their egress binding is not stable yet.
+    pub egress_not_ready: usize,
+    /// Credentials whose provisioning transaction failed and rolled back.
+    pub failed: usize,
+}
+
+/// Give every scheduling-eligible Credential of a Group a profile for
+/// `os_family` when an active Archetype with capacity exists for that OS.
+///
+/// Each new profile gets its own device identity (fresh installation id,
+/// client id, profile seed and session HMAC) so the account appears upstream as
+/// one person using distinct devices, while the egress route is cloned from the
+/// Credential's existing stable binding. Returns `Ok(None)` when the OS has no
+/// eligible Archetype, which is the normal state before capture assets exist.
+pub async fn provision_missing_os_profiles(
+    storage: &PgStorage,
+    group_id: Uuid,
+    os_family: ClientOs,
+) -> Result<Option<OsProfileProvisionReport>, StorageError> {
+    let candidates = storage.credentials_missing_os_profile(group_id, os_family).await?;
+    if candidates.is_empty() {
+        return Ok(Some(OsProfileProvisionReport::default()));
+    }
+    let mut report = OsProfileProvisionReport::default();
+    for credential_id in candidates {
+        // Capacity is re-evaluated per Credential so one pass cannot overfill
+        // an Archetype version.
+        let archetype = match select_archetype(storage, os_family).await {
+            Ok(archetype) => archetype,
+            Err(EnrollmentRunError::Retry("archetype_capacity_unavailable")) => {
+                return Ok((report != OsProfileProvisionReport::default()).then_some(report));
+            }
+            Err(EnrollmentRunError::Storage(error)) => return Err(error),
+            Err(_) => return Err(StorageError::TransactionFailed),
+        };
+        let allocation = match allocate_device_identity(storage, credential_id).await {
+            Ok(allocation) => allocation,
+            Err(EnrollmentRunError::Storage(error)) => return Err(error),
+            Err(_) => return Err(StorageError::TransactionFailed),
+        };
+        let secret_ids = allocation.all_secret_ids();
+        let command = OsProfileProvision {
+            credential_id,
+            os_family,
+            profile_id: Uuid::now_v7(),
+            device_identity_id: Uuid::now_v7(),
+            egress_binding_id: Uuid::now_v7(),
+            archetype_version_id: archetype.id,
+            installation_secret_id: allocation.installation_secret_id,
+            client_secret_id: allocation.client_secret_id,
+            profile_seed_secret_id: allocation.profile_seed_secret_id,
+            session_hmac_secret_id: allocation.session_hmac_secret_id,
+            installation_digest: allocation.installation_digest.clone(),
+            client_digest: allocation.client_digest.clone(),
+            capture_cohort: archetype.capture_cohort,
+            allocation_evidence: json!({
+                "allocator":"active_archetype_least_loaded_v1",
+                "trigger":"os_profile_autofill",
+                "os_family":os_family.as_str(),
+            }),
+        };
+        match storage.provision_os_profile(&command).await {
+            Ok(OsProfileProvisionOutcome::Provisioned) => report.provisioned += 1,
+            Ok(OsProfileProvisionOutcome::AlreadyPresent) => {
+                destroy_secret_ids(storage, &secret_ids).await;
+            }
+            Ok(OsProfileProvisionOutcome::EgressNotReady) => {
+                destroy_secret_ids(storage, &secret_ids).await;
+                report.egress_not_ready += 1;
+            }
+            Err(_) => {
+                // The caller logs the aggregate; the transaction already rolled
+                // back and the freshly allocated secrets are destroyed here.
+                destroy_secret_ids(storage, &secret_ids).await;
+                report.failed += 1;
+            }
+        }
+    }
+    Ok(Some(report))
 }
 
 async fn destroy_secret_ids(storage: &PgStorage, secret_ids: &[Uuid]) {

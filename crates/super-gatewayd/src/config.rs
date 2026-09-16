@@ -26,8 +26,6 @@ const AUDIT_INTEGRITY_KEY_FILE: &str = "GATEWAY_AUDIT_INTEGRITY_KEY_FILE";
 const BUNDLE_TRUST_STORE: &str = "GATEWAY_BUNDLE_TRUST_STORE";
 const BUNDLE_DIR: &str = "GATEWAY_BUNDLE_DIR";
 const RESPONSE_TMP_DIR: &str = "GATEWAY_RESPONSE_TMP_DIR";
-const CONTENT_AUDIT_KEY_FILE: &str = "GATEWAY_CONTENT_AUDIT_KEY_FILE";
-const CONTENT_AUDIT_DIR: &str = "GATEWAY_CONTENT_AUDIT_DIR";
 const BACKUP_KEY_FILE: &str = "GATEWAY_BACKUP_KEY_FILE";
 const BACKUP_REPOSITORY: &str = "GATEWAY_BACKUP_REPOSITORY";
 const EGRESS_OBSERVER_HOST: &str = "GATEWAY_EGRESS_OBSERVER_HOST";
@@ -51,7 +49,6 @@ pub struct GatewayConfig {
     pub bundle_trust_store: PathBuf,
     pub bundle_dir: PathBuf,
     pub response_tmp_dir: PathBuf,
-    pub content_audit: Option<ContentAuditConfig>,
     pub backup: Option<BackupConfig>,
     pub proxy_probe: ProxyProbeConfig,
     pub managed_browser: Option<ManagedBrowserConfig>,
@@ -72,7 +69,6 @@ impl fmt::Debug for GatewayConfig {
             .field("bundle_trust_store", &self.bundle_trust_store)
             .field("bundle_dir", &self.bundle_dir)
             .field("response_tmp_dir", &self.response_tmp_dir)
-            .field("content_audit", &self.content_audit)
             .field("backup", &self.backup)
             .field("proxy_probe", &self.proxy_probe)
             .field("managed_browser", &self.managed_browser)
@@ -101,13 +97,6 @@ impl fmt::Debug for BusinessKeyProvider {
         };
         formatter.debug_tuple("BusinessKeyProvider").field(&provider).finish()
     }
-}
-
-/// Optional Content Audit dependencies.
-#[derive(Debug)]
-pub struct ContentAuditConfig {
-    pub key_file: PathBuf,
-    pub directory: PathBuf,
 }
 
 /// Optional backup configuration. Its runtime failure raises a critical alert without revoking readiness.
@@ -222,13 +211,6 @@ impl GatewayConfig {
         let bundle_trust_store = required_path(values, BUNDLE_TRUST_STORE)?;
         let bundle_dir = required_path(values, BUNDLE_DIR)?;
         let response_tmp_dir = required_path(values, RESPONSE_TMP_DIR)?;
-        let content_audit =
-            optional_pair(values, CONTENT_AUDIT_KEY_FILE, CONTENT_AUDIT_DIR)?.map(|(key_file, directory)| {
-                ContentAuditConfig {
-                    key_file: PathBuf::from(key_file),
-                    directory: PathBuf::from(directory),
-                }
-            });
         let backup =
             optional_pair(values, BACKUP_KEY_FILE, BACKUP_REPOSITORY)?.map(|(key_file, repository)| BackupConfig {
                 tool: PathBuf::from("super-gateway-backup"),
@@ -285,7 +267,6 @@ impl GatewayConfig {
             bundle_trust_store,
             bundle_dir,
             response_tmp_dir,
-            content_audit,
             backup,
             proxy_probe,
             managed_browser,
@@ -302,10 +283,6 @@ impl GatewayConfig {
             BusinessKeyProvider::ExternalUri(uri) => !uri.trim().is_empty(),
             BusinessKeyProvider::LocalFile(path) => !path.as_os_str().is_empty(),
         };
-        let content_audit_ready = self
-            .content_audit
-            .as_ref()
-            .is_none_or(|config| !config.key_file.as_os_str().is_empty() && !config.directory.as_os_str().is_empty());
         let backup_ready = self.backup.as_ref().is_none_or(|config| {
             !config.tool.as_os_str().is_empty()
                 && !config.key_file.as_os_str().is_empty()
@@ -323,12 +300,7 @@ impl GatewayConfig {
             .managed_browser
             .as_ref()
             .is_none_or(|config| !config.tool.as_os_str().is_empty() && config.timeout >= Duration::from_secs(30));
-        business_key_provider_ready
-            && content_audit_ready
-            && backup_ready
-            && proxy_probe_ready
-            && managed_browser_ready
-            && bootstrap_ready
+        business_key_provider_ready && backup_ready && proxy_probe_ready && managed_browser_ready && bootstrap_ready
     }
 
     /// Reject provider modes that are part of the configuration contract but do not yet have a

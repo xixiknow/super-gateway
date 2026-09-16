@@ -17,23 +17,26 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
-use gateway_api::{ContentAuditMode, DispatchError, DispatchRequest, MessageDispatcher, UpstreamResponse};
+use gateway_api::{DispatchEndpoint, DispatchError, DispatchRequest, MessageDispatcher, UpstreamResponse};
 use gateway_domain::{
-    ArchetypeVersionId, AttemptDeadlines, AttemptIdentitySnapshot, AttemptPlanId, Clock, ConnectionAttemptId,
+    ArchetypeVersionId, AttemptDeadlines, AttemptIdentitySnapshot, AttemptPlanId, ClientOs, Clock, ConnectionAttemptId,
     CredentialId, CredentialProfileId, DeviceIdentityId, Digest, EgressBindingId, EgressRouteSnapshot,
     FinalUpstreamRequest, GroupId, MaintenanceTrigger, PinReason, Portability, ProxyCredentials, ProxyEndpointId,
     SecretBytes, SecretValue, Socks5DnsMode, TransportAttemptSnapshot, TransportBundleId, UpstreamHeader,
 };
+use gateway_policy::{
+    canonicalize_system_order, cch_policy_for_version, ensure_billing_block, first_user_text, is_empty_replacement,
+    replace_system_static,
+};
 use gateway_scheduler::{
     AdmissionDecision, BucketConfig, ConnectionAttemptBudget, CredentialAuthUpdate, CredentialConfig,
-    CredentialCooldownUpdate, CredentialFenceResult, CredentialLease, CredentialQuotaUpdate, CredentialRemoveResult,
-    CredentialState, ExecutorIdentity, GroupConfig, GroupExecutorHandle, OwnerGeneration, QueueResolution, Rejection,
-    RejectionKind, ResourceAction, ResourceEvent, ResourceKind, RetryContext, RetryCredentialTarget, RetryErrorClass,
-    RetryLeaseDecision, RetryLeaseRequest, RetryStrategy, ScheduleEntry, SchedulerEngine, SessionCapacityConfig,
-    decide_retry,
+    CredentialCooldownUpdate, CredentialFenceResult, CredentialLease, CredentialProfileConfig, CredentialQuotaUpdate,
+    CredentialRemoveResult, CredentialState, ExecutorIdentity, GroupConfig, GroupExecutorHandle, OwnerGeneration,
+    QueueResolution, Rejection, RejectionKind, ResourceAction, ResourceEvent, ResourceKind, RetryContext,
+    RetryCredentialTarget, RetryErrorClass, RetryLeaseDecision, RetryLeaseRequest, RetryStrategy, ScheduleEntry,
+    SchedulerEngine, SessionCapacityConfig, decide_retry,
 };
 use gateway_services::{
-    content_audit::{AuditCaptureKind, AuditObjectContext, AuditObjectManifest, ContentAuditLatch, ContentAuditStore},
     credential::{CredentialMaintainer, CredentialServiceError},
     quota::{SUBSCRIPTION_QUOTA_PARSER_VERSION, parse_subscription_quota_headers},
     response::{
@@ -63,7 +66,11 @@ use tokio::sync::{Mutex, Notify, RwLock, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::system_env_align::{EnvironmentTarget, align_system_environment};
+
 type HmacSha256 = Hmac<Sha256>;
+
+const DEFAULT_CLAUDE_CODE_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05,effort-2025-11-24,context-management-2025-06-27,extended-cache-ttl-2025-04-11";
 
 const ACTIVE_GROUP_RUNTIME_SQL: &str = "SELECT g.id,gc.config_version,gc.default_rpm,gc.default_rpm_burst,gc.max_concurrency,gc.queue_capacity, \
             gc.pre_upstream_wait_ms,gc.preferred_capacity_wait_ms,gc.affinity_ttl_ms, \
@@ -88,10 +95,8 @@ pub(crate) struct ProductionDispatcher {
     transport: Arc<dyn TransportCore>,
     response: ResponsePipeline,
     clock: Arc<dyn Clock>,
-    content_audit: Option<Arc<ContentAuditStore>>,
     credential_maintainer: Option<Arc<dyn CredentialMaintainer>>,
     request_cancellation: CancellationToken,
-    audit_tasks: Arc<Mutex<Vec<ResponseAuditHandle>>>,
 }
 
 impl std::fmt::Debug for ProductionDispatcher {
@@ -99,7 +104,6 @@ impl std::fmt::Debug for ProductionDispatcher {
         formatter
             .debug_struct("ProductionDispatcher")
             .field("group_count", &self.groups.load().len())
-            .field("content_audit_configured", &self.content_audit.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -112,7 +116,6 @@ impl ProductionDispatcher {
         transport: Arc<dyn TransportCore>,
         response_tmp_dir: std::path::PathBuf,
         clock: Arc<dyn Clock>,
-        content_audit: Option<Arc<ContentAuditStore>>,
         credential_maintainer: Option<Arc<dyn CredentialMaintainer>>,
     ) -> anyhow::Result<Self> {
         let mut spill_key = vec![0_u8; 32];
@@ -178,10 +181,8 @@ impl ProductionDispatcher {
             transport,
             response,
             clock,
-            content_audit,
             credential_maintainer,
             request_cancellation: CancellationToken::new(),
-            audit_tasks: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -777,6 +778,60 @@ impl ProductionDispatcher {
         Ok(true)
     }
 
+    /// Give every eligible Credential of the Group a profile for `client_os`
+    /// when an active Archetype for that OS has capacity. Returns whether any
+    /// profile was created so callers can refresh the scheduler projection.
+    pub(crate) async fn autofill_os_profiles(&self, group_uuid: Uuid, client_os: ClientOs) -> bool {
+        match gateway_services::credential_enrollment_postgres::provision_missing_os_profiles(
+            &self.storage,
+            group_uuid,
+            client_os,
+        )
+        .await
+        {
+            Ok(Some(report)) => {
+                if report.provisioned > 0 || report.failed > 0 {
+                    tracing::info!(
+                        event = "os_profile_autofill",
+                        group_id = %group_uuid,
+                        os_family = client_os.as_str(),
+                        provisioned = report.provisioned,
+                        egress_not_ready = report.egress_not_ready,
+                        failed = report.failed
+                    );
+                }
+                report.provisioned > 0
+            }
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(
+                    event = "os_profile_autofill_failed",
+                    group_id = %group_uuid,
+                    os_family = client_os.as_str(),
+                    error = ?error
+                );
+                false
+            }
+        }
+    }
+
+    /// Reload every Credential projection of one Group into its scheduler.
+    async fn refresh_group_credentials(&self, group: &Arc<RuntimeGroup>) {
+        let catalog = self.engines.snapshot();
+        match load_scheduler_credentials(&self.storage, group.group_uuid, &catalog, group.clock.now().monotonic).await {
+            Ok(credentials) => {
+                for config in credentials {
+                    if let Err(error) = group.reconfigure_credential(config).await {
+                        tracing::warn!(event="credential_config_projection_reconcile_failed", group_id=%group.group_uuid, error=?error);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(event="credential_config_projection_load_failed", group_id=%group.group_uuid, error=%error);
+            }
+        }
+    }
+
     pub(crate) async fn reconfigure_credential_projection(
         &self,
         group_uuid: Uuid,
@@ -836,24 +891,13 @@ impl ProductionDispatcher {
                             if let Err(error) = dispatcher.reconfigure_group_projection(group.group_uuid).await {
                                 tracing::warn!(event="group_config_projection_reconcile_failed", group_id=%group.group_uuid, error=?error);
                             }
-                            let catalog = dispatcher.engines.snapshot();
-                            match load_scheduler_credentials(
-                                &dispatcher.storage,
-                                group.group_uuid,
-                                &catalog,
-                                group.clock.now().monotonic,
-                            )
-                            .await
-                            {
-                                Ok(credentials) => {
-                                    for config in credentials {
-                                        if let Err(error) = group.reconfigure_credential(config).await {
-                                            tracing::warn!(event="credential_config_projection_reconcile_failed", group_id=%group.group_uuid, error=?error);
-                                        }
-                                    }
-                                }
-                                Err(error) => tracing::warn!(event="credential_config_projection_load_failed", group_id=%group.group_uuid, error=%error),
+                            // Every Credential should carry one profile per OS
+                            // that has an active Archetype, so clients on any
+                            // OS can be scheduled without operator action.
+                            for client_os in [ClientOs::Windows, ClientOs::MacOs, ClientOs::Linux] {
+                                dispatcher.autofill_os_profiles(group.group_uuid, client_os).await;
                             }
+                            dispatcher.refresh_group_credentials(&group).await;
                         }
                     }
                 }
@@ -890,24 +934,8 @@ impl ProductionDispatcher {
 
     /// Release exact owner generations after all HTTP servers have drained.
     pub(crate) async fn shutdown_owners(&self) {
-        self.await_response_audits().await;
         for group in self.runtime_groups() {
             group.shutdown_owner().await;
-        }
-    }
-
-    async fn await_response_audits(&self) {
-        let mut tasks = std::mem::take(&mut *self.audit_tasks.lock().await);
-        for task in &mut tasks {
-            if tokio::time::timeout(Duration::from_secs(30), &mut task.handle)
-                .await
-                .is_err()
-            {
-                task.handle.abort();
-                if let Some(latch) = &task.latch {
-                    record_response_audit_gap(&self.storage, task.request_id, latch).await;
-                }
-            }
         }
     }
 
@@ -1005,11 +1033,18 @@ impl MessageDispatcher for ProductionDispatcher {
                 group_id: parse_uuid(request.group_id.as_str())?,
                 owner_executor_id: group.executor_id.clone(),
                 owner_generation: i64::try_from(group.generation.get()).map_err(|_| DispatchError::Unavailable)?,
-                endpoint_code: "messages".into(),
+                endpoint_code: match request.endpoint {
+                    DispatchEndpoint::Messages => "messages",
+                    DispatchEndpoint::CountTokens => "count_tokens",
+                }
+                .into(),
                 client_class_code: match request.client_class {
                     gateway_domain::ClientClass::ClaudeCodeCli => "claude_code_cli".into(),
                     gateway_domain::ClientClass::NonClaudeCodeCli => "non_claude_code_cli".into(),
                 },
+                client_os: request.client_os,
+                os_resolution: request.os_resolution,
+                os_mismatch: request.os_mismatch,
                 model_id: Some(model_id),
                 request_body_bytes: i64::try_from(request.original_body.len())
                     .map_err(|_| DispatchError::Unavailable)?,
@@ -1021,30 +1056,36 @@ impl MessageDispatcher for ProductionDispatcher {
             })
             .await
             .map_err(|_| DispatchError::Unavailable)?;
+        let body_capture = self.storage.body_capture_config().await.unwrap_or_default();
+        if body_capture.enabled {
+            let original = serde_json::from_slice::<serde_json::Value>(&request.original_body).ok();
+            let policy = serde_json::from_slice::<serde_json::Value>(request.generic.replay_body.bytes()).ok();
+            if self
+                .storage
+                .capture_request_body(request_uuid, original, policy, None)
+                .await
+                .is_err()
+            {
+                tracing::warn!(request_id = %request_uuid, "original request body capture failed");
+            }
+        }
         let mut request_guard = RequestTerminalGuard::new(self.storage.clone(), request_uuid);
-
-        let mut content_latch = None;
-        if let ContentAuditMode::FullEncrypted { retention_days } = request.content_audit {
-            let store = self
-                .content_audit
-                .as_ref()
-                .ok_or(DispatchError::AuditUnavailable { retry_after_seconds: 5 })?;
-            let mut latch = ContentAuditLatch::default();
-            capture_content(
-                &self.storage,
-                store,
-                request_uuid,
-                parse_uuid(request.owner_user_id.as_str())?,
-                AuditCaptureKind::OriginalRequest,
-                &request.original_body,
-                request.generic.snapshot_set.access_policy.0.as_ref(),
-                retention_days,
-            )
-            .await?;
-            latch
-                .original_durable()
-                .map_err(|_| DispatchError::AuditUnavailable { retry_after_seconds: 5 })?;
-            content_latch = Some((Arc::new(Mutex::new(latch)), retention_days));
+        if !active_bundle_available_for_os(&self.storage, &request.group_id, request.client_os).await? {
+            // First request of a new OS for this Group: provision the missing
+            // (credential, OS) profiles now instead of waiting for the next
+            // reconciliation tick, then re-check.
+            let provisioned = self
+                .autofill_os_profiles(parse_uuid(request.group_id.as_str())?, request.client_os)
+                .await;
+            if provisioned {
+                self.refresh_group_credentials(&group).await;
+            }
+            if !provisioned
+                || !active_bundle_available_for_os(&self.storage, &request.group_id, request.client_os).await?
+            {
+                record_bundle_missing_alert(&self.storage, &request.group_id, request.client_os).await;
+                return Err(DispatchError::BundleUnavailable);
+            }
         }
 
         let cancellation = self.request_cancellation.child_token();
@@ -1078,9 +1119,11 @@ impl MessageDispatcher for ProductionDispatcher {
             group_id: request.group_id.clone(),
             base_session_id: request.base_session_id.clone(),
             agent_id: request.agent_id.clone(),
+            client_os: request.client_os,
             generic: request.generic.clone(),
             accepted_at: request.accepted_at,
             pre_upstream_deadline,
+            bypass_queue: matches!(request.endpoint, DispatchEndpoint::CountTokens),
         };
         let decision = group.admit(entry.clone()).await?;
         let (mut lease, current_phase) = match decision {
@@ -1112,31 +1155,6 @@ impl MessageDispatcher for ProductionDispatcher {
             .advance_request_phase(request_uuid, current_phase, "submitting")
             .await
             .map_err(|_| DispatchError::Unavailable)?;
-
-        if let Some((latch, retention_days)) = content_latch.as_mut() {
-            let store = self
-                .content_audit
-                .as_ref()
-                .ok_or(DispatchError::AuditUnavailable { retry_after_seconds: 5 })?;
-            capture_content(
-                &self.storage,
-                store,
-                request_uuid,
-                parse_uuid(request.owner_user_id.as_str())?,
-                AuditCaptureKind::FinalRequest,
-                request.generic.replay_body.bytes(),
-                request.generic.snapshot_set.access_policy.0.as_ref(),
-                *retention_days,
-            )
-            .await?;
-            let mut latch = latch.lock().await;
-            latch
-                .first_final_durable()
-                .map_err(|_| DispatchError::AuditUnavailable { retry_after_seconds: 5 })?;
-            latch
-                .start_upstream()
-                .map_err(|_| DispatchError::AuditUnavailable { retry_after_seconds: 5 })?;
-        }
 
         let mut connection_budget = ConnectionAttemptBudget::default();
         let mut messages_attempts = 0_u8;
@@ -1172,6 +1190,29 @@ impl MessageDispatcher for ProductionDispatcher {
                 .ok_or(DispatchError::DeterministicUnavailable)?;
             let derived_session = derive_session_id(&selected.session_hmac, request.base_session_id.as_str())?;
             let final_request = Arc::new(build_final_request(&request, &selected, &engine, &derived_session)?);
+            if body_capture.enabled {
+                let final_body = serde_json::from_slice::<serde_json::Value>(final_request.body.as_ref()).ok();
+                match self
+                    .storage
+                    .capture_request_body(request_uuid, None, None, final_body.clone())
+                    .await
+                {
+                    Ok(()) => {
+                        let encoded = final_body.as_ref().and_then(|value| serde_json::to_vec(value).ok());
+                        if encoded.as_deref() != Some(final_request.body.as_ref()) {
+                            let _ = self.storage.mark_body_digest_mismatch(request_uuid).await;
+                        }
+                    }
+                    Err(_) => {
+                        tracing::warn!(request_id = %request_uuid, "final request body capture failed");
+                    }
+                }
+            }
+            let upstream_body_digest: [u8; 32] = Sha256::digest(final_request.body.as_ref()).into();
+            self.storage
+                .record_upstream_body_digest(request_uuid, &upstream_body_digest)
+                .await
+                .map_err(|_| DispatchError::Unavailable)?;
             let health_proxy_endpoint_id = selected.proxy_endpoint_id.clone();
             let reason = next_attempt_reason;
             let attempt_telemetry = create_attempt_telemetry(
@@ -1263,6 +1304,7 @@ impl MessageDispatcher for ProductionDispatcher {
             }
             match execution {
                 Ok(raw) => {
+                    let (raw, body_third_party_rejection) = classify_and_replay_response(raw).await;
                     let request_bytes = first_byte.request_bytes();
                     if request_bytes == 0 {
                         fail_attempt_telemetry(&self.storage, &attempt_telemetry, 0, false).await?;
@@ -1274,6 +1316,9 @@ impl MessageDispatcher for ProductionDispatcher {
                         promote_attempt_telemetry(&self.storage, &attempt_telemetry, request_bytes, Some(raw.status))
                             .await?;
                         messages_attempts = messages_attempts.saturating_add(1);
+                    }
+                    if body_third_party_rejection {
+                        record_third_party_rejection(&self.storage, &attempt_telemetry, request.client_os).await;
                     }
                     observe_subscription_quota_headers(
                         &self.storage,
@@ -1596,37 +1641,26 @@ impl MessageDispatcher for ProductionDispatcher {
             }
         };
         lease_guard.defer_release(request_limits.cancel_grace);
-        let response_side_writer: Option<Box<dyn ResponseSideWriter>> =
-            if let Some((latch, retention_days)) = content_latch.as_ref() {
-                let (tap, receiver, gap, truncated) = response_audit_channel(64 * 1024 * 1024);
-                let audit_handle = spawn_response_content_audit(ResponseAuditTask {
-                    storage: self.storage.clone(),
-                    store: self
-                        .content_audit
-                        .clone()
-                        .ok_or(DispatchError::AuditUnavailable { retry_after_seconds: 5 })?,
-                    request_id: request_uuid,
-                    owner_user_id: parse_uuid(request.owner_user_id.as_str())?,
-                    policy_version: request
-                        .generic
-                        .snapshot_set
-                        .access_policy
-                        .0
-                        .to_string()
-                        .into_boxed_str(),
-                    retention_days: *retention_days,
-                    latch: latch.clone(),
+        let response_side_writer: Option<Box<dyn ResponseSideWriter>> = {
+            let mut side_writers: Vec<Box<dyn ResponseSideWriter>> = Vec::new();
+            if body_capture.enabled {
+                let (tap, receiver, gap, truncated) = plain_response_capture_channel(body_capture.max_bytes);
+                tokio::spawn(persist_plain_response_body(
+                    self.storage.clone(),
+                    request_uuid,
                     receiver,
                     gap,
                     truncated,
-                });
-                let mut tasks = self.audit_tasks.lock().await;
-                tasks.retain(|task| !task.handle.is_finished());
-                tasks.push(audit_handle);
-                Some(Box::new(tap))
-            } else {
-                None
-            };
+                    body_capture.max_bytes,
+                ));
+                side_writers.push(Box::new(tap));
+            }
+            match side_writers.len() {
+                0 => None,
+                1 => side_writers.pop(),
+                _ => Some(Box::new(CompositeResponseSideWriter { writers: side_writers })),
+            }
+        };
         let mut response = self
             .response
             .prepare_with_side_writer_and_reservation(
@@ -1670,6 +1704,7 @@ impl MessageDispatcher for ProductionDispatcher {
             Some(lease.clone())
         };
         let completion = Arc::new(RequestCompletion {
+            endpoint: request.endpoint,
             storage: self.storage.clone(),
             group: group.clone(),
             lease: completion_lease,
@@ -1681,7 +1716,6 @@ impl MessageDispatcher for ProductionDispatcher {
             clock: self.clock.clone(),
             committed: AtomicBool::new(false),
             finished: AtomicBool::new(false),
-            content_latch: content_latch.map(|(latch, _)| latch),
             transport_terminal,
             cancel_grace: request_limits.cancel_grace,
             cancel_input_tokens: estimate_cancel_input_tokens(request.generic.replay_body.bytes()),
@@ -2337,6 +2371,7 @@ impl Drop for LeaseGuard {
 }
 
 struct RequestCompletion {
+    endpoint: DispatchEndpoint,
     storage: Arc<PgStorage>,
     group: Arc<RuntimeGroup>,
     lease: Option<CredentialLease>,
@@ -2348,7 +2383,6 @@ struct RequestCompletion {
     clock: Arc<dyn Clock>,
     committed: AtomicBool,
     finished: AtomicBool,
-    content_latch: Option<Arc<Mutex<ContentAuditLatch>>>,
     transport_terminal: CancellationToken,
     cancel_grace: Duration,
     cancel_input_tokens: u64,
@@ -2560,9 +2594,13 @@ impl DeliveryCompletion for RequestCompletion {
         {
             tracing::warn!(event="upstream_response_bytes_persist_failed", request_id=%self.request_uuid);
         }
-        let _ = self.persist_usage_observation(observed.official.clone(), None).await;
+        if matches!(self.endpoint, DispatchEndpoint::Messages) {
+            let _ = self.persist_usage_observation(observed.official.clone(), None).await;
+        }
         self.usage_terminal.lock().await.observed = Some(observed);
-        self.maybe_persist_cancel_estimate().await;
+        if matches!(self.endpoint, DispatchEndpoint::Messages) {
+            self.maybe_persist_cancel_estimate().await;
+        }
     }
 
     async fn completed(&self, report: DeliveryReport) {
@@ -2570,7 +2608,9 @@ impl DeliveryCompletion for RequestCompletion {
             return;
         }
         self.usage_terminal.lock().await.outcome = Some(report.outcome);
-        self.maybe_persist_cancel_estimate().await;
+        if matches!(self.endpoint, DispatchEndpoint::Messages) {
+            self.maybe_persist_cancel_estimate().await;
+        }
         let committed = self.committed.load(Ordering::Acquire);
         if self
             .storage
@@ -2594,7 +2634,6 @@ impl DeliveryCompletion for RequestCompletion {
         }
         let _ = self.clock.now();
         let _ = &self.request_id;
-        let _ = &self.content_latch;
         finish_scheduler_resources(
             self.group.clone(),
             self.lease.clone(),
@@ -2659,9 +2698,22 @@ struct SelectedCredential {
     auth_kind: Box<str>,
     auth_secret: SecretBytes,
     session_hmac: SecretBytes,
+    account_uuid: Uuid,
+    device_id: Box<str>,
     egress: EgressRouteSnapshot,
     proxy_endpoint_id: Option<ProxyEndpointId>,
     transport_bundle_id: Uuid,
+    client_version: Box<str>,
+    environment: SelectedEnvironment,
+    /// Static System template captured with the Archetype version, used when
+    /// the Group `replace` policy carries no administrator content.
+    system_template: Option<serde_json::Value>,
+}
+
+struct SelectedEnvironment {
+    os_family: gateway_policy::OsFamily,
+    shell: Option<Box<str>>,
+    os_version: Option<Box<str>>,
 }
 
 #[allow(clippy::struct_field_names)]
@@ -3067,6 +3119,7 @@ async fn load_scheduler_credentials(
                 sc.session_capacity_enabled,sc.max_active_sessions,sc.session_idle_ttl_ms,sc.new_session_wait_ms, \
                 p.id AS profile_id,p.profile_epoch,p.archetype_version_id,d.id AS device_identity_id,d.device_epoch, \
                 e.id AS egress_binding_id,e.egress_epoch,t.artifact_version, \
+                root.os_family_code, \
                 COALESCE(t.manifest #>> '{payload,bundle_id}',t.manifest ->> 'bundle_id') AS bundle_id, \
                 t.manifest #>> '{canonicalization,canonical_hash}' AS canonical_hash, \
                 quota.used_basis_points,quota.reset_after_seconds,quota_version.observation_id AS quota_observation_id \
@@ -3074,6 +3127,8 @@ async fn load_scheduler_credentials(
          JOIN gateway.credential_active_scheduling_config active_sc ON active_sc.credential_id=c.id \
          JOIN gateway.credential_scheduling_config sc ON sc.id=active_sc.config_id AND sc.enabled \
          JOIN gateway.credential_profile p ON p.credential_id=c.id AND p.lifecycle_code='active' \
+         JOIN catalog.environment_archetype_version archetype_version ON archetype_version.id=p.archetype_version_id \
+         JOIN catalog.environment_archetype root ON root.id=archetype_version.archetype_id \
          JOIN gateway.device_identity d ON d.id=p.device_identity_id \
          JOIN gateway.credential_egress_binding e ON e.id=p.egress_binding_id \
               AND e.lifecycle_code='active' AND e.stability_code='stable' \
@@ -3100,12 +3155,13 @@ async fn load_scheduler_credentials(
          WHERE c.group_id=$1 AND c.attachment_state_code='attached' \
            AND c.lifecycle_state_code='active' AND c.auth_state_code IN ('healthy','expiring') \
            AND c.scheduling_state_code IN ('eligible','cooldown') AND c.transport_state_code='ready' \
-         ORDER BY c.id",
+           AND c.account_uuid IS NOT NULL \
+         ORDER BY c.id,root.os_family_code",
     )
     .bind(group_id)
     .fetch_all(&storage.pool())
     .await?;
-    let mut credentials = Vec::new();
+    let mut credentials = BTreeMap::new();
     for row in rows {
         let archetype_uuid: Uuid = row.try_get("archetype_version_id")?;
         let bundle_id: String = row.try_get("bundle_id")?;
@@ -3139,8 +3195,24 @@ async fn load_scheduler_credentials(
         let quota_observation_version = row
             .try_get::<Option<Uuid>, _>("quota_observation_id")?
             .map(|value| value.as_u128());
-        credentials.push(CredentialConfig {
-            id: CredentialId::new(row.try_get::<Uuid, _>("id")?.to_string())?,
+        let client_os = parse_client_os_code(&row.try_get::<String, _>("os_family_code")?)
+            .ok_or_else(|| anyhow::anyhow!("unsupported profile OS family"))?;
+        let profile = CredentialProfileConfig {
+            profile_id: CredentialProfileId::new(row.try_get::<Uuid, _>("profile_id")?.to_string())?,
+            profile_epoch: u64::try_from(row.try_get::<i64, _>("profile_epoch")?)?,
+            device_identity_id: DeviceIdentityId::new(row.try_get::<Uuid, _>("device_identity_id")?.to_string())?,
+            device_epoch: u64::try_from(row.try_get::<i64, _>("device_epoch")?)?,
+            archetype_version_id: ArchetypeVersionId::new(archetype_uuid.to_string())?,
+            bundle_id: TransportBundleId::new(bundle_id)?,
+            bundle_version,
+            bundle_hash: Digest::parse_sha256_hex(engine.key.bundle_hash.clone())?,
+            egress_binding_id: EgressBindingId::new(row.try_get::<Uuid, _>("egress_binding_id")?.to_string())?,
+            egress_epoch: u64::try_from(row.try_get::<i64, _>("egress_epoch")?)?,
+            bundle_epoch: bundle_version,
+        };
+        let credential_id = CredentialId::new(row.try_get::<Uuid, _>("id")?.to_string())?;
+        let new_config = CredentialConfig {
+            id: credential_id,
             credential_projection_revision: u64::try_from(row.try_get::<i64, _>("credential_projection_revision")?)?,
             scheduling_projection_revision: u64::try_from(row.try_get::<i64, _>("scheduling_projection_revision")?)?,
             concurrency_limit: u32::try_from(row.try_get::<i32, _>("max_concurrency")?)?,
@@ -3159,17 +3231,7 @@ async fn load_scheduler_credentials(
                 new_session_wait: millis(&row, "new_session_wait_ms")?,
             },
             token_version: u64::try_from(row.try_get::<i64, _>("token_version")?)?,
-            profile_id: CredentialProfileId::new(row.try_get::<Uuid, _>("profile_id")?.to_string())?,
-            profile_epoch: u64::try_from(row.try_get::<i64, _>("profile_epoch")?)?,
-            device_identity_id: DeviceIdentityId::new(row.try_get::<Uuid, _>("device_identity_id")?.to_string())?,
-            device_epoch: u64::try_from(row.try_get::<i64, _>("device_epoch")?)?,
-            archetype_version_id: ArchetypeVersionId::new(archetype_uuid.to_string())?,
-            bundle_id: TransportBundleId::new(bundle_id)?,
-            bundle_version,
-            bundle_hash: Digest::parse_sha256_hex(engine.key.bundle_hash.clone())?,
-            egress_binding_id: EgressBindingId::new(row.try_get::<Uuid, _>("egress_binding_id")?.to_string())?,
-            egress_epoch: u64::try_from(row.try_get::<i64, _>("egress_epoch")?)?,
-            bundle_epoch: bundle_version,
+            profiles: BTreeMap::new(),
             quota_observation_version,
             state: CredentialState {
                 lifecycle_active,
@@ -3182,9 +3244,16 @@ async fn load_scheduler_credentials(
                 quota_reset_at,
                 half_open_inflight: false,
             },
-        });
+        };
+        let config = match credentials.entry(new_config.id.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => entry.insert(new_config),
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+        };
+        if config.profiles.insert(client_os, profile).is_some() {
+            anyhow::bail!("duplicate active profile for Credential OS family");
+        }
     }
-    Ok(credentials)
+    Ok(credentials.into_values().collect())
 }
 
 async fn load_selected_credential(
@@ -3193,15 +3262,19 @@ async fn load_selected_credential(
 ) -> Result<SelectedCredential, DispatchError> {
     let credential_id = parse_uuid(lease.credential_id.as_str())?;
     let row = sqlx::query(
-        "SELECT c.auth_kind_code,c.token_version,av.access_secret_id,av.setup_secret_id,av.console_secret_id, \
-                d.session_hmac_secret_id,e.mode_code,e.id AS binding_id,e.egress_epoch, \
+        "SELECT c.auth_kind_code,c.account_uuid,c.token_version,av.access_secret_id,av.setup_secret_id,av.console_secret_id, \
+                d.session_hmac_secret_id,d.profile_seed_secret_id,d.device_epoch,e.mode_code,e.id AS binding_id,e.egress_epoch, \
                 pxy.id AS proxy_id,pxy.proxy_type_code,pxy.host,pxy.port,pxy.auth_secret_id, \
-                bundle.id AS transport_bundle_id \
+                bundle.id AS transport_bundle_id,archetype_version.client_version AS client_version, \
+                archetype.os_family_code AS os_family,archetype_version.os_build,archetype_version.shell, \
+                archetype_version.system_template \
          FROM gateway.anthropic_credential c \
          JOIN gateway.credential_auth_version av ON av.id=c.active_auth_version_id \
               AND av.credential_id=c.id AND av.token_version=c.token_version AND av.material_state_code='active' \
               AND av.auth_kind_code=c.auth_kind_code \
          JOIN gateway.credential_profile profile ON profile.credential_id=c.id AND profile.lifecycle_code='active' \
+         JOIN catalog.environment_archetype_version archetype_version ON archetype_version.id=profile.archetype_version_id \
+         JOIN catalog.environment_archetype archetype ON archetype.id=archetype_version.archetype_id \
          JOIN gateway.device_identity d ON d.id=profile.device_identity_id \
          JOIN gateway.credential_egress_binding e ON e.id=profile.egress_binding_id \
               AND e.lifecycle_code='active' AND e.stability_code='stable' \
@@ -3218,6 +3291,7 @@ async fn load_selected_credential(
          WHERE c.id=$1 AND c.token_version=$2 AND profile.id=$3 AND profile.profile_epoch=$4 \
            AND d.id=$5 AND d.device_epoch=$6 AND e.id=$7 AND e.egress_epoch=$8 \
            AND profile.archetype_version_id=$9 \
+           AND archetype.os_family_code=$13 \
            AND c.lifecycle_state_code='active' AND c.auth_state_code IN ('healthy','expiring') \
            AND (c.scheduling_state_code='eligible' OR (c.scheduling_state_code='cooldown' \
                 AND c.cooldown_until IS NOT NULL AND c.cooldown_until<=clock_timestamp())) \
@@ -3235,6 +3309,7 @@ async fn load_selected_credential(
     .bind(i64::try_from(lease.bundle_version).map_err(|_| DispatchError::Unavailable)?)
     .bind(lease.bundle_id.as_str())
     .bind(lease.bundle_hash.as_str())
+    .bind(lease.client_os.as_str())
     .fetch_optional(&storage.pool())
     .await
     .map_err(|_| DispatchError::Unavailable)?
@@ -3261,6 +3336,20 @@ async fn load_selected_credential(
             .map_err(|_| DispatchError::Unavailable)?,
     )
     .await?;
+    let profile_seed = decrypt_secret(
+        storage,
+        row.try_get("profile_seed_secret_id")
+            .map_err(|_| DispatchError::Unavailable)?,
+    )
+    .await?;
+    let account_uuid = row
+        .try_get::<Option<Uuid>, _>("account_uuid")
+        .map_err(|_| DispatchError::Unavailable)?
+        .ok_or(DispatchError::DeterministicUnavailable)?;
+    let device_epoch = row
+        .try_get::<i64, _>("device_epoch")
+        .map_err(|_| DispatchError::Unavailable)?;
+    let device_id = derive_device_id(&profile_seed, device_epoch)?;
     let mode: String = row.try_get("mode_code").map_err(|_| DispatchError::Unavailable)?;
     let (egress, proxy_endpoint_id) = if mode == "direct" {
         (EgressRouteSnapshot::Direct, None)
@@ -3309,10 +3398,38 @@ async fn load_selected_credential(
         auth_kind: auth_kind.into_boxed_str(),
         auth_secret,
         session_hmac,
+        account_uuid,
+        device_id: device_id.into_boxed_str(),
         egress,
         proxy_endpoint_id,
         transport_bundle_id: row
             .try_get("transport_bundle_id")
+            .map_err(|_| DispatchError::Unavailable)?,
+        client_version: row
+            .try_get::<String, _>("client_version")
+            .map_err(|_| DispatchError::Unavailable)?
+            .into_boxed_str(),
+        environment: SelectedEnvironment {
+            os_family: match parse_client_os_code(
+                &row.try_get::<String, _>("os_family")
+                    .map_err(|_| DispatchError::Unavailable)?,
+            ) {
+                Some(ClientOs::Windows) => gateway_policy::OsFamily::Windows,
+                Some(ClientOs::MacOs) => gateway_policy::OsFamily::Macos,
+                Some(ClientOs::Linux) => gateway_policy::OsFamily::Linux,
+                None => return Err(DispatchError::DeterministicUnavailable),
+            },
+            shell: row
+                .try_get::<Option<String>, _>("shell")
+                .map_err(|_| DispatchError::Unavailable)?
+                .map(String::into_boxed_str),
+            os_version: row
+                .try_get::<Option<String>, _>("os_build")
+                .map_err(|_| DispatchError::Unavailable)?
+                .map(String::into_boxed_str),
+        },
+        system_template: row
+            .try_get::<Option<serde_json::Value>, _>("system_template")
             .map_err(|_| DispatchError::Unavailable)?,
     })
 }
@@ -3381,6 +3498,31 @@ async fn decrypt_secret(storage: &PgStorage, secret_id: Uuid) -> Result<SecretBy
         .map_err(|_| DispatchError::Unavailable)
 }
 
+/// Complete a Group `replace` policy whose content was left empty: swap the
+/// client's static System segment for the template captured with the selected
+/// Archetype version. Without a captured template the client System is kept,
+/// which is the safest degradation (identical to `preserve`).
+fn apply_system_template(body: &mut serde_json::Value, template: Option<&serde_json::Value>) {
+    let Some(template) = template.filter(|template| !is_empty_replacement(template)) else {
+        tracing::warn!(
+            "replace System policy has no content and the selected Archetype has no captured template; client System kept"
+        );
+        return;
+    };
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if let Some(system) = object.get_mut("system") {
+        replace_system_static(system, template);
+    } else {
+        let system = match template {
+            serde_json::Value::String(text) => serde_json::json!([{"type":"text","text":text}]),
+            other => other.clone(),
+        };
+        object.insert("system".to_owned(), system);
+    }
+}
+
 fn build_final_request(
     request: &DispatchRequest,
     selected: &SelectedCredential,
@@ -3397,10 +3539,61 @@ fn build_final_request(
     } else {
         format!("Bearer {auth}")
     };
-    let anthropic_version = request.anthropic_version.as_deref().unwrap_or("2023-06-01");
-    let anthropic_beta = request.anthropic_beta.as_deref().unwrap_or("");
+    let is_claude_code = matches!(request.client_class, gateway_domain::ClientClass::ClaudeCodeCli);
+    let anthropic_version = if is_claude_code {
+        "2023-06-01"
+    } else {
+        request.anthropic_version.as_deref().unwrap_or("2023-06-01")
+    };
+    // The downstream beta set is selected from the captured Claude Code profile.
+    // Non-Claude clients retain their explicit beta header semantics.
+    let mut anthropic_beta = if is_claude_code {
+        DEFAULT_CLAUDE_CODE_BETA.to_owned()
+    } else {
+        request.anthropic_beta.as_deref().unwrap_or("").to_owned()
+    };
+    let client_request_id = Uuid::new_v4().to_string();
+    let x_app = normalize_client_app(request.client_app.as_deref());
+    let body = if is_claude_code {
+        let mut body = request.generic.replay_body.tree().clone();
+        if request.generic.system_template_pending {
+            apply_system_template(&mut body, selected.system_template.as_ref());
+        }
+        if !request.generic.attribution_suppressed {
+            let first_user_text = first_user_text(&body).unwrap_or("").to_owned();
+            let object = body.as_object_mut().ok_or(DispatchError::DeterministicUnavailable)?;
+            if let Some(system) = object.get_mut("system") {
+                align_system_environment(
+                    system,
+                    EnvironmentTarget {
+                        os_family: selected.environment.os_family,
+                        shell: selected.environment.shell.as_deref(),
+                        os_version: selected.environment.os_version.as_deref(),
+                    },
+                )
+                .map_err(|_| DispatchError::DeterministicUnavailable)?;
+                ensure_billing_block(
+                    system,
+                    selected.client_version.as_ref(),
+                    &first_user_text,
+                    cch_policy_for_version(selected.client_version.as_ref()),
+                )
+                .map_err(|_| DispatchError::DeterministicUnavailable)?;
+            }
+            rewrite_metadata_identity(&mut body, selected, session_id)?;
+        }
+        apply_beta_body_symmetry(&mut body, &mut anthropic_beta)?;
+        canonicalize_system_order(&mut body);
+        serde_json::to_vec(&body).map_err(|_| DispatchError::DeterministicUnavailable)?
+    } else {
+        request.generic.replay_body.bytes().to_vec()
+    };
     let mut headers = Vec::with_capacity(engine.headers.len());
     let mut auth_seen = false;
+    let mut client_request_id_seen = false;
+    let mut helper_method_seen = false;
+    let mut x_app_seen = false;
+    let mut beta_seen = false;
     for template in engine.headers.iter() {
         let canonical = template.name.to_ascii_lowercase();
         if matches!(
@@ -3409,14 +3602,25 @@ fn build_final_request(
         ) {
             return Err(DispatchError::DeterministicUnavailable);
         }
+        if is_claude_code && canonical == "x-stainless-helper-method" && !request.generic.stream {
+            continue;
+        }
+        let value_template = match (is_claude_code, canonical.as_str()) {
+            (true, "anthropic-beta") => anthropic_beta.as_str(),
+            (true, "anthropic-version") => anthropic_version,
+            (true, "x-app") => x_app,
+            (true, "x-client-request-id") => client_request_id.as_str(),
+            (true, "x-stainless-helper-method") => "stream",
+            _ => &template.value_template,
+        };
         let value = render_template(
-            &template.value_template,
+            value_template,
             &engine.authority,
             &authorization,
             session_id,
             anthropic_version,
-            anthropic_beta,
-            request.generic.replay_body.bytes().len(),
+            &anthropic_beta,
+            body.len(),
         )?;
         if canonical == "authorization" || canonical == "x-api-key" {
             let expected = if selected.auth_kind.as_ref() == "console_api_key" {
@@ -3429,6 +3633,13 @@ fn build_final_request(
             }
             auth_seen = true;
         }
+        match canonical.as_str() {
+            "x-client-request-id" if is_claude_code => client_request_id_seen = true,
+            "x-stainless-helper-method" if is_claude_code => helper_method_seen = true,
+            "x-app" if is_claude_code => x_app_seen = true,
+            "anthropic-beta" if is_claude_code => beta_seen = true,
+            _ => {}
+        }
         headers.push(UpstreamHeader {
             name: template.name.clone(),
             value: Arc::from(value.into_bytes()),
@@ -3437,19 +3648,234 @@ fn build_final_request(
     if !auth_seen {
         return Err(DispatchError::DeterministicUnavailable);
     }
+    if is_claude_code {
+        if !client_request_id_seen {
+            headers.push(UpstreamHeader {
+                name: "x-client-request-id".into(),
+                value: Arc::from(client_request_id.into_bytes()),
+            });
+        }
+        if request.generic.stream && !helper_method_seen {
+            headers.push(UpstreamHeader {
+                name: "x-stainless-helper-method".into(),
+                value: Arc::from(b"stream".to_vec()),
+            });
+        }
+        if !x_app_seen {
+            headers.push(UpstreamHeader {
+                name: "x-app".into(),
+                value: Arc::from(x_app.as_bytes().to_vec()),
+            });
+        }
+        if !beta_seen {
+            headers.push(UpstreamHeader {
+                name: "anthropic-beta".into(),
+                value: Arc::from(anthropic_beta.into_bytes()),
+            });
+        }
+    }
     Ok(FinalUpstreamRequest {
         method: "POST".into(),
         scheme: "https".into(),
         authority: engine.authority.clone(),
-        path_and_query: if selected.auth_kind.as_ref() == "console_api_key" {
-            "/v1/messages".into()
-        } else {
-            "/v1/messages?beta=true".into()
+        path_and_query: {
+            let path = match request.endpoint {
+                DispatchEndpoint::Messages => "/v1/messages",
+                DispatchEndpoint::CountTokens => "/v1/messages/count_tokens",
+            };
+            if selected.auth_kind.as_ref() == "console_api_key" {
+                path.into()
+            } else {
+                format!("{path}?beta=true").into()
+            }
         },
         headers: headers.into(),
-        body: Arc::from(request.generic.replay_body.bytes()),
+        body: Arc::from(body),
         stream: request.generic.stream,
     })
+}
+
+fn derive_device_id(profile_seed: &SecretBytes, device_epoch: i64) -> Result<String, DispatchError> {
+    if device_epoch < 1 {
+        return Err(DispatchError::DeterministicUnavailable);
+    }
+    let mut hmac =
+        HmacSha256::new_from_slice(profile_seed.expose()).map_err(|_| DispatchError::DeterministicUnavailable)?;
+    hmac.update(b"gateway-device-profile-v1\0");
+    hmac.update(&device_epoch.to_be_bytes());
+    let digest = hmac.finalize().into_bytes();
+    Ok(format!("{digest:x}"))
+}
+
+fn rewrite_metadata_identity(
+    body: &mut serde_json::Value,
+    selected: &SelectedCredential,
+    session_id: &str,
+) -> Result<(), DispatchError> {
+    let Some(metadata) = body.get_mut("metadata").and_then(serde_json::Value::as_object_mut) else {
+        return Ok(());
+    };
+    let identity = match metadata.get("user_id") {
+        Some(serde_json::Value::String(raw)) => parse_user_id_string(raw),
+        Some(serde_json::Value::Object(object)) => Some(serde_json::Value::Object(object.clone())),
+        _ => None,
+    }
+    .and_then(|value| value.as_object().cloned())
+    .unwrap_or_default();
+    let identity = normalize_user_identity(
+        identity,
+        selected.device_id.as_ref(),
+        selected.account_uuid,
+        &selected.session_hmac,
+        session_id,
+    )?;
+    metadata.insert(
+        "user_id".to_owned(),
+        serde_json::Value::String(
+            serde_json::to_string(&serde_json::Value::Object(identity))
+                .map_err(|_| DispatchError::DeterministicUnavailable)?,
+        ),
+    );
+    Ok(())
+}
+
+fn normalize_user_identity(
+    mut identity: serde_json::Map<String, serde_json::Value>,
+    device_id: &str,
+    account_uuid: Uuid,
+    session_hmac: &SecretBytes,
+    session_id: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, DispatchError> {
+    let parent_session = identity
+        .get("parent_session_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    identity.insert("device_id".to_owned(), serde_json::Value::String(device_id.to_owned()));
+    identity.insert(
+        "account_uuid".to_owned(),
+        serde_json::Value::String(account_uuid.to_string()),
+    );
+    identity.insert(
+        "session_id".to_owned(),
+        serde_json::Value::String(session_id.to_owned()),
+    );
+    if let Some(parent_session) = parent_session {
+        let parent = derive_session_id(session_hmac, &parent_session)?;
+        identity.insert("parent_session_id".to_owned(), serde_json::Value::String(parent));
+    }
+    Ok(identity)
+}
+
+fn parse_user_id_string(raw: &str) -> Option<serde_json::Value> {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw)
+        && value.is_object()
+    {
+        return Some(value);
+    }
+    let rest = raw.strip_prefix("user_")?;
+    let (device_id, rest) = rest.split_once("_account_")?;
+    let (account_uuid, session_id) = rest.split_once("_session_")?;
+    if device_id.len() != 64
+        || !device_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || Uuid::parse_str(account_uuid).is_err()
+        || Uuid::parse_str(session_id).is_err()
+    {
+        return None;
+    }
+    Some(serde_json::json!({
+        "device_id": device_id,
+        "account_uuid": account_uuid,
+        "session_id": session_id,
+    }))
+}
+
+/// Apply the Claude Code beta/body capability contract after the fixed beta
+/// baseline has been selected. The body is intentionally edited only in the
+/// Claude Code path; generic Anthropic requests retain their original bytes.
+fn apply_beta_body_symmetry(body: &mut serde_json::Value, beta: &mut String) -> Result<(), DispatchError> {
+    let Some(object) = body.as_object_mut() else {
+        return Err(DispatchError::DeterministicUnavailable);
+    };
+    object.remove("betas");
+
+    if !beta_contains(beta, "context-management-2025-06-27") {
+        object.remove("context_management");
+    }
+    if !beta_contains(beta, "effort-2025-11-24")
+        && let Some(output_config) = object
+            .get_mut("output_config")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        output_config.remove("effort");
+    }
+    if !beta_contains(beta, "fast-mode-2026-02-01")
+        && object.get("speed").and_then(serde_json::Value::as_str) == Some("fast")
+    {
+        object.remove("speed");
+    }
+    if !beta_contains(beta, "structured-outputs-2025-12-15")
+        && let Some(output_config) = object
+            .get_mut("output_config")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        output_config.remove("format");
+    }
+    if !beta_contains(beta, "task-budgets-2026-03-13")
+        && let Some(output_config) = object
+            .get_mut("output_config")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        output_config.remove("task_budget");
+    }
+    if object
+        .get("thinking")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|thinking| thinking.get("type"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|kind| kind != "disabled")
+        && !beta_contains(beta, "interleaved-thinking-2025-05-14")
+    {
+        if !beta.is_empty() {
+            beta.push(',');
+        }
+        beta.push_str("interleaved-thinking-2025-05-14");
+    }
+    if !beta_contains(beta, "extended-cache-ttl-2025-04-11") {
+        downgrade_cache_ttl(body);
+    }
+    Ok(())
+}
+
+fn beta_contains(beta: &str, name: &str) -> bool {
+    beta.split(',').any(|item| item == name)
+}
+
+fn normalize_client_app(value: Option<&str>) -> &str {
+    value
+        .filter(|value| matches!(*value, "cli" | "cli-bg"))
+        .unwrap_or("cli")
+}
+
+fn downgrade_cache_ttl(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                downgrade_cache_ttl(item);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            if let Some(cache_control) = object.get_mut("cache_control")
+                && let Some(cache_control) = cache_control.as_object_mut()
+                && cache_control.get("ttl").and_then(serde_json::Value::as_str) == Some("1h")
+            {
+                cache_control.insert("ttl".to_owned(), serde_json::Value::String("5m".to_owned()));
+            }
+            for child in object.values_mut() {
+                downgrade_cache_ttl(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn render_template(
@@ -3495,13 +3921,8 @@ fn derive_session_id(secret: &SecretBytes, base_session: &str) -> Result<String,
     Ok(Uuid::from_bytes(bytes).to_string())
 }
 
-enum ResponseAuditEvent {
-    Body(Bytes),
-    Finished(bool),
-}
-
-struct ResponseAuditTap {
-    sender: Option<mpsc::Sender<ResponseAuditEvent>>,
+struct PlainResponseCaptureTap {
+    sender: Option<mpsc::Sender<ResponseCaptureEvent>>,
     gap: Arc<AtomicBool>,
     truncated: Arc<AtomicBool>,
     observed: usize,
@@ -3509,28 +3930,49 @@ struct ResponseAuditTap {
     finished: bool,
 }
 
-impl ResponseSideWriter for ResponseAuditTap {
+struct CompositeResponseSideWriter {
+    writers: Vec<Box<dyn ResponseSideWriter>>,
+}
+
+enum ResponseCaptureEvent {
+    Body(Bytes),
+    Finished(bool),
+}
+
+impl ResponseSideWriter for CompositeResponseSideWriter {
+    fn observe(&mut self, bytes: &Bytes) {
+        for writer in &mut self.writers {
+            writer.observe(bytes);
+        }
+    }
+
+    fn finish(&mut self, complete: bool) {
+        for writer in &mut self.writers {
+            writer.finish(complete);
+        }
+    }
+}
+
+impl ResponseSideWriter for PlainResponseCaptureTap {
     fn observe(&mut self, bytes: &Bytes) {
         if self.finished || self.gap.load(Ordering::Acquire) {
             return;
         }
         let remaining = self.limit.saturating_sub(self.observed);
+        if remaining == 0 {
+            self.truncated.store(true, Ordering::Release);
+            return;
+        }
         if bytes.len() > remaining {
             self.truncated.store(true, Ordering::Release);
         }
-        let mut captured = bytes.slice(..bytes.len().min(remaining));
-        self.observed = self.observed.saturating_add(captured.len());
-        while !captured.is_empty() {
-            let chunk = captured.split_to(captured.len().min(64 * 1024));
-            let Some(sender) = &self.sender else {
-                self.gap.store(true, Ordering::Release);
-                return;
-            };
-            if sender.try_send(ResponseAuditEvent::Body(chunk)).is_err() {
-                self.gap.store(true, Ordering::Release);
-                self.sender.take();
-                return;
-            }
+        let bytes = bytes.slice(..bytes.len().min(remaining));
+        self.observed = self.observed.saturating_add(bytes.len());
+        if let Some(sender) = &self.sender
+            && sender.try_send(ResponseCaptureEvent::Body(bytes)).is_err()
+        {
+            self.gap.store(true, Ordering::Release);
+            self.sender.take();
         }
     }
 
@@ -3540,34 +3982,32 @@ impl ResponseSideWriter for ResponseAuditTap {
         }
         self.finished = true;
         if let Some(sender) = self.sender.take()
-            && sender.try_send(ResponseAuditEvent::Finished(complete)).is_err()
+            && sender.try_send(ResponseCaptureEvent::Finished(complete)).is_err()
         {
             self.gap.store(true, Ordering::Release);
         }
     }
 }
 
-impl Drop for ResponseAuditTap {
+impl Drop for PlainResponseCaptureTap {
     fn drop(&mut self) {
-        if !self.finished {
-            self.finish(false);
-        }
+        self.finish(false);
     }
 }
 
-fn response_audit_channel(
+fn plain_response_capture_channel(
     limit: usize,
 ) -> (
-    ResponseAuditTap,
-    mpsc::Receiver<ResponseAuditEvent>,
+    PlainResponseCaptureTap,
+    mpsc::Receiver<ResponseCaptureEvent>,
     Arc<AtomicBool>,
     Arc<AtomicBool>,
 ) {
-    let (sender, receiver) = mpsc::channel(16);
+    let (sender, receiver) = mpsc::channel(64);
     let gap = Arc::new(AtomicBool::new(false));
     let truncated = Arc::new(AtomicBool::new(false));
     (
-        ResponseAuditTap {
+        PlainResponseCaptureTap {
             sender: Some(sender),
             gap: gap.clone(),
             truncated: truncated.clone(),
@@ -3581,109 +4021,36 @@ fn response_audit_channel(
     )
 }
 
-struct ResponseAuditTask {
+async fn persist_plain_response_body(
     storage: Arc<PgStorage>,
-    store: Arc<ContentAuditStore>,
     request_id: Uuid,
-    owner_user_id: Uuid,
-    policy_version: Box<str>,
-    retention_days: u16,
-    latch: Arc<Mutex<ContentAuditLatch>>,
-    receiver: mpsc::Receiver<ResponseAuditEvent>,
+    mut receiver: mpsc::Receiver<ResponseCaptureEvent>,
     gap: Arc<AtomicBool>,
     truncated: Arc<AtomicBool>,
-}
-
-struct ResponseAuditHandle {
-    request_id: Uuid,
-    latch: Option<Arc<Mutex<ContentAuditLatch>>>,
-    handle: tokio::task::JoinHandle<()>,
-}
-
-fn spawn_response_content_audit(mut task: ResponseAuditTask) -> ResponseAuditHandle {
-    let request_id = task.request_id;
-    let latch = task.latch.clone();
-    let handle = tokio::spawn(async move {
-        let mut captured = Vec::new();
-        let mut complete = false;
-        while let Some(event) = task.receiver.recv().await {
-            match event {
-                ResponseAuditEvent::Body(bytes) => captured.extend_from_slice(&bytes),
-                ResponseAuditEvent::Finished(value) => {
-                    complete = value;
-                    break;
-                }
+    max_bytes: usize,
+) {
+    let mut body = Vec::new();
+    let mut complete = false;
+    while let Some(event) = receiver.recv().await {
+        match event {
+            ResponseCaptureEvent::Body(bytes) => body.extend_from_slice(&bytes),
+            ResponseCaptureEvent::Finished(value) => {
+                complete = value;
+                break;
             }
         }
-        let context = AuditObjectContext {
-            object_id: Uuid::now_v7(),
-            request_id: task.request_id,
-            attempt_id: None,
-            kind: AuditCaptureKind::Response,
-            policy_version: task.policy_version.clone(),
-        };
-        let truncated = task.truncated.load(Ordering::Acquire);
-        if truncated {
-            captured.push(0);
-        }
-        let store_result = task.store.put(&context, &captured).await;
-        if truncated {
-            captured.pop();
-        }
-        let persisted = match store_result {
-            Ok(manifest) => {
-                let result = persist_content_manifest(
-                    &task.storage,
-                    task.request_id,
-                    task.owner_user_id,
-                    AuditCaptureKind::Response,
-                    &task.policy_version,
-                    &captured,
-                    &manifest,
-                    task.retention_days,
-                    complete && !truncated && !task.gap.load(Ordering::Acquire),
-                )
-                .await;
-                if result.is_err() {
-                    let _ = task.store.remove_finalized(&manifest).await;
-                }
-                result.is_ok()
-            }
-            Err(_) => false,
-        };
-        if !persisted || !complete || truncated || task.gap.load(Ordering::Acquire) {
-            record_response_audit_gap(&task.storage, task.request_id, &task.latch).await;
-        }
-    });
-    ResponseAuditHandle {
-        request_id,
-        latch: Some(latch),
-        handle,
     }
-}
-
-async fn record_response_audit_gap(storage: &PgStorage, request_id: Uuid, latch: &Arc<Mutex<ContentAuditLatch>>) {
-    let _ = latch.lock().await.side_writer_failed();
-    tracing::error!(
-        event = "audit_gap",
-        severity = "critical",
-        capture_kind = "upstream_response",
-        request_id = %request_id,
-        reason_code = "response_side_writer_failed"
-    );
-    let _ = sqlx::query(
-        "INSERT INTO ops.alert \
-         (id,fingerprint,severity_code,type_code,state_code,object_type_code,object_id,summary,detail,first_seen_at,last_seen_at,revision) \
-         VALUES ($1,$2,'critical','audit_gap','open','request',$3,'Encrypted response audit has a capture gap', \
-                 jsonb_build_object('reason_code','response_side_writer_failed'),clock_timestamp(),clock_timestamp(),1) \
-         ON CONFLICT (fingerprint) WHERE state_code IN ('open','acknowledged','silenced') \
-         DO UPDATE SET last_seen_at=clock_timestamp(),revision=ops.alert.revision+1",
-    )
-    .bind(Uuid::now_v7())
-    .bind(format!("audit_gap:{request_id}"))
-    .bind(request_id.to_string())
-    .execute(&storage.pool())
-    .await;
+    if let Err(error) = storage
+        .capture_response_body(
+            request_id,
+            &body,
+            complete && !gap.load(Ordering::Acquire) && !truncated.load(Ordering::Acquire),
+            max_bytes,
+        )
+        .await
+    {
+        tracing::warn!(event="plain_response_body_capture_failed", request_id=%request_id, error=%error);
+    }
 }
 
 #[derive(Deserialize)]
@@ -3707,100 +4074,6 @@ fn parse_proxy_credentials(secret: &SecretBytes) -> Result<ProxyCredentials, Dis
         username: SecretValue::new(username),
         password: SecretValue::new(password),
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn capture_content(
-    storage: &PgStorage,
-    store: &ContentAuditStore,
-    request_id: Uuid,
-    owner_user_id: Uuid,
-    kind: AuditCaptureKind,
-    body: &[u8],
-    policy_version: &str,
-    retention_days: u16,
-) -> Result<(), DispatchError> {
-    let context = AuditObjectContext {
-        object_id: Uuid::now_v7(),
-        request_id,
-        attempt_id: None,
-        kind,
-        policy_version: policy_version.to_owned().into_boxed_str(),
-    };
-    let manifest = store
-        .put(&context, body)
-        .await
-        .map_err(|_| DispatchError::AuditUnavailable { retry_after_seconds: 5 })?;
-    let result = persist_content_manifest(
-        storage,
-        request_id,
-        owner_user_id,
-        kind,
-        policy_version,
-        body,
-        &manifest,
-        retention_days,
-        true,
-    )
-    .await;
-    if result.is_err() {
-        let _ = store.remove_finalized(&manifest).await;
-    }
-    result.map_err(|_| DispatchError::AuditUnavailable { retry_after_seconds: 5 })
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn persist_content_manifest(
-    storage: &PgStorage,
-    request_id: Uuid,
-    owner_user_id: Uuid,
-    kind: AuditCaptureKind,
-    policy_version: &str,
-    body: &[u8],
-    manifest: &AuditObjectManifest,
-    retention_days: u16,
-    capture_complete: bool,
-) -> Result<(), DispatchError> {
-    let wrapped_dek = STANDARD
-        .decode(manifest.wrapped_dek_base64.as_bytes())
-        .map_err(|_| DispatchError::Unavailable)?;
-    let persisted_length = usize::try_from(manifest.plaintext_length).map_err(|_| DispatchError::Unavailable)?;
-    let persisted = body.get(..persisted_length).ok_or(DispatchError::Unavailable)?;
-    let content_hash: [u8; 32] = Sha256::digest(persisted).into();
-    let object_kind = match kind {
-        AuditCaptureKind::OriginalRequest => "original_request",
-        AuditCaptureKind::FinalRequest => "final_upstream_request",
-        AuditCaptureKind::Response => "upstream_response",
-    };
-    sqlx::query(
-        "INSERT INTO security.content_audit_object \
-          (id,request_month,request_id,owner_user_id,scope_code,object_uri,encrypted_dek,key_version,content_sha256, \
-           content_length,state_code,expires_at,created_at,storage_state_code,cipher_suite_code,frame_manifest,finalized_at, \
-           platform_key_id,group_id,object_kind_code) \
-          VALUES ($1,date_trunc('month',clock_timestamp())::date,$2,$3,'full_encrypted',$4,$5,1,$6,$7, \
-                  'active',clock_timestamp()+make_interval(days=>$8),clock_timestamp(),'finalized','aes_256_gcm_framed',$9,clock_timestamp(), \
-                  (SELECT platform_key_id FROM telemetry.request_record WHERE request_month=date_trunc('month',clock_timestamp())::date AND request_id=$2), \
-                  (SELECT group_id FROM telemetry.request_record WHERE request_month=date_trunc('month',clock_timestamp())::date AND request_id=$2),$10)",
-    )
-    .bind(manifest.object_id)
-    .bind(request_id)
-    .bind(owner_user_id)
-    .bind(manifest.object_uri.as_ref())
-    .bind(wrapped_dek)
-    .bind(content_hash.as_slice())
-    .bind(i64::try_from(persisted.len()).map_err(|_| DispatchError::Unavailable)?)
-    .bind(i32::from(retention_days))
-    .bind(json!({
-        "capture_kind": kind.as_code(),
-        "policy_version": policy_version,
-        "capture_complete": capture_complete,
-        "manifest": manifest
-    }))
-    .bind(object_kind)
-    .execute(&storage.pool())
-    .await
-    .map_err(|_| DispatchError::Unavailable)?;
-    Ok(())
 }
 
 fn map_rejection(rejection: &Rejection, limits: RuntimeRequestLimits) -> DispatchError {
@@ -4183,6 +4456,219 @@ fn parse_uuid(value: &str) -> Result<Uuid, DispatchError> {
     Uuid::parse_str(value).map_err(|_| DispatchError::Unavailable)
 }
 
+async fn active_bundle_available_for_os(
+    storage: &PgStorage,
+    group_id: &GroupId,
+    client_os: ClientOs,
+) -> Result<bool, DispatchError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS( \
+           SELECT 1 FROM gateway.anthropic_credential credential \
+           JOIN gateway.credential_profile profile ON profile.credential_id=credential.id \
+             AND profile.lifecycle_code IN ('pending','active','upgrading') \
+           JOIN catalog.environment_archetype_version version ON version.id=profile.archetype_version_id \
+             AND version.lifecycle_code='active' \
+           JOIN catalog.environment_archetype root ON root.id=version.archetype_id \
+             AND root.os_family_code=$2 AND profile.os_family_code=root.os_family_code \
+           JOIN catalog.archetype_bundle_binding binding ON binding.archetype_version_id=version.id \
+             AND binding.state_code='active' \
+           JOIN catalog.transport_bundle bundle ON bundle.id=binding.transport_bundle_id \
+             AND bundle.lifecycle_code='active' AND bundle.evidence_gate_code='passed' \
+             AND bundle.runtime_state_code='loadable' \
+           WHERE credential.group_id=$1)",
+    )
+    .bind(parse_uuid(group_id.as_str())?)
+    .bind(client_os.as_str())
+    .fetch_one(&storage.pool())
+    .await
+    .map_err(|_| DispatchError::Unavailable)
+}
+
+async fn record_bundle_missing_alert(storage: &PgStorage, group_id: &GroupId, client_os: ClientOs) {
+    let fingerprint = format!("bundle_missing_for_os:{}:{}", group_id.as_str(), client_os.as_str());
+    let _ = sqlx::query(
+        "INSERT INTO ops.alert \
+         (id,fingerprint,severity_code,type_code,state_code,object_type_code,object_id,summary,detail,first_seen_at,last_seen_at,revision) \
+         VALUES ($1,$2,'critical','bundle_missing_for_os','open','credential_group',$3,$4, \
+                 jsonb_build_object('os_family',$5),clock_timestamp(),clock_timestamp(),1) \
+         ON CONFLICT (fingerprint) WHERE state_code IN ('open','acknowledged','silenced') \
+         DO UPDATE SET last_seen_at=clock_timestamp(),summary=EXCLUDED.summary,detail=EXCLUDED.detail, \
+                       revision=ops.alert.revision+1",
+    )
+    .bind(Uuid::now_v7())
+    .bind(fingerprint)
+    .bind(group_id.as_str())
+    .bind(format!("No active transport Bundle is available for {} clients", client_os.as_str()))
+    .bind(client_os.as_str())
+    .execute(&storage.pool())
+    .await;
+}
+
+fn parse_client_os_code(value: &str) -> Option<ClientOs> {
+    match value {
+        "windows" => Some(ClientOs::Windows),
+        "macos" => Some(ClientOs::MacOs),
+        "linux" => Some(ClientOs::Linux),
+        _ => None,
+    }
+}
+
+const THIRD_PARTY_REJECTION_BODY_PREVIEW_BYTES: usize = 64 * 1024;
+const THIRD_PARTY_REJECTION_BODY_WAIT: Duration = Duration::from_millis(250);
+
+async fn classify_and_replay_response(mut response: RawUpstreamResponse) -> (RawUpstreamResponse, bool) {
+    let header_rejection = is_third_party_rejection(response.status, &response.headers, None);
+    let body_eligible = (400..500).contains(&response.status) && response.status != 429;
+    if !body_eligible || header_rejection {
+        return (response, header_rejection);
+    }
+
+    let (body, preview) = match response.body {
+        RawResponseBody::Sse(upstream) => {
+            let (receiver, preview) = replay_response_body(upstream).await;
+            (RawResponseBody::Sse(receiver), preview)
+        }
+        RawResponseBody::NonStream(upstream) => {
+            let (receiver, preview) = replay_response_body(upstream).await;
+            (RawResponseBody::NonStream(receiver), preview)
+        }
+    };
+    response.body = body;
+    let body_rejection = is_third_party_rejection(response.status, &response.headers, Some(&preview));
+    (response, body_rejection)
+}
+
+async fn replay_response_body(
+    mut upstream: mpsc::Receiver<Result<Bytes, TransportError>>,
+) -> (mpsc::Receiver<Result<Bytes, TransportError>>, Vec<u8>) {
+    let mut prefix = Vec::new();
+    let mut preview = Vec::with_capacity(THIRD_PARTY_REJECTION_BODY_PREVIEW_BYTES);
+    let mut upstream_exhausted = false;
+    while preview.len() < THIRD_PARTY_REJECTION_BODY_PREVIEW_BYTES {
+        let item = match tokio::time::timeout(THIRD_PARTY_REJECTION_BODY_WAIT, upstream.recv()).await {
+            Ok(Some(item)) => item,
+            Ok(None) => {
+                upstream_exhausted = true;
+                break;
+            }
+            Err(_) => break,
+        };
+        if let Ok(bytes) = &item {
+            let remaining = THIRD_PARTY_REJECTION_BODY_PREVIEW_BYTES.saturating_sub(preview.len());
+            preview.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+        }
+        let terminal = item.is_err();
+        prefix.push(item);
+        if terminal {
+            upstream_exhausted = true;
+            break;
+        }
+    }
+
+    let (sender, receiver) = mpsc::channel(128);
+    tokio::spawn(async move {
+        for item in prefix {
+            if sender.send(item).await.is_err() {
+                return;
+            }
+        }
+        if !upstream_exhausted {
+            while let Some(item) = upstream.recv().await {
+                if sender.send(item).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    (receiver, preview)
+}
+
+fn is_third_party_rejection(status: u16, headers: &[(Box<str>, Bytes)], body_preview: Option<&[u8]>) -> bool {
+    if !(400..500).contains(&status) || status == 429 {
+        return false;
+    }
+    if headers
+        .iter()
+        .any(|(name, _)| name.to_ascii_lowercase().starts_with("x-cc-"))
+    {
+        return true;
+    }
+    let Some(body) = body_preview else {
+        return false;
+    };
+    let body = String::from_utf8_lossy(body).to_ascii_lowercase();
+    [
+        "attestation",
+        "third-party client",
+        "third party client",
+        "third_party_client",
+    ]
+    .iter()
+    .any(|needle| body.contains(needle))
+}
+
+async fn record_third_party_rejection(storage: &PgStorage, telemetry: &AttemptTelemetry, client_os: ClientOs) {
+    let _ = sqlx::query(
+        "INSERT INTO telemetry.transport_event \
+         (id,attempt_id,event_code,redacted_detail,occurred_at) \
+         VALUES ($1,$2,'third_party_rejection',jsonb_build_object('os_family',$3),clock_timestamp())",
+    )
+    .bind(Uuid::now_v7())
+    .bind(telemetry.attempt_id)
+    .bind(client_os.as_str())
+    .execute(&storage.pool())
+    .await;
+    // Window and thresholds are operator settings (`third_party.*`).
+    let settings = storage.runtime_settings().await.unwrap_or_default();
+    let stats = sqlx::query(
+        "SELECT count(*) FILTER (WHERE EXISTS ( \
+                  SELECT 1 FROM telemetry.transport_event event \
+                  WHERE event.attempt_id=attempt.id AND event.event_code='third_party_rejection'))::bigint AS rejected, \
+                count(*)::bigint AS total \
+         FROM telemetry.attempt_record attempt \
+         JOIN telemetry.request_record request ON request.request_id=attempt.request_id \
+         WHERE attempt.credential_id=$1 AND request.client_os_family=$2 \
+           AND attempt.submitted_at>=clock_timestamp()-make_interval(mins => $3)",
+    )
+    .bind(telemetry.credential_id)
+    .bind(client_os.as_str())
+    .bind(settings.third_party_window_minutes)
+    .fetch_one(&storage.pool())
+    .await;
+    let Ok(stats) = stats else { return };
+    let rejected: i64 = stats.try_get("rejected").unwrap_or_default();
+    let total: i64 = stats.try_get("total").unwrap_or_default();
+    if rejected < i64::from(settings.third_party_min_rejections)
+        || total == 0
+        || rejected.saturating_mul(100) < total.saturating_mul(i64::from(settings.third_party_ratio_percent))
+    {
+        return;
+    }
+    let fingerprint = format!(
+        "upstream_third_party_rejection:{}:{}",
+        telemetry.credential_id,
+        client_os.as_str()
+    );
+    let _ = sqlx::query(
+        "INSERT INTO ops.alert \
+         (id,fingerprint,severity_code,type_code,state_code,object_type_code,object_id,summary,detail,first_seen_at,last_seen_at,revision) \
+         VALUES ($1,$2,'critical','upstream_third_party_rejection','open','credential',$3,$4, \
+                 jsonb_build_object('credential_id',$3,'os_family',$5,'rejected_count',$6,'attempt_count',$7,'window_minutes',15), \
+                 clock_timestamp(),clock_timestamp(),1) \
+         ON CONFLICT (fingerprint) WHERE state_code IN ('open','acknowledged','silenced') \
+         DO UPDATE SET last_seen_at=clock_timestamp(),detail=EXCLUDED.detail,revision=ops.alert.revision+1",
+    )
+    .bind(Uuid::now_v7())
+    .bind(fingerprint)
+    .bind(telemetry.credential_id)
+    .bind("Upstream rejected the emulated third-party client")
+    .bind(client_os.as_str())
+    .bind(rejected)
+    .bind(total)
+    .execute(&storage.pool())
+    .await;
+}
+
 fn optional_u32(row: &sqlx::postgres::PgRow, column: &str) -> anyhow::Result<Option<u32>> {
     row.try_get::<Option<i32>, _>(column)?
         .map(u32::try_from)
@@ -4212,6 +4698,11 @@ fn retry_after_seconds(value: Duration) -> u64 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test fixtures assert successful transformations and dispatch outcomes"
+)]
 mod tests {
     use std::sync::Arc;
 
@@ -4220,15 +4711,86 @@ mod tests {
     use gateway_storage::{PgStorage, RuntimeRolePolicy, embedded_migration_count};
     use gateway_transport::{
         ActivationGeneration, CompiledApplicationProfile, CompiledTransportEngine, EngineCatalog, EngineCatalogHandle,
-        EngineKey, Http1Profile, NoopTransportCore, TlsProfile,
+        EngineKey, Http1Profile, NoopTransportCore, RawResponseBody, RawUpstreamResponse, TlsProfile,
     };
     use sqlx::Row as _;
     use uuid::Uuid;
 
     use super::{
-        ProductionDispatcher, decimal_usd_to_pico_text, derive_session_id, render_template, retry_backoff,
-        trusted_retry_after_headers,
+        ProductionDispatcher, apply_beta_body_symmetry, apply_system_template, classify_and_replay_response,
+        decimal_usd_to_pico_text, derive_device_id, derive_session_id, is_third_party_rejection, normalize_client_app,
+        normalize_user_identity, parse_user_id_string, render_template, retry_backoff, trusted_retry_after_headers,
     };
+
+    #[test]
+    fn archetype_template_completes_a_deferred_replace_and_keeps_dynamic_blocks() {
+        let mut body = serde_json::json!({
+            "model": "m",
+            "system": [
+                {"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.220.a3f; cc_entrypoint=cli;"},
+                {"type":"text","text":"client static\n# Tone and style\n","cache_control":{"type":"ephemeral"}},
+                {"type":"text","text":"# Environment\n - Platform: win32\n"}
+            ],
+            "messages": []
+        });
+        let template = serde_json::json!([{"type":"text","text":"captured static"}]);
+        apply_system_template(&mut body, Some(&template));
+        let system = body["system"].as_array().cloned().expect("system array");
+        assert_eq!(system.len(), 3);
+        assert_eq!(system[1]["text"], "captured static");
+        assert_eq!(system[1]["cache_control"]["type"], "ephemeral");
+        assert!(
+            system[2]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("Platform: win32"))
+        );
+
+        // Without a captured template the client System is left untouched.
+        let before = body.clone();
+        apply_system_template(&mut body, None);
+        assert_eq!(body, before);
+
+        // A request variant without System receives the template as its System.
+        let mut bare = serde_json::json!({"model":"m","messages":[]});
+        apply_system_template(&mut bare, Some(&serde_json::json!("captured static")));
+        assert_eq!(
+            bare["system"],
+            serde_json::json!([{"type":"text","text":"captured static"}])
+        );
+    }
+
+    #[test]
+    fn claude_beta_body_symmetry_removes_unsupported_fields_and_downgrades_cache_ttl() {
+        let mut body = serde_json::json!({
+            "betas": ["client-only-beta"],
+            "context_management": {"edits": []},
+            "output_config": {"effort": "high", "format": {"type": "json_schema"}, "task_budget": 32},
+            "speed": "fast",
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role": "user", "content": [{
+                "type": "text", "text": "hello", "cache_control": {"type": "ephemeral", "ttl": "1h"}
+            }]}]
+        });
+        let mut beta = "claude-code-20250219".to_owned();
+        apply_beta_body_symmetry(&mut body, &mut beta).expect("symmetry");
+        assert!(body.get("betas").is_none());
+        assert!(body.get("context_management").is_none());
+        assert!(body.get("speed").is_none());
+        let output_config = body.get("output_config").expect("output config");
+        assert!(output_config.get("effort").is_none());
+        assert!(output_config.get("format").is_none());
+        assert!(output_config.get("task_budget").is_none());
+        assert_eq!(body["messages"][0]["content"][0]["cache_control"]["ttl"], "5m");
+        assert!(beta.ends_with("interleaved-thinking-2025-05-14"));
+    }
+
+    #[test]
+    fn client_app_is_limited_to_the_two_observed_cli_values() {
+        assert_eq!(normalize_client_app(Some("cli")), "cli");
+        assert_eq!(normalize_client_app(Some("cli-bg")), "cli-bg");
+        assert_eq!(normalize_client_app(Some("sdk")), "cli");
+        assert_eq!(normalize_client_app(None), "cli");
+    }
 
     fn test_engine_catalog() -> Result<Arc<EngineCatalogHandle>, Box<dyn std::error::Error>> {
         let engine = CompiledTransportEngine {
@@ -4282,6 +4844,82 @@ mod tests {
         assert_ne!(first, other_secret);
         assert_eq!(first.len(), 36);
         Ok(())
+    }
+
+    #[test]
+    fn metadata_identity_normalizes_json_and_legacy_forms() -> Result<(), Box<dyn std::error::Error>> {
+        let seed = SecretBytes::new(vec![7; 32]);
+        let other_seed = SecretBytes::new(vec![8; 32]);
+        let device = derive_device_id(&seed, 1).map_err(|_| "device")?;
+        let same_device = derive_device_id(&seed, 1).map_err(|_| "device")?;
+        let other_device = derive_device_id(&other_seed, 1).map_err(|_| "device")?;
+        assert_eq!(device, same_device);
+        assert_ne!(device, other_device);
+        assert_eq!(device.len(), 64);
+
+        let account = Uuid::from_u128(2);
+        let session = derive_session_id(&seed, "base-session").map_err(|_| "session")?;
+        let parent_base = Uuid::from_u128(3).to_string();
+        let legacy = format!("user_{}{}_account_{}_session_{}", "a".repeat(64), "", account, session);
+        let parsed = parse_user_id_string(&legacy).ok_or("legacy parse")?;
+        let identity = parsed.as_object().cloned().ok_or("legacy object")?;
+        let normalized =
+            normalize_user_identity(identity, &device, account, &seed, &session).map_err(|_| "normalize")?;
+        assert_eq!(normalized["device_id"], device);
+        assert_eq!(normalized["account_uuid"], account.to_string());
+        assert_eq!(normalized["session_id"], session);
+
+        let mut extra = serde_json::Map::new();
+        extra.insert("extra_key".into(), serde_json::json!("preserved"));
+        extra.insert("parent_session_id".into(), serde_json::json!(parent_base));
+        let normalized = normalize_user_identity(extra, &device, account, &seed, &session).map_err(|_| "normalize")?;
+        assert_eq!(normalized["extra_key"], "preserved");
+        assert_ne!(normalized["parent_session_id"], Uuid::from_u128(3).to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn third_party_rejection_classifier_ignores_rate_limits() {
+        assert!(!is_third_party_rejection(429, &[], Some(b"attestation not supported")));
+        assert!(is_third_party_rejection(403, &[], Some(b"attestation failed")));
+        assert!(is_third_party_rejection(
+            401,
+            &[(Box::from("x-cc-rejection"), Bytes::from_static(b"1"))],
+            None,
+        ));
+        assert!(!is_third_party_rejection(403, &[], Some(b"invalid api key")));
+        assert!(!is_third_party_rejection(403, &[], Some(b"feature is not supported")));
+    }
+
+    #[tokio::test]
+    async fn response_body_classifier_replays_previewed_bytes() {
+        let (sender, receiver) = tokio::sync::mpsc::channel(4);
+        sender
+            .send(Ok(Bytes::from_static(b"third party cli")))
+            .await
+            .expect("send body prefix");
+        sender
+            .send(Ok(Bytes::from_static(b"ent is not supported")))
+            .await
+            .expect("send body suffix");
+        drop(sender);
+        let response = RawUpstreamResponse {
+            status: 403,
+            headers: Vec::new(),
+            content_encoding: None,
+            protocol: HttpProtocol::H1,
+            body: RawResponseBody::NonStream(receiver),
+        };
+        let (response, classified) = classify_and_replay_response(response).await;
+        assert!(classified);
+        let RawResponseBody::NonStream(mut body) = response.body else {
+            panic!("expected non-stream body");
+        };
+        let mut replayed = Vec::new();
+        while let Some(item) = body.recv().await {
+            replayed.extend_from_slice(&item.expect("body chunk"));
+        }
+        assert_eq!(replayed, b"third party client is not supported");
     }
 
     #[test]
@@ -4342,7 +4980,6 @@ mod tests {
                 Arc::new(NoopTransportCore),
                 std::env::temp_dir().join(format!("super-gateway-r4-runtime-{}", Uuid::now_v7())),
                 clock,
-                None,
                 None,
             )
             .await?,

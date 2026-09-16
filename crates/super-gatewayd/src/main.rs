@@ -9,9 +9,11 @@ mod local_bundle;
 mod managed_browser;
 mod observability;
 mod operations;
+mod price_sync;
 mod production_dispatcher;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod provider_http;
+mod system_env_align;
 
 use anyhow::Context as _;
 use config::GatewayConfig;

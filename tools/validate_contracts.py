@@ -251,13 +251,14 @@ class ContractValidator:
         admin_path = (CONTRACTS / "openapi" / "admin.openapi.json").resolve()
         data = self.documents[data_path]
         admin = self.documents[admin_path]
-        expected_data_paths = {"/v1/messages", "/v1/models", "/healthz", "/readyz"}
+        expected_data_paths = {"/v1/messages", "/v1/messages/count_tokens", "/v1/models", "/healthz", "/readyz"}
         self.check(data.get("openapi", "").startswith("3.1."), "data-plane.openapi", "OpenAPI must be 3.1")
         self.check(set(data.get("paths", {})) == expected_data_paths, "data-plane.openapi/paths", "public path set drifted")
         self.check(set(data["paths"]["/v1/messages"]) == {"post"}, "data-plane.openapi/v1/messages", "Messages method set drifted")
+        self.check(set(data["paths"]["/v1/messages/count_tokens"]) == {"post"}, "data-plane.openapi/v1/messages/count_tokens", "Count Tokens method set drifted")
         self.check(set(data["paths"]["/v1/models"]) == {"get"}, "data-plane.openapi/v1/models", "Models method set drifted")
         policy = data.get("x-public-route-policy", {})
-        self.check(policy.get("count_tokens_public") is False, "data-plane.openapi/x-public-route-policy", "Count Tokens must remain internal")
+        self.check(policy.get("count_tokens_public") is True, "data-plane.openapi/x-public-route-policy", "Count Tokens must be public")
         self.check(policy.get("websocket") is False, "data-plane.openapi/x-public-route-policy", "WebSocket is outside the public contract")
         self.check(policy.get("providers") == ["anthropic_official"], "data-plane.openapi/x-public-route-policy", "upstream provider set drifted")
         response_200 = data["paths"]["/v1/messages"]["post"]["responses"]["200"]["content"]
@@ -295,18 +296,16 @@ class ContractValidator:
                 param_refs = {p.get("$ref") for p in operation.get("parameters", []) if isinstance(p, dict)}
                 if method not in {"get", "head"}:
                     self.check("#/components/parameters/CsrfToken" in param_refs, f"admin.openapi{path}:{method}", "CSRF parameter missing")
-                if path != "/admin/v1/content-audit/records/{id}:export" and "{" in path and (
-                    method in {"patch", "delete"} or (method == "post" and ":" in path)
-                ):
+                if "{" in path and (method in {"patch", "delete"} or (method == "post" and ":" in path)):
                     self.check("#/components/parameters/IfMatch" in param_refs, f"admin.openapi{path}:{method}", "If-Match parameter missing")
-                if method == "post" and not any(token in path for token in ["/auth/login", "/auth/mfa/", "/auth/step-up", ":validate", ":simulate", "/content-audit/search-sessions"]):
+                if method == "post" and not any(token in path for token in ["/auth/login", "/auth/mfa/", "/auth/step-up", ":validate", ":simulate"]):
                     self.check("#/components/parameters/IdempotencyKey" in param_refs, f"admin.openapi{path}:{method}", "Idempotency-Key parameter missing")
         self.check(len(operation_ids) == len(set(operation_ids)), "admin.openapi/operationIds", "operationId collision")
         self.check(all(operation_ids), "admin.openapi/operationIds", "empty operationId")
         route_registry = self.documents[(CONTRACTS / "registries" / "admin-routes.json").resolve()]["routes"]
         expected_routes = {(item["path"], item["method"]) for item in route_registry}
         self.check(actual_routes == expected_routes, "admin.openapi/paths", "OpenAPI routes differ from the extracted route registry")
-        self.check(admin.get("x-route-count") == len(expected_routes) == 181, "admin.openapi/x-route-count", "admin operation count drifted")
+        self.check(admin.get("x-route-count") == len(expected_routes) == 178, "admin.openapi/x-route-count", "admin operation count drifted")
 
     def validate_source_traceability(self) -> None:
         ledger = self.documents[(CONTRACTS / "traceability" / "requirements.json").resolve()]
@@ -422,8 +421,7 @@ class ContractValidator:
             "GATEWAY_DATA_BIND", "GATEWAY_ADMIN_BIND", "GATEWAY_DATABASE_URL_FILE", "GATEWAY_MIGRATOR_DATABASE_URL_FILE",
             "GATEWAY_BUSINESS_KEY_PROVIDER", "GATEWAY_KEY_PROVIDER_URI",
             "GATEWAY_APP_KEY_FILE", "GATEWAY_DIGEST_KEY_FILE", "GATEWAY_AUDIT_INTEGRITY_KEY_FILE", "GATEWAY_BUNDLE_TRUST_STORE",
-            "GATEWAY_BUNDLE_DIR", "GATEWAY_RESPONSE_TMP_DIR", "GATEWAY_CONTENT_AUDIT_KEY_FILE",
-            "GATEWAY_CONTENT_AUDIT_DIR", "GATEWAY_BACKUP_KEY_FILE", "GATEWAY_BACKUP_REPOSITORY",
+            "GATEWAY_BUNDLE_DIR", "GATEWAY_RESPONSE_TMP_DIR", "GATEWAY_BACKUP_KEY_FILE", "GATEWAY_BACKUP_REPOSITORY",
             "GATEWAY_DRAIN_DEADLINE", "GATEWAY_BOOTSTRAP_ADMIN_USERNAME", "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
             "GATEWAY_BOOTSTRAP_ADMIN_EMAIL", "GATEWAY_BOOTSTRAP_ADMIN_DISPLAY_NAME",
             "GATEWAY_EGRESS_OBSERVER_HOST", "GATEWAY_EGRESS_OBSERVER_PATH",
@@ -479,7 +477,7 @@ class ContractValidator:
             self.check(item["name"] == path.name, "migration-manifest", "migration ordering/name drifted")
             self.check(item["sha256"] == text_sha256(path), path.name, "published migration checksum drifted")
         database = self.documents[(CONTRACTS / "fixtures" / "database-schema-manifest.valid.json").resolve()]
-        self.check(len(database["required_tables"]) == 116, "database-schema-manifest", "116-table baseline drifted")
+        self.check(len(database["required_tables"]) == 112, "database-schema-manifest", "112-table baseline drifted")
         self.check(
             set(database["logical_schemas"]) == {"iam", "gateway", "catalog", "telemetry", "security", "ops"},
             "database-schema-manifest", "logical schema set drifted",

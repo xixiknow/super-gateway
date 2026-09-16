@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use gateway_domain::{AuthKind, CredentialPurpose, EnrollmentAuthMethod, EnrollmentMode, ManagementClass, SecretValue};
+use gateway_domain::{
+    AuthKind, ClientOs, CredentialPurpose, EnrollmentAuthMethod, EnrollmentMode, ManagementClass, SecretValue,
+};
 use gateway_storage::{
     AuthCandidateRecord, AuthCasPrecondition, BootstrapAdminRecord, BootstrapOutcome, BrowserCasPrecondition,
     BrowserMaterialCandidate, CredentialEnrollmentCreate, CredentialGroupMigrationBegin, CredentialLifecycleCommand,
@@ -66,6 +68,7 @@ async fn credential_r5_lifecycle_cas_dedupe_and_plan_contract() -> Result<(), Bo
             expected_credential_revision: None,
             expires_in_seconds: 1_800,
             callback_window_seconds: 600,
+            os_family: ClientOs::Windows,
         })
         .await?;
     let scheduling: (i64, i64, i32, i32, i32, i32) = sqlx::query_as(
@@ -86,6 +89,7 @@ async fn credential_r5_lifecycle_cas_dedupe_and_plan_contract() -> Result<(), Bo
             binding_id,
             expected_enrollment_revision: 1,
             expected_credential_revision: 1,
+            os_family: ClientOs::Windows,
         })
         .await?;
     assert_eq!(
@@ -220,6 +224,7 @@ async fn credential_r5_lifecycle_cas_dedupe_and_plan_contract() -> Result<(), Bo
             expected_enrollment_revision: 6,
             expected_credential_revision: 3,
             durable_job_fence: None,
+            os_family: ClientOs::Windows,
         })
         .await?;
 
@@ -699,6 +704,7 @@ async fn assert_global_account_dedupe(
                 expected_credential_revision: None,
                 expires_in_seconds: 1_800,
                 callback_window_seconds: 600,
+                os_family: ClientOs::Windows,
             })
             .await?;
         storage
@@ -708,6 +714,7 @@ async fn assert_global_account_dedupe(
                 binding_id: Uuid::now_v7(),
                 expected_enrollment_revision: 1,
                 expected_credential_revision: 1,
+                os_family: ClientOs::Windows,
             })
             .await?;
         storage

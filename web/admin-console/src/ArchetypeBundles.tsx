@@ -101,10 +101,10 @@ function describeError(error: unknown, fallback: string): string {
 }
 
 function lifecycleLabel(value: string | null | undefined, t: (key: MessageKey) => string): string {
+  const normalized = value === "canary" ? "verified" : value;
   const labels: Record<string, MessageKey> = {
     draft: "bundle.status.draft",
     verified: "bundle.status.verified",
-    canary: "bundle.status.canary",
     active: "bundle.status.active",
     retired: "bundle.status.retired",
     complete: "bundle.status.complete",
@@ -113,12 +113,13 @@ function lifecycleLabel(value: string | null | undefined, t: (key: MessageKey) =
     loadable: "bundle.status.loadable",
     candidate: "bundle.status.candidate",
   };
-  return value ? (labels[value] ? t(labels[value]) : value) : "—";
+  return normalized ? (labels[normalized] ? t(labels[normalized]) : normalized) : "—";
 }
 
 function statusTone(value: string | null | undefined): string {
-  if (["active", "complete", "passed", "loadable", "verified"].includes(value ?? "")) return "ready";
-  if (["draft", "pending", "candidate", "canary"].includes(value ?? "")) return "waiting";
+  const normalized = value === "canary" ? "verified" : value;
+  if (["active", "complete", "passed", "loadable", "verified"].includes(normalized ?? "")) return "ready";
+  if (["draft", "pending", "candidate"].includes(normalized ?? "")) return "waiting";
   return "muted";
 }
 
@@ -141,6 +142,29 @@ function WorkflowGuide() {
   </section>;
 }
 
+function OsCoverageOverview({ archetypes, bundles }: { archetypes: ArchetypeRecord[]; bundles: BundleRecord[] }) {
+  const { t } = useI18n();
+  const operatingSystems = ["windows", "macos", "linux"] as const;
+  return <section className="card os-coverage" aria-labelledby="os-coverage-title">
+    <div className="cardbar"><div className="cbl"><h2 id="os-coverage-title">{t("bundle.coverage.title")}</h2><span className="tag t-gray">{t("bundle.coverage.subtitle")}</span></div></div>
+    <div className="os-coverage-grid">{operatingSystems.map((os) => {
+      const activeArchetypes = archetypes.filter((row) => row.os_family === os && (row.lifecycle === "active" || row.version_lifecycle === "active"));
+      const archetypeIds = new Set(activeArchetypes.flatMap((row) => [row.id, row.version_id].filter((value): value is string => Boolean(value))));
+      const activeBundles = bundles.filter((row) => {
+        const sourceId = row.source_archetype_version_id;
+        return row.lifecycle === "active" && typeof sourceId === "string" && archetypeIds.has(sourceId);
+      });
+      const ready = activeArchetypes.length > 0 && activeBundles.length > 0;
+      return <article key={os} className={`os-coverage-item ${ready ? "ready" : "missing"}`}>
+        <div className="os-coverage-head"><strong>{t(`bundle.coverage.${os}` as MessageKey)}</strong><span className={`lifecycle-pill ${ready ? "ready" : "waiting"}`}><i />{ready ? t("bundle.coverage.ready") : t("bundle.coverage.missing")}</span></div>
+        <p>{activeArchetypes.length > 0 ? t("bundle.coverage.archetypeBound") : t("bundle.coverage.archetypeMissing")}</p>
+        <p>{activeBundles.length > 0 ? t("bundle.coverage.bundleBound") : t("bundle.coverage.bundleMissing")}</p>
+        {!ready && <p><a href="/alerts">{t("bundle.coverage.openAlerts")}</a></p>}
+      </article>;
+    })}</div>
+  </section>;
+}
+
 function ArchetypeTable({ result, onCreate, onCreateVersion, onAction }: {
   result: ReturnType<typeof useQuery<ArchetypeRecord[]>>;
   onCreate(): void;
@@ -154,7 +178,7 @@ function ArchetypeTable({ result, onCreate, onCreateVersion, onAction }: {
     <div className="cardbar"><div className="cbl"><h2>{t("bundle.archetypes.title")}</h2><span className="tag t-gray">{t("bundle.count", { count: rows.length })}</span></div><div className="cbr"><button className="ibtn outline" type="button" data-tip={t("bundle.action.createArchetype")} aria-label={t("bundle.action.createArchetype")} onClick={onCreate}><Icon name="plus" /></button><button className={`ibtn outline${result.isFetching ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={result.isFetching} onClick={() => void result.refetch()}><Icon name="refresh" /></button></div></div>
     {result.isLoading ? <LoadingState /> : rows.length === 0 ? <EmptyState title={t("bundle.archetypes.empty")} body={t("bundle.archetypes.emptyBody")} /> : <><div className="tbl-wrap"><table className="tbl lifecycle-table"><thead><tr><th>{t("bundle.column.archetype")}</th><th>{t("bundle.column.environment")}</th><th>{t("bundle.column.client")}</th><th>{t("bundle.column.evidence")}</th><th>{t("bundle.column.capacity")}</th><th>{t("bundle.column.lifecycle")}</th><th className="row-actions-heading">{t("table.actions")}</th></tr></thead><tbody>{pager.pageRows.map((row) => {
       const state = row.version_lifecycle ?? row.lifecycle;
-      const next = state === "draft" ? "verify" : state === "verified" || state === "canary" ? "activate" : state === "active" ? "retire" : null;
+      const next = state === "draft" ? "verify" : state === "verified" ? "activate" : state === "active" ? "retire" : null;
       return <tr key={row.id}>
         <td><strong>{row.name}</strong><small>{t("bundle.version", { version: row.version ?? "—" })}</small></td>
         <td><strong>{t(`bundle.os.${row.os_family}` as MessageKey)} · {row.architecture}</strong><small>{row.os_build || "—"}</small></td>
@@ -179,7 +203,7 @@ function BundleTable({ result, onCreate, onAction }: {
   return <section className="card table-card lifecycle-table-card" aria-busy={result.isLoading}>
     <div className="cardbar"><div className="cbl"><h2>{t("bundle.bundles.title")}</h2><span className="tag t-gray">{t("bundle.count", { count: rows.length })}</span></div><div className="cbr"><button className="ibtn outline" type="button" data-tip={t("bundle.action.upload")} aria-label={t("bundle.action.upload")} onClick={onCreate}><Icon name="upload" /></button><button className={`ibtn outline${result.isFetching ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={result.isFetching} onClick={() => void result.refetch()}><Icon name="refresh" /></button></div></div>
     {result.isLoading ? <LoadingState /> : rows.length === 0 ? <EmptyState title={t("bundle.bundles.empty")} body={t("bundle.bundles.emptyBody")} /> : <><div className="tbl-wrap"><table className="tbl lifecycle-table bundle-table"><thead><tr><th>{t("bundle.column.bundle")}</th><th>{t("bundle.column.source")}</th><th>{t("bundle.column.protocol")}</th><th>{t("bundle.column.gates")}</th><th>{t("bundle.column.lifecycle")}</th><th>{t("bundle.column.activated")}</th><th className="row-actions-heading">{t("table.actions")}</th></tr></thead><tbody>{pager.pageRows.map((row) => {
-      const next = row.lifecycle === "draft" ? "verify" : row.lifecycle === "verified" || row.lifecycle === "canary" ? "activate" : row.lifecycle === "retired" ? "rollback" : null;
+      const next = row.lifecycle === "draft" ? "verify" : row.lifecycle === "verified" ? "activate" : row.lifecycle === "retired" ? "rollback" : null;
       return <tr key={row.id}>
         <td><strong>{t("bundle.artifactVersion", { version: row.artifact_version })}</strong><small>ABI {row.engine_abi_version}</small></td>
         <td><strong>{row.archetype_name || t("bundle.unknownArchetype")}</strong><small>{t("bundle.version", { version: row.archetype_version ?? "—" })} · {row.capture_cohort || "—"}</small></td>
@@ -313,6 +337,7 @@ export function ArchetypeBundlePage() {
       return api(`${base}/${encodeURIComponent(dialog.row.id)}:${dialog.action}`, { method: "POST", headers: { "If-Match": `\"rev-${revision}\"` }, body: JSON.stringify(body) });
     },
     onSuccess: (_, variables) => { const endpoint = variables.dialog.kind === "archetype" ? "/admin/v1/environment-archetypes" : "/admin/v1/transport-bundles"; void queryClient.invalidateQueries({ queryKey: [endpoint] }); toast.success(t("bundle.toast.transitioned")); setLifecycle(null); },
+    onError: (error) => toast.error(describeError(error, t("common.operationFailed"))),
   });
   useEffect(() => {
     if (!creation && !lifecycle) return;
@@ -335,15 +360,26 @@ export function ArchetypeBundlePage() {
     } catch { setFileError(t("bundle.error.invalidFile")); }
   }
 
+  function verifyArchetype(row: ArchetypeRecord) {
+    transition.mutate({ dialog: { kind: "archetype", action: "verify", row }, data: new FormData() });
+  }
+
+  function verifyBundle(row: BundleRecord) {
+    transition.mutate({ dialog: { kind: "bundle", action: "verify", row }, data: new FormData() });
+  }
+
   const loadError = view === "archetypes" ? archetypes.error : bundles.error;
+  const archetypeRows = archetypes.data ?? [];
+  const bundleRows = bundles.data ?? [];
   return <div className="page-stack bundle-page">
     <header className="page-heading"><div><p className="eyebrow mono">{t("bundle.eyebrow.page")}</p><h1>{t("nav.bundles")}</h1><p>{t("bundle.pageDescription")}</p></div></header>
+    <OsCoverageOverview archetypes={archetypeRows} bundles={bundleRows} />
     <WorkflowGuide />
     <div className="bundle-viewbar"><div className="segmented local" role="tablist" aria-label={t("bundle.viewLabel")}><button type="button" role="tab" aria-selected={view === "archetypes"} className={view === "archetypes" ? "active" : ""} onClick={() => setView("archetypes")}>{t("bundle.archetypes.title")}</button><button type="button" role="tab" aria-selected={view === "bundles"} className={view === "bundles" ? "active" : ""} onClick={() => setView("bundles")}>{t("bundle.bundles.title")}</button></div><p><Icon name="info" />{view === "archetypes" ? t("bundle.archetypes.help") : t("bundle.bundles.help")}</p></div>
     {loadError && <div className="alert alert-warn" role="alert"><Icon name="alert" /><div><div className="at">{t("error.loadTitle")}</div><div className="ad">{describeError(loadError, t("common.requestFailed"))}</div></div></div>}
     {view === "archetypes"
-      ? <ArchetypeTable result={archetypes} onCreate={() => { setFileError(""); setBundleFile(null); setCreation({ kind: "archetype" }); }} onCreateVersion={(row) => setCreation({ kind: "archetype", base: row })} onAction={(action, row) => setLifecycle({ kind: "archetype", action, row })} />
-      : <BundleTable result={bundles} onCreate={() => { setFileError(""); setBundleFile(null); setCreation({ kind: "bundle" }); }} onAction={(action, row) => setLifecycle({ kind: "bundle", action, row })} />}
+      ? <ArchetypeTable result={archetypes} onCreate={() => { setFileError(""); setBundleFile(null); setCreation({ kind: "archetype" }); }} onCreateVersion={(row) => setCreation({ kind: "archetype", base: row })} onAction={(action, row) => action === "verify" ? verifyArchetype(row) : setLifecycle({ kind: "archetype", action, row })} />
+      : <BundleTable result={bundles} onCreate={() => { setFileError(""); setBundleFile(null); setCreation({ kind: "bundle" }); }} onAction={(action, row) => action === "verify" ? verifyBundle(row) : setLifecycle({ kind: "bundle", action, row })} />}
     {creation?.kind === "archetype" && createPortal(<ArchetypeForm base={creation.base} pending={createArchetype.isPending} error={createArchetype.isError ? describeError(createArchetype.error, t("common.operationFailed")) : undefined} onCancel={() => { if (!createArchetype.isPending) { createArchetype.reset(); setCreation(null); } }} onSubmit={(data) => createArchetype.mutate(data)} />, document.body)}
     {creation?.kind === "bundle" && createPortal(<BundleUploadForm pending={uploadBundle.isPending} error={fileError || (uploadBundle.isError ? describeError(uploadBundle.error, t("common.operationFailed")) : undefined)} summary={bundleFile} onFile={(file) => void selectBundleFile(file)} onCancel={() => { if (!uploadBundle.isPending) { uploadBundle.reset(); setCreation(null); setBundleFile(null); setFileError(""); } }} onSubmit={(data) => uploadBundle.mutate(data)} />, document.body)}
     {lifecycle && createPortal(<LifecycleForm dialog={lifecycle} pending={transition.isPending} error={transition.isError ? describeError(transition.error, t("common.operationFailed")) : undefined} onCancel={() => { if (!transition.isPending) { transition.reset(); setLifecycle(null); } }} onSubmit={(data) => transition.mutate({ dialog: lifecycle, data })} />, document.body)}

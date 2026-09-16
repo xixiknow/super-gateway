@@ -25,6 +25,16 @@ interface PlatformKeyRecord {
   last_used_at: string | null;
 }
 
+interface KeyConfigVersion {
+  is_active?: unknown;
+  messages_enabled?: unknown;
+  models_enabled?: unknown;
+  model_allowlist?: unknown;
+  ip_allowlist?: unknown;
+}
+
+interface ModelOption { id?: unknown; display_name?: unknown; upstream_model_id?: unknown; lifecycle?: unknown }
+
 interface GroupOption { id?: unknown; name?: unknown; status?: unknown }
 
 type KeyAction = "edit" | "reveal" | "disable" | "reactivate" | "revoke" | "client-config" | "config-history" | "audit";
@@ -78,6 +88,10 @@ function viewEndpoint(action: KeyAction, keyId: string): string | null {
   return null;
 }
 
+function baseForKey(keyId: string): string {
+  return `/admin/v1/platform-keys/${encodeURIComponent(keyId)}`;
+}
+
 function actionError(error: unknown, locale: Locale): string {
   if (error instanceof ApiError) {
     if (locale === "zh-CN") {
@@ -115,7 +129,7 @@ function KeyRowActions({ item, onAction }: { item: PlatformKeyRecord; onAction(a
     return [
       { key: "edit", labelKey: "key.action.edit", icon: "edit", primary: true, when: notRevoked, ...open("edit") },
       { key: "disable", labelKey: "key.action.disable", icon: "pause", danger: true, primary: true, when: (key) => key.status === "active", ...open("disable") },
-      { key: "reactivate", labelKey: "key.action.reactivate", icon: "play", primary: true, when: (key) => key.status === "disabled", ...open("reactivate") },
+      { key: "reactivate", labelKey: "key.action.reactivate", icon: "play", primary: true, when: (key) => key.status === "disabled" || key.status === "expired", ...open("reactivate") },
       { key: "reveal", labelKey: "key.action.reveal", icon: "eye", when: notRevoked, ...open("reveal") },
       { key: "client-config", labelKey: "key.action.clientConfig", icon: "file-text", ...open("client-config") },
       { key: "config-history", labelKey: "key.action.configHistory", icon: "clock", ...open("config-history") },
@@ -136,12 +150,27 @@ function KeyActionDialog({ action, item, canChangeGroup, onClose }: { action: Ke
   const [selectedGroupId, setSelectedGroupId] = useState(item.group_id);
   const details = useQuery({ queryKey: [endpoint], queryFn: () => api<unknown>(endpoint ?? ""), enabled: endpoint !== null, retry: false });
   const groups = useQuery({ queryKey: ["/admin/v1/groups"], queryFn: () => api<GroupOption[]>("/admin/v1/groups"), enabled: action === "edit" && canChangeGroup, retry: false });
+  const configHistory = useQuery({ queryKey: [`${baseForKey(item.id)}/config-versions`], queryFn: () => api<KeyConfigVersion[]>(`${baseForKey(item.id)}/config-versions`), enabled: action === "edit", retry: false });
+  const models = useQuery({ queryKey: ["/admin/v1/models"], queryFn: () => api<ModelOption[]>("/admin/v1/models"), enabled: action === "edit", retry: false });
+  const [endpointPermissions, setEndpointPermissions] = useState<string[]>(["messages", "models"]);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [ipAllowlist, setIpAllowlist] = useState("");
+  useEffect(() => {
+    if (action !== "edit" || !configHistory.data) return;
+    const active = configHistory.data.find((version) => version.is_active) ?? configHistory.data[0];
+    if (!active) return;
+    setEndpointPermissions([...(active.messages_enabled ? ["messages"] : []), ...(active.models_enabled ? ["models"] : [])]);
+    setSelectedModels(Array.isArray(active.model_allowlist) ? active.model_allowlist.map(String) : []);
+    setIpAllowlist(Array.isArray(active.ip_allowlist) ? active.ip_allowlist.map(String).join("\n") : "");
+  }, [action, configHistory.data]);
   const mutation = useMutation({
     mutationFn: async (form: FormData) => {
       const headers = { "If-Match": `"rev-${item.revision}"` };
       if (action === "edit") {
         const expires = String(form.get("expires_at") ?? "");
         const spendLimit = String(form.get("spend_limit_amount") ?? "").trim();
+        const permissions = form.getAll("endpoint_permissions").map(String);
+        if (permissions.length === 0) throw new Error(t("key.action.edit.permissionsRequired"));
         return api(`/admin/v1/platform-keys/${encodeURIComponent(item.id)}`, { method: "PATCH", headers, body: JSON.stringify({
           name: String(form.get("name") ?? "").trim(),
           expires_at: expires ? new Date(expires).toISOString() : null,
@@ -149,6 +178,9 @@ function KeyActionDialog({ action, item, canChangeGroup, onClose }: { action: Ke
           max_concurrency: Number(form.get("max_concurrency")),
           messages_rpm: Number(form.get("messages_rpm")),
           spend_limit_amount: spendLimit || null,
+          endpoint_permissions: permissions,
+          model_allowlist: form.getAll("model_allowlist").map(String),
+          ip_allowlist: String(form.get("ip_allowlist") ?? "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
         }) });
       }
       const reason = String(form.get("reason") ?? "").trim();
@@ -201,6 +233,9 @@ function KeyActionDialog({ action, item, canChangeGroup, onClose }: { action: Ke
           <div className="field"><label htmlFor={`${titleId}-concurrency`}>{t("key.column.concurrency")}</label><input id={`${titleId}-concurrency`} name="max_concurrency" className="inp" type="number" min={1} max={1_000_000} defaultValue={item.max_concurrency ?? 1} required /></div>
           <div className="field"><label htmlFor={`${titleId}-rpm`}>{t("key.column.rpm")}</label><input id={`${titleId}-rpm`} name="messages_rpm" className="inp" type="number" min={1} max={1_000_000} defaultValue={item.messages_rpm ?? 1} required /></div>
           <div className="field"><label htmlFor={`${titleId}-spend`}>{t("key.column.spendLimit")}<span className="hint">{t("key.edit.spendHint")}</span></label><input id={`${titleId}-spend`} name="spend_limit_amount" className="inp" type="number" min={0} step="0.01" defaultValue={item.spend_limit_amount ?? ""} /></div>
+          <fieldset className="choice-field field-wide"><legend>{t("action.key.permissions")}</legend><div className="choice-grid">{[["messages", "option.endpoint.messages"], ["models", "option.endpoint.models"]].map(([value, labelKey]) => <label key={value} className="choice-card"><input type="checkbox" name="endpoint_permissions" value={value} checked={endpointPermissions.includes(value)} onChange={(event) => setEndpointPermissions((current) => event.target.checked ? [...new Set([...current, value])] : current.filter((item) => item !== value))} /><span>{t(labelKey as MessageKey)}</span></label>)}</div></fieldset>
+          <fieldset className="choice-field field-wide"><legend>{t("action.key.modelAllowlist")}<span className="hint">{t("action.key.modelAllowlistHint")}</span></legend>{models.isLoading ? <p className="muted">{t("common.loading")}</p> : <div className="choice-grid">{(models.data ?? []).filter((model) => model.lifecycle === "published").map((model) => { const id = String(model.id ?? ""); return <label key={id} className="choice-card"><input type="checkbox" name="model_allowlist" value={id} checked={selectedModels.includes(id)} onChange={(event) => setSelectedModels((current) => event.target.checked ? [...new Set([...current, id])] : current.filter((item) => item !== id))} /><span>{String(model.display_name ?? model.upstream_model_id ?? id)}</span></label>; })}</div>}</fieldset>
+          <div className="field field-wide"><label htmlFor={`${titleId}-ips`}>{t("action.key.ipAllowlist")}<span className="hint">{t("action.key.ipAllowlistHint")}</span></label><textarea id={`${titleId}-ips`} name="ip_allowlist" className="inp mono" rows={4} value={ipAllowlist} onChange={(event) => setIpAllowlist(event.target.value)} /></div>
           <div className="field"><label htmlFor={`${titleId}-expires`}>{t("action.key.expires")}<span className="hint">{t("key.edit.expiresHint")}</span></label><input id={`${titleId}-expires`} name="expires_at" className="inp" type="datetime-local" defaultValue={localDateTimeValue(item.expires_at)} /></div>
         </>}{needsPassword && <div className="field field-wide"><label htmlFor={`${titleId}-password`}>{t("key.action.currentPassword")}</label><input id={`${titleId}-password`} name="current_password" className="inp" type="password" required autoComplete="current-password" autoFocus /></div>}{needsReason && <div className="field field-wide"><label htmlFor={`${titleId}-reason`}>{t("key.action.reason")}</label><textarea id={`${titleId}-reason`} name="reason" className="inp" maxLength={2048} rows={3} autoFocus={!needsPassword} /></div>}</div><div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={mutation.isPending}>{t("common.cancel")}</button><button type="submit" className={`btn ${action === "revoke" ? "btn-danger" : "btn-primary"}`} disabled={mutation.isPending || (action === "edit" && canChangeGroup && groups.isLoading)}>{mutation.isPending ? t("common.submitting") : t(actionConfirmKey(action))}</button></div></form>}
   </section></div>, document.body);
@@ -227,9 +262,9 @@ const zhDataLabels: Record<string, string> = {
   name: "名称", status: "状态", display_prefix: "密钥前缀", template_kind: "配置模板", contains_secret: "是否包含密钥",
   environment: "环境变量", active_config: "当前配置", version: "版本", messages_enabled: "消息接口", models_enabled: "模型接口",
   max_body_bytes: "最大请求体字节数", messages_rpm: "消息接口每分钟请求数", messages_burst: "消息接口突发数",
-  models_rpm: "模型接口每分钟请求数", models_burst: "模型接口突发数", max_concurrency: "最大并发数", audit_mode: "审计方式",
+  models_rpm: "模型接口每分钟请求数", models_burst: "模型接口突发数", max_concurrency: "最大并发数",
   content_sha256: "内容校验摘要", messages_rate: "消息接口速率", models_rate: "模型接口速率", rpm: "每分钟请求数", burst: "突发数",
-  model_allowlist: "模型白名单", ip_allowlist: "网络白名单", content_audit_expires_at: "内容审计到期时间", created_at: "创建时间",
+  model_allowlist: "模型白名单", ip_allowlist: "网络白名单", created_at: "创建时间",
   is_active: "是否生效", pointer_revision: "生效版本", event_day: "事件日期", daily_sequence: "当日序号", actor_type: "操作方类型",
   action: "操作", object_type: "对象类型", outcome: "结果", detail: "详情", occurred_at: "发生时间", canonical_redacted_event: "脱敏审计内容",
 };
@@ -239,7 +274,7 @@ function dataLabel(value: string, locale: Locale): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-const zhDataValues: Record<string, string> = { active: "活跃", disabled: "已禁用", expired: "已过期", revoked: "已吊销", metadata: "仅记录元数据", full_encrypted: "完整加密审计", claude_code_environment: "客户端环境配置", success: "成功", platform_admin: "平台管理员", key_owner: "密钥所有者" };
+const zhDataValues: Record<string, string> = { active: "活跃", disabled: "已禁用", expired: "已过期", revoked: "已吊销", claude_code_environment: "客户端环境配置", success: "成功", platform_admin: "平台管理员", key_owner: "密钥所有者" };
 
 function dataValue(value: string, locale: Locale): string {
   if (locale === "zh-CN") return zhDataValues[value] ?? value;

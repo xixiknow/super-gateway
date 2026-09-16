@@ -26,13 +26,13 @@
 | Method | Path | 认证 | 资源域 |
 |---|---|---|---|
 | `POST` | `/v1/messages` | Platform Key | Messages RPM、Key 并发、Group、Credential；非流式还有 Reservation |
+| `POST` | `/v1/messages/count_tokens` | Platform Key + messages 权限 | 独立 Count Tokens RPM、Key 并发、Group、Credential；不做消费额度准入 |
 | `GET` | `/v1/models` | Platform Key + models 权限 | 独立 Models RPM |
 | `GET` | `/healthz` | 无 | 独立来源 IP 限速 |
 | `GET` | `/readyz` | 无 | 独立来源 IP 限速 |
 
 首版没有以下公开能力：
 
-- `/v1/messages/count_tokens`；
 - `/v1/gateway/availability`；
 - OpenAI 兼容路径；
 - 多 Provider 路由参数；
@@ -40,7 +40,7 @@
 - WebSocket 或 SSE/WS 转换；
 - 数据面请求幂等去重、SSE replay、响应领取。
 
-`/v1/messages/count_tokens` 在任何 Method 下都视为未知 `/v1/*`。内部 Token Estimate 不形成公开端点、权限项或 `Allow` 内容。
+`/v1/messages/count_tokens` 复用 Messages 权限、模型范围、System 策略与订阅凭据拟态；该端点使用独立限速键，不执行消费额度准入。
 
 ### 2.2 管理面
 
@@ -703,7 +703,7 @@ GET /admin/v1/requests?filter[status]=completed&filter[created_at][gte]=...&sort
 | GET | `/admin/v1/auth/sessions` | 本人 | 查看本人 Session |
 | DELETE | `/admin/v1/auth/sessions/{id}` | 本人 | 撤销本人某个 Session |
 | GET、POST | `/admin/v1/users` | Admin | 查询或创建 User |
-| GET、PATCH | `/admin/v1/users/{id}` | Admin | 查看或修改显示名、邮箱 |
+| GET、PATCH | `/admin/v1/users/{id}` | Admin | 查看或修改显示名、邮箱、角色、Key 上限和余额 |
 | POST | `/admin/v1/users/{id}:disable` | Admin | 禁用 User，并同步禁用其 Key |
 | POST | `/admin/v1/users/{id}:reactivate` | Admin | 恢复 User；Key 保持原状态 |
 | POST | `/admin/v1/users/{id}:unlock` | Admin | 解锁登录 |
@@ -721,11 +721,14 @@ GET /admin/v1/requests?filter[status]=completed&filter[created_at][gte]=...&sort
   "display_name": "Alice",
   "email": "alice@example.com",
   "role": "key_owner",
-  "temporary_password": "SECRET"
+  "temporary_password": "SECRET",
+  "max_concurrency": 5,
+  "rpm": 60,
+  "balance_amount": null
 }
 ```
 
-User 响应字段固定为：`id`、`username`、`display_name`、`email`、`role`、`status`、`revision`、`created_at`、`updated_at`。首版 `username` 与 `role` 创建后只读；管理员不经 API 重置用户密码或 MFA。初始管理员在进程首次运行时依据环境变量一次性初始化。
+User 响应字段固定为：`id`、`username`、`display_name`、`email`、`role`、`status`、`last_used_at`、`max_concurrency`、`rpm`、`balance_amount`、`lifetime_spend_amount`、`revision`、`created_at`、`updated_at`。`max_concurrency` 与 `rpm` 是该用户任一 Platform Key 的硬上限；`balance_amount=null` 表示不限额。PATCH 可修改除 username 外的管理字段；角色变化会撤销目标用户现有 Session，且禁止移除最后一个 active Platform Admin。管理员不经 API 重置用户密码或 MFA。初始管理员在进程首次运行时由本地运行时自动初始化。
 
 ## 23. Platform Key API
 
@@ -748,24 +751,18 @@ User 响应字段固定为：`id`、`username`、`display_name`、`email`、`rol
 ```json
 {
   "name": "team-a-cli",
-  "owner_user_id": "usr_...",
   "group_id": "grp_...",
   "expires_at": null,
   "endpoint_permissions": ["messages", "models"],
-  "model_scope": {"mode": "group", "model_ids": []},
-  "body_limit_bytes": 67108864,
-  "messages_rate": {"rpm": 60, "burst": 10},
-  "models_rate": {"rpm": 60, "burst": 10},
-  "concurrency": {"limit": 5, "retry_after_ms": 2000},
+  "model_allowlist": [],
   "ip_allowlist": [],
-  "requested_content_audit": "metadata_only",
-  "ruleset_id": null
+  "spend_limit_amount": null
 }
 ```
 
-响应包含 `id`、`name`、`display_prefix`、owner、Group、状态、上述配置、`effective_content_audit`、`active_config_version`、`revision` 与时间戳。`owner_user_id`、`group_id` 与 secret 不属于 PATCH 字段；Key 不支持转移用户或轮换 secret。创建后的完整 secret 通过 reveal 查看，响应携带 `Cache-Control: no-store`，默认 UI 60 秒后隐藏。
+owner 固定为当前登录用户。响应包含 `id`、`name`、owner、Group、状态、`max_concurrency`、`messages_rpm`、`spend_limit_amount`、`today_spend_amount`、`thirty_day_spend_amount`、`lifetime_spend_amount`、`last_used_at`、`revision` 与时间戳。`owner_user_id` 与 secret 不属于 PATCH 字段；Key 不支持转移用户或轮换 secret。完整 secret 通过 reveal 查看，响应携带 `Cache-Control: no-store`，默认 UI 60 秒后隐藏。
 
-Key Owner 只可查询和操作本人 Key；PATCH allowlist 仅包含名称与过期时间，并可执行本人 Key 的 disable/reactivate/revoke/reveal。并发、RPM、模型、IP、RuleSet、Content Audit 等限制由管理员配置。Key 的客户端类型限制由 Group 决定，不在 Key 上配置。首版 Key Owner 不创建 Key。
+Key Owner 只可查询和操作本人 Key，并可创建 owner 为自己的 Key。PATCH allowlist 包含名称、过期时间、`endpoint_permissions`、`max_concurrency`、`messages_rpm`、`spend_limit_amount`、`model_allowlist` 与 `ip_allowlist`；Platform Admin 还可提交 `group_id`。未提交的字段保持现值，白名单显式提交空数组表示清空限制。Key 配置不得超过 owner 的 User 级并发/RPM 上限。消费上限或 owner 余额耗尽时，新的 Messages 请求返回限流错误。模型、IP、RuleSet、Content Audit 等其余限制仍由受控配置版本管理；Key 的客户端类型限制由 Group 决定。
 
 ## 24. Credential Group API
 
@@ -779,9 +776,7 @@ Key Owner 只可查询和操作本人 Key；PATCH allowlist 仅包含名称与�
 | GET | `/admin/v1/groups/{id}/config-versions/{version}` | 读取完整配置、hash、来源 |
 | POST | `/admin/v1/groups/{id}/config-versions/{version}:validate` | 静态验证 |
 | POST | `/admin/v1/groups/{id}/config-versions/{version}:simulate` | 样本请求与历史窗口模拟 |
-| POST | `/admin/v1/groups/{id}/config-versions/{version}:publish-shadow` | 发布 Shadow |
-| POST | `/admin/v1/groups/{id}/config-versions/{version}:promote-canary` | 推进 Canary |
-| POST | `/admin/v1/groups/{id}/config-versions/{version}:activate` | 激活 |
+| POST | `/admin/v1/groups/{id}/config-versions/{version}:activate` | 激活（新建版本可直接激活，无需 Shadow/Canary 与双人审批） |
 | POST | `/admin/v1/groups/{id}:rollback-config` | 回滚 Active Pointer |
 | POST | `/admin/v1/groups/{id}:disable` | 禁用并结束尚未获得 Lease 的请求 |
 | POST | `/admin/v1/groups/{id}:reactivate` | 恢复服务 |
@@ -838,11 +833,6 @@ Key Owner 只可查询和操作本人 Key；PATCH allowlist 仅包含名称与�
     "client_write_total_non_stream_ms": 300000
   },
   "stream_pending_bytes_max": 1048576,
-  "content_audit": {
-    "policy": "allow",
-    "retention_days": 7,
-    "direction_limit_bytes": 67108864
-  },
   "token_estimate": {
     "mode": "local_estimate",
     "console_count_key_ref": null,
@@ -851,9 +841,7 @@ Key Owner 只可查询和操作本人 Key；PATCH allowlist 仅包含名称与�
   },
   "snapshot_refs": {
     "ruleset_id": null,
-    "enforcement_id": "art_...",
     "capability_id": "art_...",
-    "background_catalog_id": "art_...",
     "price_id": "art_..."
   }
 }
@@ -931,9 +919,9 @@ Device ID、Profile seed、Session HMAC 与 token 原文始终脱敏；管理员
 
 | Method | Path | 说明 |
 |---|---|---|
-| GET | `/admin/v1/models` | 模型目录与发布状态 |
-| GET | `/admin/v1/models/{id}` | 详情、能力版本和定价引用 |
-| POST | `/admin/v1/models:refresh` | 自动发现 Job |
+| GET | `/admin/v1/models` | 模型目录、发布状态、公开 token limits 与 provider capabilities |
+| GET | `/admin/v1/models/{id}` | 详情、公开能力、能力版本和定价引用 |
+| POST | `/admin/v1/models:refresh` | 无凭据同步 Anthropic 当前及 still-available legacy 模型 Job；公开源异常时使用内置快照。管理页面用固定机器原因直接提交，无人工确认步骤 |
 | POST | `/admin/v1/models/{id}:approve` | 审核新模型后发布 |
 | POST | `/admin/v1/models/{id}:deprecate` | 标记弃用，不再接受新请求 |
 | POST | `/admin/v1/models/{id}:disable` | 停用 |
@@ -943,7 +931,7 @@ Device ID、Profile seed、Session HMAC 与 token 原文始终脱敏；管理员
 
 Capability 采用数据驱动的字段路径、类型、条件、互斥和 transform 描述。新模型出现 `thinking.type` 等差异时创建新版本，无需在请求管线写模型分支。已消失的模型自动进入 disabled 并通知管理员；deprecated/disabled 模型均不接受新调用。
 
-### 26.2 RuleSet、Enforcement、Catalog 与 Price
+### 26.2 RuleSet 与 Price
 
 | Method | Path | 说明 |
 |---|---|---|
@@ -951,17 +939,9 @@ Capability 采用数据驱动的字段路径、类型、条件、互斥和 trans
 | POST | `/admin/v1/rulesets/{id}:validate` | 静态验证 |
 | POST | `/admin/v1/rulesets/{id}:simulate` | 输入样本模拟 |
 | POST | `/admin/v1/rulesets/{id}:activate` | 激活 |
-| GET、POST | `/admin/v1/enforcement-versions` | 安全强制版本 |
-| POST | `/admin/v1/enforcement-versions/{id}:validate` | typed 编译与不可放宽校验 |
-| POST | `/admin/v1/enforcement-versions/{id}:publish-shadow` | 发布 Shadow 候选并冻结证据窗口 |
-| POST | `/admin/v1/enforcement-versions/{id}:activate` | 双人审批后激活并原子生成 Group Config snapshot |
-| POST | `/admin/v1/enforcement-versions/{id}:rollback` | 双人审批后回滚历史不可变版本 |
-| GET、POST | `/admin/v1/background-catalog-versions` | 测活与背景流量特征版本 |
-| POST | `/admin/v1/background-catalog-versions/{id}:validate` | 编译强结构模板并由平台运行确定性样本 |
-| POST | `/admin/v1/background-catalog-versions/{id}:publish-shadow` | 开始不少于 7 天的 Shadow 窗口 |
-| POST | `/admin/v1/background-catalog-versions/{id}:activate` | 按证据门槛及双人审批激活 |
-| POST | `/admin/v1/background-catalog-versions/{id}:rollback` | 回滚历史不可变 Catalog |
 | GET、POST | `/admin/v1/price-versions` | 模型价格版本 |
+| GET | `/admin/v1/price-sync/status` | LiteLLM 价格同步状态 |
+| POST | `/admin/v1/price-sync:run` | 立即触发 LiteLLM 价格同步 |
 | GET、POST | `/admin/v1/plan-mapping-versions` | PLAN Mapping typed candidate |
 | GET | `/admin/v1/plan-mapping-versions/{id}` | 版本、来源、mapping、diff 与影响摘要 |
 | POST | `/admin/v1/plan-mapping-versions/{id}:validate` | 对已保存 raw corpus 验证 |
@@ -972,9 +952,7 @@ Capability 采用数据驱动的字段路径、类型、条件、互斥和 trans
 
 写入只能走各 typed API，通用 `/artifacts` 不接受任意 JSON 写入，以免绕开专属校验和审批。
 
-Background Catalog 的确定性模板由 `client_classes + match_all` 组成；`match_all` 只接受 bounded Header 精确/包含匹配与 JSON Pointer 的标量相等/存在匹配。平台执行样本后记录命中数，管理员不能直接提交计数。`throttle|reject` 激活必须完成 7 天 Shadow；确定性样本不足 100 时消费 `background_catalog_risk_acceptance` 双人审批，否则消费 `background_catalog_activate` 双人审批。启发式 suspected 流量永远只观察。
-
-Enforcement 激活和回滚消费 `enforcement_activate` 双人审批。激活动作在同一事务切换 Artifact pointer、创建引用该 Artifact 的新 Group Config、切换 Group Config pointer并写 Audit/Outbox；运行时按 Artifact hash 冻结 Enforcement snapshot，在途请求继续使用旧 snapshot。
+Group System 净化（`preserve`/`strip_client`/`replace`/`strip_all` 四模式）由分组配置的 `system_prompt_*` 列承载，直接编辑保存生效；切换到 `replace`/`strip_all` 等高风险模式不再消费双人审批，仅在激活当次以 `system_mode_high_risk` 标记留痕于审计日志（精简蓝图 A4）。
 
 ### 26.3 Archetype 与 Transport Bundle
 
@@ -983,18 +961,16 @@ Enforcement 激活和回滚消费 `enforcement_activate` 双人审批。激活�
 | GET、POST | `/admin/v1/environment-archetypes` | 类别模板 |
 | GET | `/admin/v1/environment-archetypes/{id}` | 字段和证据摘要 |
 | POST | `/admin/v1/environment-archetypes/{id}:verify` | 运行自动证据门禁 |
-| POST | `/admin/v1/environment-archetypes/{id}:promote-canary` | 进入 Canary |
 | POST | `/admin/v1/environment-archetypes/{id}:activate` | 激活供新 Credential 分配 |
 | POST | `/admin/v1/environment-archetypes/{id}:retire` | 退休 |
 | GET、POST | `/admin/v1/transport-bundles` | Bundle 元数据与上传 |
 | POST | `/admin/v1/transport-bundles/{id}:verify` | 签名、hash、ABI、证据验证 |
-| POST | `/admin/v1/transport-bundles/{id}:promote-canary` | 绑定至少 20 次 fresh、零硬失配的机器证据后进入 Canary |
-| POST | `/admin/v1/transport-bundles/{id}:activate` | 双人审批后激活 |
+| POST | `/admin/v1/transport-bundles/{id}:activate` | `verified` 且证据门禁通过、runtime 可加载即可激活（无双人审批与 canary 段） |
 | POST | `/admin/v1/transport-bundles/{id}:rollback` | 切回已验证版本 |
 
-Bundle 创建/上传 DTO 必须携带唯一 `source_archetype_version_id`、capture cohort、`protocol=h1|h2`、schema/ABI、engine range、evidence hash、RFC 8785 JCS canonical hash 和 `transport_bundle_v1` 域的 Ed25519 detached signature。一个 Bundle 版本只对应一个 ArchetypeVersion/cohort/protocol；Release 签名 key domain 与 Bundle key domain 分离。Verify 响应分别报告 artifact lifecycle、evidence gate 和 runtime loadability，`ReadyForCanary` 只表示 `lifecycle=verified + evidence_gate=passed`，不是额外生命周期状态。
+Bundle 创建/上传 DTO 必须携带唯一 `source_archetype_version_id`、capture cohort、`protocol=h1|h2`、schema/ABI、engine range、evidence hash、RFC 8785 JCS canonical hash 和 `transport_bundle_v1` 域的 Ed25519 detached signature。一个 Bundle 版本只对应一个 ArchetypeVersion/cohort/protocol；Release 签名 key domain 与 Bundle key domain 分离。Verify 响应分别报告 artifact lifecycle、evidence gate 和 runtime loadability；`lifecycle=verified + evidence_gate=passed + runtime loadable` 即可直接激活，没有额外的灰度生命周期状态。
 
-生产部署是单台 Linux 主机上的 Rust Edge/Executor、一个进程内 `TransportCore` 与多个不可变 `CompiledTransportEngine` 逻辑实例；它们不是多进程服务。三 OS runner 只在研发/CI 采集真实 Claude Code 和运行时证据，生成签名 Bundle 后进入发布链。首版允许 Windows 证据先作为已验证基线，macOS/Linux 状态公开标记为待外部证据，相关 Archetype 不越过其证据门禁。
+生产部署是单台 Linux 主机上的 Rust Edge/Executor、一个进程内 `TransportCore` 与多个不可变 `CompiledTransportEngine` 逻辑实例；它们不是多进程服务。三 OS runner 只在研发/CI 采集真实 Claude Code 和运行时证据，生成签名 Bundle 后经控制台上传 → verify → activate。首版允许 Windows 证据先作为已验证基线，macOS/Linux 状态公开标记为待外部证据，相关 Archetype 不越过其证据门禁。
 
 ## 27. Request、Usage、聚合与 Export API
 
@@ -1005,8 +981,14 @@ Bundle 创建/上传 DTO 必须携带唯一 `source_archetype_version_id`、capt
 | GET | `/admin/v1/requests` | 请求与使用记录统一列表 |
 | GET | `/admin/v1/requests/{id}` | 阶段、attempt、usage、成本与错误 |
 | GET | `/admin/v1/requests/{id}/attempts` | ConnectionAttempt 与 Messages Attempt |
+| GET | `/admin/v1/requests/{id}/body` | 请求三阶段正文与上游响应正文 |
 | GET | `/admin/v1/usage/summary` | 时间、User、Key、Group、Credential、模型聚合 |
 | GET | `/admin/v1/usage/timeseries` | 使用量与估算成本时序 |
+| GET | `/admin/v1/settings/body-capture` | 正文采集设置 |
+| PUT | `/admin/v1/settings/body-capture` | 更新正文采集设置 |
+| GET | `/admin/v1/settings/runtime` | 运行时阈值设置（价格同步周期、第三方拒绝告警阈值） |
+| PUT | `/admin/v1/settings/runtime` | 更新运行时阈值设置 |
+| GET | `/admin/v1/exports` | 本人导出任务列表 |
 | POST | `/admin/v1/exports` | 创建导出 |
 | GET | `/admin/v1/exports/{id}` | Job 状态 |
 | GET | `/admin/v1/exports/{id}/download` | 短期一次性下载 |
@@ -1037,23 +1019,11 @@ usage 使用两个正交字段：`source=official|local_estimate|console_count|c
 | POST | `/admin/v1/approval-cases/{id}:reject` | 拒绝 |
 | POST | `/admin/v1/approval-cases/{id}:cancel` | 发起人撤销 |
 
-审批绑定 action type、target、payload digest、发起人、过期时间与理由。发起人与批准人必须不同；执行时重新校验 resource revision、payload digest、step-up 和审批有效期。高风险操作包括 Device Identity 重建、Bundle 生产激活、审计链破损后的恢复确认、主密钥轮换等。
+审批绑定 action type、target、payload digest、发起人、过期时间与理由。发起人与批准人必须不同；执行时重新校验 resource revision、payload digest、step-up 和审批有效期。审批种类只保留 Device Identity 重建与业务主密钥提供方变更。
 
-### 28.2 Content Audit
+### 28.2 正文记录（替代加密全文审计）
 
-| Method | Path | 说明 |
-|---|---|---|
-| POST | `/admin/v1/content-audit/search-sessions` | step-up + 理由，创建短时检索 Session |
-| GET | `/admin/v1/content-audit/search-sessions/{id}/records` | 在授权范围内查询 |
-| GET | `/admin/v1/content-audit/records/{id}` | 解密单条记录，强审计 |
-| POST | `/admin/v1/content-audit/records/{id}:export` | 双重确认后的独立导出 |
-| POST | `/admin/v1/content-audit/purge-jobs` | 到期或管理员明确清理 Job |
-| GET、POST | `/admin/v1/content-audit/legal-holds` | 查询或创建 Legal Hold；创建需双人审批 |
-| GET | `/admin/v1/content-audit/legal-holds/{id}` | 范围、复核、到期与 active object count |
-| POST | `/admin/v1/content-audit/legal-holds/{id}:review` | 定期复核并记录理由 |
-| POST | `/admin/v1/content-audit/legal-holds/{id}:release` | 双人审批后解除 |
-
-Key 请求模式固定为 `metadata_only|full_encrypted`，Group 策略固定为 `allow|require|forbid`：`allow` 按有效 Key grant 计算，`require` 强制全文，`forbid` 强制仅元数据且不拒绝业务请求。生效为 `full_encrypted` 时，Original 与首次 Final 持久化成功是上游首字节前门闩；任一上游字节已写出后，后续 Final/Response 审计失败只记 critical `audit_gap`。Body 默认保留 7 天、每方向 64 MiB；访问理由、字段范围、Legal Hold 和下载动作全部写审计链。
+加密全文审计子系统（检索会话、解密读取、独立导出、Legal Hold、purge Job 与 `key_full_audit / content_read / content_export / legal_hold / manual_delete` 审批）已退役。原始请求、策略产物、最终上行请求与上游响应改为**明文**随请求记录写入 `telemetry.request_body`，由系统设置 `/admin/v1/settings/body-capture`（开关、保留天数、单条上限）统一控制，通过 `GET /admin/v1/requests/{id}/body` 直接查看，到期由后台清理。Key 不再携带审计模式，Group 配置不再携带 `content_audit` 字段。
 
 ### 28.3 告警、通知与运维
 
@@ -1179,7 +1149,7 @@ Key 请求模式固定为 `metadata_only|full_encrypted`，Group 策略固定为
 ### 30.3 Reader Check
 
 - Claude Code CLI 应调用哪个 URL、使用哪种认证 Header？见第 7、9 章。
-- 为什么 `/v1/messages/count_tokens` 返回未知路由？见第 8、27 章。
+- `/v1/messages/count_tokens` 的鉴权、模型范围和独立限速规则见第 2、8、27 章。
 - Key 并发满与 Group 队列满分别返回什么？见第 16 章。
 - 模型列表是否随 Credential 瞬时可用性变化？见第 12 章。
 - SSE commit 后出错时是否注入平台事件？见第 11、15 章。

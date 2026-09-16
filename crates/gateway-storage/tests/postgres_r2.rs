@@ -17,7 +17,9 @@ use uuid::Uuid;
 )]
 async fn postgres_r2_schema_bootstrap_and_role_contract() -> Result<(), Box<dyn std::error::Error>> {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let Ok(database_url) = std::env::var("TEST_DATABASE_ADMIN_URL") else {
+    let Ok(database_url) =
+        std::env::var("TEST_R2_DATABASE_ADMIN_URL").or_else(|_| std::env::var("TEST_DATABASE_ADMIN_URL"))
+    else {
         return Ok(());
     };
     let database_url = SecretValue::new(database_url);

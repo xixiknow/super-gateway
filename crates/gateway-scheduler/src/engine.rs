@@ -212,6 +212,10 @@ impl SchedulerEngine {
                 if now.saturating_add(retry) >= entry.pre_upstream_deadline {
                     return Ok(rejected(RejectionKind::GroupRateDeadline, Some(Duration::from_secs(5))));
                 }
+                if entry.bypass_queue {
+                    self.group_rate_admitted.remove(&entry.request_id);
+                    return Ok(rejected(RejectionKind::QueueFull, Some(retry)));
+                }
                 return self.enqueue(entry, now, None);
             }
             self.group_rate_admitted.insert(entry.request_id.clone());
@@ -243,6 +247,10 @@ impl SchedulerEngine {
             PoolEvaluation::SessionCapacity(wait) => Some(now.saturating_add(*wait)),
             _ => None,
         };
+        if entry.bypass_queue {
+            self.group_rate_admitted.remove(&entry.request_id);
+            return Ok(rejected(RejectionKind::QueueFull, Some(Duration::from_secs(1))));
+        }
         self.enqueue(entry, now, slot_deadline)
     }
 
@@ -332,7 +340,13 @@ impl SchedulerEngine {
                 return Ok(false);
             }
             runtime.bucket.reconfigure(config.rate_limit, now);
-            let device_changed = config.device_epoch != runtime.config.device_epoch;
+            let device_changed = config.profiles.iter().any(|(os, profile)| {
+                runtime
+                    .config
+                    .profiles
+                    .get(os)
+                    .is_none_or(|current| current.device_epoch != profile.device_epoch)
+            });
             if config.credential_projection_revision > runtime.config.credential_projection_revision {
                 runtime.quota_observation_version = config.quota_observation_version;
                 runtime.config = config;
@@ -929,6 +943,12 @@ impl SchedulerEngine {
             .credentials
             .get_mut(credential_id)
             .ok_or(SchedulerError::InvalidConfiguration)?;
+        let profile = runtime
+            .config
+            .profiles
+            .get(&entry.client_os)
+            .cloned()
+            .ok_or(SchedulerError::InvalidConfiguration)?;
         if !runtime.bucket.try_consume(now) || runtime.inflight >= runtime.config.concurrency_limit {
             return Err(SchedulerError::InvalidConfiguration);
         }
@@ -950,19 +970,20 @@ impl SchedulerEngine {
             id: lease_id.clone(),
             request_id: entry.request_id.clone(),
             credential_id: credential_id.clone(),
+            client_os: entry.client_os,
             owner_generation: self.identity.generation,
             token_version: runtime.config.token_version,
-            profile_id: runtime.config.profile_id.clone(),
-            profile_epoch: runtime.config.profile_epoch,
-            device_identity_id: runtime.config.device_identity_id.clone(),
-            device_epoch: runtime.config.device_epoch,
-            archetype_version_id: runtime.config.archetype_version_id.clone(),
-            bundle_id: runtime.config.bundle_id.clone(),
-            bundle_version: runtime.config.bundle_version,
-            bundle_hash: runtime.config.bundle_hash.clone(),
-            egress_binding_id: runtime.config.egress_binding_id.clone(),
-            egress_epoch: runtime.config.egress_epoch,
-            bundle_epoch: runtime.config.bundle_epoch,
+            profile_id: profile.profile_id,
+            profile_epoch: profile.profile_epoch,
+            device_identity_id: profile.device_identity_id,
+            device_epoch: profile.device_epoch,
+            archetype_version_id: profile.archetype_version_id,
+            bundle_id: profile.bundle_id,
+            bundle_version: profile.bundle_version,
+            bundle_hash: profile.bundle_hash,
+            egress_binding_id: profile.egress_binding_id,
+            egress_epoch: profile.egress_epoch,
+            bundle_epoch: profile.bundle_epoch,
             half_open,
         };
         let (session_claim_key, new_session_claim) = self.acquire_session_claim(&entry, credential_id);
@@ -1349,6 +1370,7 @@ fn eligibility(
         || !credential.state.profile_ready
         || !credential.state.egress_ready
         || !credential.state.transport_ready
+        || !credential.profiles.contains_key(&entry.client_os)
         || (!credential.model_scope.is_empty() && !credential.model_scope.contains(entry.generic.model_id.as_ref()))
         || (entry.generic.attribution_suppressed && !credential.attribution_optional)
     {
@@ -1446,20 +1468,25 @@ fn rejected(kind: RejectionKind, retry_after: Option<Duration>) -> AdmissionDeci
 #[cfg(test)]
 #[allow(clippy::panic, clippy::field_reassign_with_default)]
 mod tests {
-    use std::{collections::BTreeSet, sync::Arc, time::Duration};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        sync::Arc,
+        time::Duration,
+    };
 
     use gateway_domain::{
-        AgentId, ArchetypeVersionId, CredentialId, CredentialProfileId, DeviceIdentityId, Digest, EgressBindingId,
-        GenericAdjustedRequest, GroupId, PlatformKeyId, Portability, RequestId, RequestReplayBody, RequestSnapshotSet,
-        SessionId, SnapshotVersion, TransportBundleId, UserId,
+        AgentId, ArchetypeVersionId, ClientOs, CredentialId, CredentialProfileId, DeviceIdentityId, Digest,
+        EgressBindingId, GenericAdjustedRequest, GroupId, PlatformKeyId, Portability, RequestId, RequestReplayBody,
+        RequestSnapshotSet, SessionId, SnapshotVersion, TransportBundleId, UserId,
     };
     use serde_json::json;
 
     use crate::{
         AdmissionDecision, AffinityKey, BucketConfig, CredentialAuthUpdate, CredentialConfig, CredentialCooldownUpdate,
-        CredentialFenceResult, CredentialQuotaUpdate, CredentialRemoveResult, CredentialState, ExecutorIdentity,
-        GroupConfig, OwnerGeneration, RejectionKind, ResourceAction, ResourceKind, RetryCredentialTarget,
-        RetryLeaseDecision, RetryLeaseRequest, ScheduleEntry, SchedulerEngine, SessionCapacityConfig,
+        CredentialFenceResult, CredentialProfileConfig, CredentialQuotaUpdate, CredentialRemoveResult, CredentialState,
+        ExecutorIdentity, GroupConfig, OwnerGeneration, RejectionKind, ResourceAction, ResourceKind,
+        RetryCredentialTarget, RetryLeaseDecision, RetryLeaseRequest, ScheduleEntry, SchedulerEngine,
+        SessionCapacityConfig,
     };
 
     fn typed<T>(result: Result<T, gateway_domain::DomainError>) -> T {
@@ -1491,6 +1518,7 @@ mod tests {
             stream: false,
             portability,
             attribution_suppressed: false,
+            system_template_pending: false,
             change_set: Arc::from([]),
             snapshot_set: Arc::new(RequestSnapshotSet {
                 access_policy: version(),
@@ -1521,17 +1549,22 @@ mod tests {
             attribution_optional: true,
             session_capacity: SessionCapacityConfig::default(),
             token_version: 1,
-            profile_id: typed(CredentialProfileId::new(format!("profile_{index}"))),
-            profile_epoch: 2,
-            device_identity_id: typed(DeviceIdentityId::new(format!("device_{index}"))),
-            device_epoch: 1,
-            archetype_version_id: typed(ArchetypeVersionId::new(format!("archetype_{index}"))),
-            bundle_id: typed(TransportBundleId::new(format!("bundle_{index}"))),
-            bundle_version: 1,
-            bundle_hash: Digest::of(format!("bundle-{index}").as_bytes()),
-            egress_binding_id: typed(EgressBindingId::new(format!("egress_{index}"))),
-            egress_epoch: 3,
-            bundle_epoch: 4,
+            profiles: BTreeMap::from([(
+                ClientOs::Windows,
+                CredentialProfileConfig {
+                    profile_id: typed(CredentialProfileId::new(format!("profile_{index}"))),
+                    profile_epoch: 2,
+                    device_identity_id: typed(DeviceIdentityId::new(format!("device_{index}"))),
+                    device_epoch: 1,
+                    archetype_version_id: typed(ArchetypeVersionId::new(format!("archetype_{index}"))),
+                    bundle_id: typed(TransportBundleId::new(format!("bundle_{index}"))),
+                    bundle_version: 1,
+                    bundle_hash: Digest::of(format!("bundle-{index}").as_bytes()),
+                    egress_binding_id: typed(EgressBindingId::new(format!("egress_{index}"))),
+                    egress_epoch: 3,
+                    bundle_epoch: 4,
+                },
+            )]),
             quota_observation_version: None,
             state: CredentialState::default(),
         }
@@ -1545,9 +1578,11 @@ mod tests {
             group_id: typed(GroupId::new("group_1")),
             base_session_id: typed(SessionId::new(format!("session_{session}"))),
             agent_id: typed(AgentId::new(format!("agent_{agent}"))),
+            client_os: ClientOs::Windows,
             generic: generic(portability),
             accepted_at: Duration::ZERO,
             pre_upstream_deadline: Duration::from_secs(30),
+            bypass_queue: false,
         }
     }
 
@@ -1619,6 +1654,21 @@ mod tests {
             last,
             Some(AdmissionDecision::Rejected(ref rejection)) if rejection.kind == RejectionKind::QueueFull
         ));
+    }
+
+    #[test]
+    fn bypass_queue_requests_reject_when_capacity_is_busy() {
+        let mut engine = engine(vec![credential(1, 1)]);
+        let first = engine.admit(generation(), entry(1, 1, 1, 1, Portability::Portable), Duration::ZERO);
+        assert!(matches!(first, Ok(AdmissionDecision::Granted(_))));
+        let mut direct = entry(2, 1, 2, 2, Portability::Portable);
+        direct.bypass_queue = true;
+        let result = engine.admit(generation(), direct, Duration::ZERO);
+        assert!(matches!(
+            result,
+            Ok(AdmissionDecision::Rejected(ref rejection)) if rejection.kind == RejectionKind::QueueFull
+        ));
+        assert_eq!(engine.snapshot().queued_tickets, 0);
     }
 
     #[test]
@@ -2182,6 +2232,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used, reason = "the fixture always contains a Windows profile")]
     fn credential_continuity_replace_preserves_old_lease_and_updates_new_lease() {
         let mut engine = engine(vec![credential(1, 1)]);
         let first = match engine.admit(generation(), entry(203, 1, 1, 1, Portability::Portable), Duration::ZERO) {
@@ -2191,8 +2242,9 @@ mod tests {
         assert_eq!(first.profile_epoch, 2);
         let mut updated = credential(1, 1);
         updated.credential_projection_revision = 2;
-        updated.profile_epoch = 3;
-        updated.archetype_version_id = typed(ArchetypeVersionId::new("archetype_migrated"));
+        let profile = updated.profiles.get_mut(&ClientOs::Windows).expect("Windows profile");
+        profile.profile_epoch = 3;
+        profile.archetype_version_id = typed(ArchetypeVersionId::new("archetype_migrated"));
         assert_eq!(
             engine.reconfigure_credential(generation(), updated, Duration::from_secs(1)),
             Ok(true)

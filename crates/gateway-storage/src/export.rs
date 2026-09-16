@@ -208,18 +208,8 @@ impl PgStorage {
         .map_err(map_sqlx)?
         .ok_or(StorageError::RevisionConflict)?;
         let revision: i64 = committed.try_get("revision").map_err(map_sqlx)?;
-        let dataset: String = committed.try_get("dataset_code").map_err(map_sqlx)?;
-        let content_audit = dataset == "content_audit_record_v1";
-        let action = if content_audit {
-            "content_audit_export_generated"
-        } else {
-            "usage_export_generated"
-        };
-        let object_type = if content_audit {
-            "content_audit_export"
-        } else {
-            "usage_export"
-        };
+        let action = "usage_export_generated";
+        let object_type = "usage_export";
         complete_job_in(&mut transaction, commit.job_id, commit.generation, action).await?;
         self.append_audit_outbox_in(
             &mut transaction,
@@ -325,18 +315,8 @@ impl PgStorage {
         .map_err(map_sqlx)?
         .ok_or(StorageError::RevisionConflict)?;
         let revision: i64 = consumed.try_get("revision").map_err(map_sqlx)?;
-        let dataset: String = consumed.try_get("dataset_code").map_err(map_sqlx)?;
-        let content_audit = dataset == "content_audit_record_v1";
-        let action = if content_audit {
-            "content_audit_export_downloaded"
-        } else {
-            "usage_export_downloaded"
-        };
-        let object_type = if content_audit {
-            "content_audit_export"
-        } else {
-            "usage_export"
-        };
+        let action = "usage_export_downloaded";
+        let object_type = "usage_export";
         self.append_audit_outbox_in(
             &mut transaction,
             &AuditOutboxRecord {
@@ -361,6 +341,7 @@ impl PgStorage {
         let rows = sqlx::query(
             "WITH candidates AS ( \
                SELECT id,object_uri FROM ops.export_job WHERE state_code='succeeded' \
+                 AND dataset_code='usage_requests_v1' \
                  AND expires_at<=clock_timestamp() ORDER BY expires_at FOR UPDATE SKIP LOCKED LIMIT $1 \
              ), updated AS ( \
                UPDATE ops.export_job e SET state_code='expired',object_uri=NULL,nonce=NULL,wrapped_dek=NULL, \

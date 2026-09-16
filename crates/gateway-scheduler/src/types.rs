@@ -1,12 +1,16 @@
 //! Scheduler value objects and externally observable decisions.
 #![allow(missing_docs, clippy::doc_markdown, clippy::struct_excessive_bools)]
 
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use gateway_domain::{
-    AgentId, ArchetypeVersionId, CredentialId, CredentialProfileId, DeviceIdentityId, Digest, EgressBindingId,
-    GenericAdjustedRequest, GroupId, LeaseId, PlatformKeyId, Portability, RequestId, SessionId, SnapshotVersion,
-    TicketId, TransportBundleId, UserId,
+    AgentId, ArchetypeVersionId, ClientOs, CredentialId, CredentialProfileId, DeviceIdentityId, Digest,
+    EgressBindingId, GenericAdjustedRequest, GroupId, LeaseId, PlatformKeyId, Portability, RequestId, SessionId,
+    SnapshotVersion, TicketId, TransportBundleId, UserId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -205,6 +209,13 @@ pub struct CredentialConfig {
     pub attribution_optional: bool,
     pub session_capacity: SessionCapacityConfig,
     pub token_version: u64,
+    pub profiles: BTreeMap<ClientOs, CredentialProfileConfig>,
+    pub quota_observation_version: Option<u128>,
+    pub state: CredentialState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialProfileConfig {
     pub profile_id: CredentialProfileId,
     pub profile_epoch: u64,
     pub device_identity_id: DeviceIdentityId,
@@ -216,8 +227,6 @@ pub struct CredentialConfig {
     pub egress_binding_id: EgressBindingId,
     pub egress_epoch: u64,
     pub bundle_epoch: u64,
-    pub quota_observation_version: Option<u128>,
-    pub state: CredentialState,
 }
 
 #[derive(Clone, Debug)]
@@ -228,9 +237,12 @@ pub struct ScheduleEntry {
     pub group_id: GroupId,
     pub base_session_id: SessionId,
     pub agent_id: AgentId,
+    pub client_os: ClientOs,
     pub generic: Arc<GenericAdjustedRequest>,
     pub accepted_at: Duration,
     pub pre_upstream_deadline: Duration,
+    /// Direct probes such as Count Tokens must never consume queue capacity.
+    pub bypass_queue: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -308,6 +320,7 @@ pub struct CredentialLease {
     pub id: LeaseId,
     pub request_id: RequestId,
     pub credential_id: CredentialId,
+    pub client_os: ClientOs,
     pub owner_generation: OwnerGeneration,
     pub token_version: u64,
     pub profile_id: CredentialProfileId,

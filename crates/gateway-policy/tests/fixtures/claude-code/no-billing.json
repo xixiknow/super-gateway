@@ -1,0 +1,1 @@
+{"source":"reference-2.1.220, synthetic","headers":{"X-Stainless-OS":"MacOS","x-app":"cli"},"body":{"model":"claude-sonnet-4-5","max_tokens":1024,"system":[{"type":"text","text":"You are Claude Code.\n# Tone and style\n"},{"type":"text","text":"Communicating clearly"}],"messages":[{"role":"user","content":[{"type":"text","text":"no billing"}]}]}}

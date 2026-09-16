@@ -1,9 +1,9 @@
 import { ReactNode, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { CapabilityWorkbench } from "./CapabilityWorkbench";
 import { Drawer } from "./drawer";
-import { useI18n } from "./i18n";
+import { MessageKey, useI18n } from "./i18n";
 import { RowActionDef, RowActionsCell } from "./row-actions";
 import { TablePager, usePagination } from "./pagination";
 
@@ -84,6 +84,7 @@ function capabilityValue(key: string, value: unknown, locale: "zh-CN" | "en-US")
 
 export function ModelsTable({ loading, items, title, rowActions, onRefresh, refreshing = false, toolbar }: ModelsTableProps) {
   const { locale, t } = useI18n();
+  const queryClient = useQueryClient();
   const records = (items ?? []).filter((item): item is RecordRow => typeof item === "object" && item !== null);
   const pager = usePagination(records);
   const [selectedRow, setSelectedRow] = useState<RecordRow | null>(null);
@@ -94,6 +95,8 @@ export function ModelsTable({ loading, items, title, rowActions, onRefresh, refr
     enabled: records.length > 0,
     retry: false,
   });
+  const priceSync = useQuery({ queryKey: ["/admin/v1/price-sync/status"], queryFn: () => api<Record<string, unknown>>("/admin/v1/price-sync/status"), retry: false });
+  const runPriceSync = useMutation({ mutationFn: () => api("/admin/v1/price-sync:run", { method: "POST", body: "{}" }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["/admin/v1/price-sync/status"] }); } });
   const versions = (capabilityVersions.data ?? []).filter((item): item is RecordRow => typeof item === "object" && item !== null);
   const hasActions = Boolean(rowActions?.length);
   const selectedVersions = selectedRow
@@ -104,14 +107,18 @@ export function ModelsTable({ loading, items, title, rowActions, onRefresh, refr
     requestAnimationFrame(() => drawerTrigger.current?.focus());
   }
 
+  const priceState = String(priceSync.data?.state ?? "");
+  const priceStateLabel = priceState === "running" || priceState === "succeeded" || priceState === "failed"
+    ? t(`models.price.state.${priceState}` as MessageKey)
+    : (priceState || "—");
   return <section className="card table-card models-table-card" aria-busy={loading}>
-    <div className="cardbar"><div className="cbl"><h2>{title}</h2><span className="tag t-gray">{t("table.stableSort")}</span></div><div className="cbr">{toolbar}<button className={`ibtn outline${refreshing ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={refreshing} onClick={onRefresh}><svg className="icon sm" aria-hidden="true"><use href="#i-refresh" /></svg></button></div></div>
+    <div className="cardbar"><div className="cbl"><h2>{title}</h2><span className="tag t-gray">{t("table.stableSort")}</span><span className="tag t-sky">{priceStateLabel}</span></div><div className="cbr"><button className={`ibtn outline${runPriceSync.isPending ? " loading" : ""}`} type="button" aria-label={t("models.price.syncNow")} disabled={runPriceSync.isPending} onClick={() => runPriceSync.mutate()}><svg className="icon sm" aria-hidden="true"><use href="#i-globe" /></svg></button>{toolbar}<button className={`ibtn outline${refreshing ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={refreshing} onClick={onRefresh}><svg className="icon sm" aria-hidden="true"><use href="#i-refresh" /></svg></button></div></div>
     {loading
       ? <div className="loading-lines"><span className="skel title" /><span className="skel line" /><span className="skel line" /></div>
       : records.length === 0
         ? <div className="empty"><div className="empty-orbit"><svg className="icon sm" aria-hidden="true"><use href="#i-inbox" /></svg></div><h3>{t("table.emptyTitle")}</h3><p>{t("table.emptyBody")}</p></div>
         : <><div className="tbl-wrap"><table className="tbl models-table"><caption className="sr-only">{t("table.caption", { title, count: records.length })}</caption><thead><tr>
-          <th scope="col">{t("models.column.model")}</th><th scope="col">{t("models.column.source")}</th><th scope="col">{t("models.column.publicCapability")}</th><th scope="col">{t("models.column.lifecycle")}</th><th scope="col">{t("models.column.gatewayCapability")}</th><th scope="col">{t("models.column.releasedAt")}</th><th scope="col" className="capability-toggle-heading">{t("models.capability.open")}</th>{hasActions && <th scope="col" className="row-actions-heading">{t("table.actions")}</th>}
+          <th scope="col">{t("models.column.model")}</th><th scope="col">{t("models.column.source")}</th><th scope="col">{t("models.column.publicCapability")}</th><th scope="col">{t("models.column.lifecycle")}</th><th scope="col">{t("models.column.gatewayCapability")}</th><th scope="col">{t("models.price.column")}</th><th scope="col">{t("models.column.releasedAt")}</th><th scope="col" className="capability-toggle-heading">{t("models.capability.open")}</th>{hasActions && <th scope="col" className="row-actions-heading">{t("table.actions")}</th>}
         </tr></thead><tbody>{pager.pageRows.map((row, index) => {
           const id = text(row, "id") || String(index);
           const input = number(row, "max_input_tokens");
@@ -126,6 +133,7 @@ export function ModelsTable({ loading, items, title, rowActions, onRefresh, refr
               <td><div className="capability-inline"><b>{tokenCount(input, locale)}</b><span>{t("models.capability.context")}</span><i aria-hidden="true" /><b>{tokenCount(output, locale)}</b><span>{t("models.capability.output")}</span></div></td>
               <td><span className={`model-lifecycle state-${lifecycle}`}>{stateLabel(lifecycle, locale)}</span></td>
               <td>{activeVersion === null || activeVersion === undefined ? <span className="muted">—</span> : <span className="gateway-version"><b>v{String(activeVersion)}</b><small>{stateLabel(activeState, locale)}</small></span>}</td>
+              <td><span className="model-price">{text(row, "price_input_per_million") || "—"} / {text(row, "price_output_per_million") || "—"}</span>{text(row, "price_version") && <small className="muted">v{text(row, "price_version")}</small>}</td>
               <td><time className="model-seen" dateTime={text(row, "released_at")}>{displayDate(text(row, "released_at"), locale)}</time></td>
               <td className="capability-toggle-cell"><button type="button" className="capability-toggle" aria-haspopup="dialog" aria-label={`${t("models.capability.open")} · ${text(row, "display_name")}`} onClick={(event) => { drawerTrigger.current = event.currentTarget; setSelectedRow(row); }}>→</button></td>
               {hasActions && <td><RowActionsCell row={row} actions={rowActions ?? []} /></td>}

@@ -26,7 +26,6 @@ export const zhColumns: Record<string, string> = {
   next_health_at: "下次健康检查", credential_id: "凭据 ID", active_material_version_id: "生效材料版本 ID",
   version: "版本", lifecycle: "生命周期", is_active: "当前生效", pointer_revision: "指针版本", content_hash: "内容哈希",
   accepted_clients: "接受的客户端", proxy_policy: "代理策略", proxy_policy_code: "代理策略", fully_managed_required: "要求全托管",
-  content_audit_policy: "内容审计策略", content_audit_policy_code: "内容审计策略", content_audit_retention_days: "审计留存天数",
   validated_at: "校验时间", published_at: "发布时间",
   default_rpm: "默认 RPM", default_rpm_burst: "默认 RPM 突发", queue_capacity: "队列容量", queue_timeout_ms: "队列超时(ms)",
   pre_upstream_wait_ms: "上游前等待(ms)", preferred_capacity_wait_ms: "容量偏好等待(ms)", upstream_connect_ms: "上游连接(ms)",
@@ -40,8 +39,7 @@ export const zhColumns: Record<string, string> = {
   credential_available: "可用凭据", credential_abnormal: "异常凭据", egress_mode: "出口模式", model_scope: "模型范围",
   month_tokens: "本月 Token", month_amount: "本月金额（美元）", last_success_at: "最后成功", recent_failures: "24 小时失败",
   scope: "作用域", rule_count: "规则数", entry_count: "条目数", high_risk: "高风险动作", group: "分组",
-  system_prompt_mode: "System 模式",
-  shadow_started_at: "Shadow 开始", shadow_minimum_until: "Shadow 最短至", deterministic_sample_count: "确定性样本",
+  system_prompt_mode: "System 模式", os_family: "客户端 OS", egress_stability: "出口稳定性",
   price_version: "价格版本", currency: "币种", effective_from: "生效自", effective_to: "失效至", source_uri: "来源",
   rule_id: "规则标识", path: "字段路径", risk: "风险",
 };
@@ -59,7 +57,7 @@ export const zhValues: Record<string, string> = {
   anthropic_public_docs: "Anthropic 公开目录", anthropic_models_api: "凭据验证", builtin_snapshot: "内置目录快照", reviewing: "审核中", published: "已发布", discovered: "已发现",
   transport_unavailable: "传输不可用", pending_profile: "等待配置", pending_egress: "等待出口", manual_recovery_required: "需要人工恢复",
   all_published: "全部已发布", allowlist: "白名单", auto: "自动", direct_only: "仅直连", proxy_only: "仅代理",
-  draft: "草稿", validated: "已校验", retired: "已退役", shadow: "Shadow", canary: "Canary", quarantined: "已隔离",
+  draft: "草稿", validated: "已校验", retired: "已退役", quarantined: "已隔离",
   observe: "观察", throttle: "限速", reject: "拒绝", preserve: "保留", strip_client: "剥离客户端", strip_all: "全部剥离",
   replace: "替换", low: "低", medium: "中", high: "高", true: "是", false: "否",
 };
@@ -74,5 +72,6 @@ export function displayCell(value: unknown, locale: Locale): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "object") return JSON.stringify(value).slice(0, 120);
   const raw = String(value);
-  return locale === "zh-CN" ? zhValues[raw] ?? raw : enValues[raw] ?? raw.replaceAll("_", " ");
+  const normalized = raw === "shadow" ? "eligible" : raw === "canary" ? "validated" : raw;
+  return locale === "zh-CN" ? zhValues[normalized] ?? normalized : enValues[normalized] ?? normalized.replaceAll("_", " ");
 }

@@ -526,11 +526,19 @@ interface AttemptRecord extends Record<string, unknown> {
   messages_attempt: AttemptMessages | null;
 }
 
+function formatRequestBody(value: unknown): string {
+  if (value === undefined || value === null) return "—";
+  if (typeof value === "string") return value;
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
 function RequestDetailDialog({ requestId, onClose }: { requestId: string; onClose(): void }) {
   const { locale, t } = useI18n();
+  const [bodyTab, setBodyTab] = useState<"original_request" | "policy_request" | "final_upstream_request" | "upstream_response" | "upstream_response_final">("original_request");
   const detailEndpoint = `/admin/v1/requests/${encodeURIComponent(requestId)}`;
   const detail = useQuery({ queryKey: [detailEndpoint], queryFn: () => api<Record<string, unknown>>(detailEndpoint), retry: false });
   const attempts = useQuery({ queryKey: [`${detailEndpoint}/attempts`], queryFn: () => api<AttemptRecord[]>(`${detailEndpoint}/attempts`), retry: false });
+  const body = useQuery({ queryKey: [`${detailEndpoint}/body`], queryFn: () => api<Record<string, unknown>>(`${detailEndpoint}/body`), retry: false });
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     document.addEventListener("keydown", closeOnEscape);
@@ -547,6 +555,13 @@ function RequestDetailDialog({ requestId, onClose }: { requestId: string; onClos
           {detail.isLoading ? <div className="loading-lines"><span className="skel line" /><span className="skel line" /></div>
             : detail.isError ? <div className="alert alert-warn" role="alert"><Icon name="alert" /><div><div className="at">{t("error.loadTitle")}</div></div></div>
               : <dl className="key-data-grid">{fields.map(([key, value]) => <div key={key}><dt>{columnLabel(key, locale)}</dt><dd className="mono breakable">{displayCell(value, locale)}</dd></div>)}</dl>}
+          <section className="request-body-panel">
+            <div className="section-head"><div><p className="eyebrow mono">REQUEST / BODY</p><h4>{t("request.bodyTitle")}</h4></div>{body.data?.body_digest_mismatch === true && <span className="tag t-amber">{t("request.bodyMismatch")}</span>}</div>
+            <div className="segmented local request-body-tabs">
+              {(["original_request", "policy_request", "final_upstream_request", "upstream_response", "upstream_response_final"] as const).map((tab) => <button key={tab} type="button" className={bodyTab === tab ? "active" : ""} onClick={() => setBodyTab(tab)}>{t(`request.body.${tab}` as MessageKey)}</button>)}
+            </div>
+            {body.isLoading ? <div className="loading-lines"><span className="skel line" /></div> : body.isError ? <p className="muted">{t("request.bodyUnavailable")}</p> : <pre className="request-body-content">{formatRequestBody(body.data?.[bodyTab])}</pre>}
+          </section>
           <h4 className="request-timeline-heading">{t("request.timeline")}</h4>
           {attempts.isLoading ? <div className="loading-lines"><span className="skel line" /><span className="skel line" /></div>
             : attempts.isError ? <div className="alert alert-warn" role="alert"><Icon name="alert" /><div><div className="at">{t("error.loadTitle")}</div></div></div>
@@ -653,7 +668,30 @@ function ResourcePage({ entry, principal }: { entry: NavEntry; principal: Princi
       : entry.path === "/models"
         ? <ModelsTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />
         : <ResourceTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} columnKeys={recommendedColumns[entry.path]} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />;
-  return <div className="page-stack"><header className="page-heading"><div><p className="eyebrow mono">{t("resource.eyebrow")}</p><h1>{title}</h1><p>{t("resource.description")}</p></div></header>{result.isError && <ErrorState error={result.error} />}{endpoint === null && <div className="alert alert-warn"><Icon name="alert" /><div><div className="at">{t("resource.onDemand")}</div><div className="ad">{t("resource.onDemandBody")}</div></div></div>}{table}{rowDialogs}</div>;
+  return <div className="page-stack"><header className="page-heading"><div><p className="eyebrow mono">{t("resource.eyebrow")}</p><h1>{title}</h1><p>{t("resource.description")}</p></div></header>{result.isError && <ErrorState error={result.error} />}{entry.path === "/operations" && <><BodyCaptureSettingsPanel /><RuntimeSettingsPanel /></>}{endpoint === null && <div className="alert alert-warn"><Icon name="alert" /><div><div className="at">{t("resource.onDemand")}</div><div className="ad">{t("resource.onDemandBody")}</div></div></div>}{table}{rowDialogs}</div>;
+}
+
+function BodyCaptureSettingsPanel() {
+  const { t } = useI18n();
+  const query = useQuery({ queryKey: ["body-capture-settings"], queryFn: () => api<Record<string, unknown>>("/admin/v1/settings/body-capture"), retry: false });
+  const mutation = useMutation({ mutationFn: (value: { enabled: boolean; retention_days: number; max_bytes: number }) => api("/admin/v1/settings/body-capture", { method: "PUT", body: JSON.stringify(value) }), onSuccess: () => void query.refetch() });
+  const value = query.data ?? {};
+  return <section className="card pad body-capture-settings"><div className="section-head"><div><p className="eyebrow mono">SYSTEM / BODY</p><h2>{t("settings.bodyCapture.title")}</h2><p>{t("settings.bodyCapture.description")}</p></div></div>{query.isLoading ? <p className="muted">{t("common.loading")}</p> : query.isError ? <p className="muted">{t("common.requestFailed")}</p> : query.isSuccess ? <form key={query.dataUpdatedAt} className="settings-grid" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); mutation.mutate({ enabled: data.get("enabled") === "on", retention_days: Number(data.get("retention_days")), max_bytes: Number(data.get("max_bytes")) }); }}><label className="check-row"><input type="checkbox" name="enabled" defaultChecked={value.enabled === true} /><span>{t("settings.bodyCapture.enabled")}</span></label><label className="field"><span>{t("settings.bodyCapture.retention")}</span><input className="inp" type="number" name="retention_days" min="1" max="365" defaultValue={Number(value.retention_days ?? 7)} /></label><label className="field"><span>{t("settings.bodyCapture.maxBytes")}</span><input className="inp" type="number" name="max_bytes" min="1" max="67108864" defaultValue={Number(value.max_bytes ?? 4194304)} /></label><button className="btn btn-primary" type="submit" disabled={mutation.isPending}>{t("common.save")}</button></form> : null}</section>;
+}
+
+/** 运行时阈值:价格同步周期与第三方拒绝告警阈值,写入 ops.system_setting */
+function RuntimeSettingsPanel() {
+  const { t } = useI18n();
+  const query = useQuery({ queryKey: ["runtime-settings"], queryFn: () => api<Record<string, unknown>>("/admin/v1/settings/runtime"), retry: false });
+  const mutation = useMutation({ mutationFn: (value: Record<string, number>) => api("/admin/v1/settings/runtime", { method: "PUT", body: JSON.stringify(value) }), onSuccess: () => void query.refetch() });
+  const value = query.data ?? {};
+  const fields: Array<{ name: string; labelKey: MessageKey; min: number; max: number; fallback: number }> = [
+    { name: "price_sync_interval_hours", labelKey: "settings.runtime.priceSyncInterval", min: 1, max: 168, fallback: 24 },
+    { name: "third_party_window_minutes", labelKey: "settings.runtime.thirdPartyWindow", min: 1, max: 1440, fallback: 15 },
+    { name: "third_party_min_rejections", labelKey: "settings.runtime.thirdPartyMinRejections", min: 1, max: 1000, fallback: 3 },
+    { name: "third_party_ratio_percent", labelKey: "settings.runtime.thirdPartyRatio", min: 1, max: 100, fallback: 20 },
+  ];
+  return <section className="card pad body-capture-settings"><div className="section-head"><div><p className="eyebrow mono">SYSTEM / RUNTIME</p><h2>{t("settings.runtime.title")}</h2><p>{t("settings.runtime.description")}</p></div></div>{query.isLoading ? <p className="muted">{t("common.loading")}</p> : query.isError ? <p className="muted">{t("common.requestFailed")}</p> : query.isSuccess ? <form key={query.dataUpdatedAt} className="settings-grid" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); mutation.mutate(Object.fromEntries(fields.map((field) => [field.name, Number(data.get(field.name))]))); }}>{fields.map((field) => <label key={field.name} className="field"><span>{t(field.labelKey)}</span><input className="inp" type="number" name={field.name} min={field.min} max={field.max} required defaultValue={Number(value[field.name] ?? field.fallback)} /></label>)}<button className="btn btn-primary" type="submit" disabled={mutation.isPending}>{t("common.save")}</button></form> : null}</section>;
 }
 
 interface ExportRecord {

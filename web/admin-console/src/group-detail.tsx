@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
@@ -10,17 +10,15 @@ import { DataGrid, Icon, PaneStatus, Row, SubTable, deriveColumns } from "./deta
 
 /* ============================================================
    分组详情对话框:概览 / 组内凭据 / 调度与限流 / 请求治理 /
-   能力与出口 / 配置版本(validate → shadow → canary → activate
-   发布链 + 指针回滚)六页签。
-   配置调整遵循规划:先基于当前生效配置创建不可变候选草稿,
-   再经校验与发布链生效,三个配置页签与版本页签共用同一表单。
+   能力与出口 / 配置版本六页签。
+   配置调整基于当前生效配置创建不可变版本,保存后直接生效。
    ============================================================ */
 
 type Tab = "overview" | "credentials" | "scheduling" | "governance" | "egress" | "versions";
 type ConfigTab = "scheduling" | "governance" | "egress";
 type VersionAction = "validate" | "simulate" | "activate";
 
-/** 配置版本投影是嵌套结构(limits/credential_defaults/queue/timeouts/content_audit) */
+/** 配置版本投影是嵌套结构(limits/credential_defaults/queue/timeouts/governance/model_scope) */
 function section(record: Row, key: string): Row {
   const value = record[key];
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Row) : {};
@@ -55,24 +53,19 @@ function systemContentText(value: unknown): string {
   return "";
 }
 
-/** 与后端一致的高风险判定:审计策略/留存变化,或 System 切到 replace / strip_all */
+/** 与后端一致的高风险判定:System 切到 replace / strip_all */
 function isHighRiskChange(target: Row, active: Row): boolean {
-  const targetAudit = section(target, "content_audit");
-  const activeAudit = section(active, "content_audit");
-  const auditChanged = targetAudit.policy !== activeAudit.policy
-    || targetAudit.retention_days !== activeAudit.retention_days;
   const targetMode = stringOf(section(target, "governance").system_prompt_mode);
   const activeMode = stringOf(section(active, "governance").system_prompt_mode);
-  const systemRisky = targetMode !== undefined && targetMode !== activeMode
+  return targetMode !== undefined && targetMode !== activeMode
     && (targetMode === "replace" || targetMode === "strip_all");
-  return auditChanged || systemRisky;
 }
 
 const versionActionMeta: Record<VersionAction, { labelKey: MessageKey; icon: string; when(lifecycle: string, isActive: boolean): boolean }> = {
   "validate": { labelKey: "group.version.validate", icon: "check", when: (lifecycle) => lifecycle === "draft" },
   "simulate": { labelKey: "group.version.simulate", icon: "activity", when: () => true },
-  // 去发布链:新建的 draft 版本可直接激活,校验为可选前置
-  "activate": { labelKey: "group.version.activate", icon: "play", when: (lifecycle, isActive) => !isActive && ["draft", "validated", "shadow", "canary"].includes(lifecycle) },
+  // 新建的 draft 版本可直接激活，校验是可选前置。
+  "activate": { labelKey: "group.version.activate", icon: "play", when: (lifecycle, isActive) => !isActive && ["draft", "validated"].includes(lifecycle) },
 };
 
 function versionNumber(row: Row): number | undefined {
@@ -98,24 +91,27 @@ function VersionsPane({ endpoint, versions, onChanged, onNewDraft }: { endpoint:
   async function runAction(row: Row, action: VersionAction) {
     const version = versionNumber(row);
     if (version === undefined) return;
-    // 转换/模拟动作以版本号自身作乐观锁;激活以活动指针 revision 作乐观锁
+    // 校验/模拟使用版本号；激活使用活动指针 revision。
     const ifMatch = action === "activate" ? pointerRevision : version;
     if (ifMatch === undefined) return;
-    // 高风险变更(审计策略/System 高风险模式)只在确认框里加强提示,不再要求双人审批单
-    const highRisk = action === "activate" && activeConfig !== undefined && isHighRiskChange(row, activeConfig);
-    const result = await confirm({
-      titleKey: versionActionMeta[action].labelKey,
-      bodyKey: highRisk ? "group.version.highRiskBody" : "group.version.confirmBody",
-      withReason: true,
-      danger: action === "activate",
-    });
-    if (!result.ok) return;
+    let reason = "";
+    if (action === "activate") {
+      const highRisk = activeConfig !== undefined && isHighRiskChange(row, activeConfig);
+      const result = await confirm({
+        titleKey: versionActionMeta[action].labelKey,
+        bodyKey: highRisk ? "group.version.highRiskBody" : "group.version.confirmBody",
+        withReason: true,
+        danger: true,
+      });
+      if (!result.ok) return;
+      reason = result.reason;
+    }
     setBusy(true);
     try {
       await api(`${endpoint}/config-versions/${version}:${action}`, {
         method: "POST",
         headers: { "If-Match": `"rev-${ifMatch}"` },
-        body: JSON.stringify({ reason: result.reason, expected_revision: ifMatch }),
+        body: JSON.stringify({ reason, expected_revision: ifMatch }),
       });
       toast.success(t("action.success"));
       await onChanged();
@@ -129,6 +125,12 @@ function VersionsPane({ endpoint, versions, onChanged, onNewDraft }: { endpoint:
   async function submitRollback(event: FormEvent) {
     event.preventDefault();
     if (pointerRevision === undefined) return;
+    const confirmation = await confirm({
+      titleKey: "group.version.rollback",
+      bodyKey: "group.version.confirmBody",
+      danger: true,
+    });
+    if (!confirmation.ok) return;
     setBusy(true);
     try {
       await api(`${endpoint}:rollback-config`, {
@@ -136,7 +138,7 @@ function VersionsPane({ endpoint, versions, onChanged, onNewDraft }: { endpoint:
         headers: { "If-Match": `"rev-${pointerRevision}"` },
         body: JSON.stringify({
           target_version: Number(targetVersion),
-          reason: rollbackReason,
+          reason: rollbackReason || confirmation.reason,
           expected_revision: pointerRevision,
         }),
       });
@@ -206,7 +208,6 @@ function configEntries(config: Row, tab: ConfigTab | "all", t: Translate, locale
   const defaults = section(config, "credential_defaults");
   const queue = section(config, "queue");
   const timeouts = section(config, "timeouts");
-  const audit = section(config, "content_audit");
   const governance = section(config, "governance");
   const modelScope = section(config, "model_scope");
   const unlimited = t("group.config.unlimited");
@@ -232,8 +233,6 @@ function configEntries(config: Row, tab: ConfigTab | "all", t: Translate, locale
       ? [[t("group.config.systemPromptRef"), stringOf(governance.system_prompt_ref) ?? "—"] as [string, string]]
       : []),
     [t("group.config.consoleFallback"), bool(governance.console_business_fallback_enabled)],
-    [t("group.config.auditPolicy"), enumText("group.config.audit", audit.policy)],
-    [t("group.config.retentionDays"), count(audit.retention_days, "—")],
   ];
   const egress: [string, string][] = [
     [t("group.config.egressMode"), enumText("group.config.egress", config.egress_mode)],
@@ -311,16 +310,17 @@ function DiffPanel({ target, active, onClose }: { target: Row; active: Row; onCl
 interface ModelRecord { id?: unknown; display_name?: unknown; upstream_model_id?: unknown; lifecycle?: unknown }
 
 /** 新建配置候选草稿:预填当前生效配置,提交 POST /groups/{id}/config-versions */
-function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: string; active: Row; onBack(): void; onDone(): Promise<void> }) {
+function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: string; active: Row; onBack(): void; onDone(leave: boolean): Promise<void> }) {
   const { locale, t } = useI18n();
   const toast = useToast();
+  const confirm = useConfirm();
+  const intentRef = useRef<"activate" | "draft">("activate");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const limits = section(active, "limits");
   const defaults = section(active, "credential_defaults");
   const queue = section(active, "queue");
   const timeouts = section(active, "timeouts");
-  const audit = section(active, "content_audit");
   const governance = section(active, "governance");
   const activeClients = clientClasses(active);
   const [systemMode, setSystemMode] = useState(stringOf(governance.system_prompt_mode) ?? "preserve");
@@ -334,7 +334,7 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
     retry: false,
   });
   const publishedModels = (models.data ?? []).filter((model) => model.lifecycle === "published");
-  // 与后端一致的高风险提示:System 切到 replace/strip_all 或审计策略变化需双人审批
+  // 高风险模式会在激活时提示，并由审计记录变更。
   const activeMode = stringOf(governance.system_prompt_mode) ?? "preserve";
   const modeHighRisk = systemMode !== activeMode && (systemMode === "replace" || systemMode === "strip_all");
 
@@ -359,7 +359,8 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
     }
     const promptRef = String(data.get("system_prompt_ref") ?? "").trim();
     const promptContent = String(data.get("system_prompt_content") ?? "").trim();
-    if (systemMode === "replace" && (!promptRef || !promptContent)) {
+    // replace 模式只强制标识;内容留空表示派发时使用所选原型采集的静态模板
+    if (systemMode === "replace" && !promptRef) {
       setFormError(t("group.config.replaceRequired"));
       return;
     }
@@ -367,15 +368,26 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
       setFormError(t("group.config.allowlistRequired"));
       return;
     }
+    const activate = intentRef.current === "activate";
+    intentRef.current = "activate";
+    if (modeHighRisk) {
+      const result = await confirm({
+        titleKey: activate ? "group.config.saveAndActivate" : "group.config.saveDraft",
+        bodyKey: "group.version.highRiskBody",
+        danger: true,
+      });
+      if (!result.ok) return;
+    }
     setFormError(null);
     setSubmitting(true);
     try {
-      await api(`${endpoint}/config-versions`, {
+      const created = await api<Row>(`${endpoint}/config-versions`, {
         method: "POST",
         body: JSON.stringify({
           accepted_client_classes: accepted,
           fully_managed_required: data.get("fully_managed_required") !== null,
           egress_mode: String(data.get("egress_mode") ?? "auto"),
+          default_os_family: String(data.get("default_os_family") ?? "").trim() || undefined,
           limits: { concurrency: optional("concurrency"), messages_rpm: rpm, messages_burst: burst },
           credential_defaults: { concurrency: integer("credential_concurrency"), messages_rpm: integer("credential_rpm") },
           queue: { pre_upstream_timeout_ms: integer("pre_upstream_timeout_ms") },
@@ -384,7 +396,6 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
             upstream_non_stream_total_ms: integer("upstream_non_stream_total_ms"),
             upstream_stream_idle_ms: integer("upstream_stream_idle_ms"),
           },
-          content_audit: { policy: String(data.get("content_audit_policy") ?? "allow"), retention_days: integer("retention_days") },
           governance: {
             system_prompt_mode: systemMode,
             system_prompt_ref: systemMode === "replace" ? promptRef : null,
@@ -394,8 +405,35 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
           model_scope: { scope: modelScope, model_ids: modelScope === "allowlist" ? selectedModels : [] },
         }),
       });
-      toast.success(t("action.success"));
-      await onDone();
+      const version = versionNumber(created);
+      if (version === undefined) {
+        throw new Error(t("group.config.missingVersion"));
+      }
+      if (!activate) {
+        toast.success(t("action.success"));
+        await onDone(true);
+        return;
+      }
+      const pointerRevision = asNumber(active.pointer_revision) ?? asNumber(created.pointer_revision);
+      if (pointerRevision === undefined) {
+        setFormError(t("group.config.draftCreatedActivateFailed", { version }));
+        toast.error(t("group.config.draftCreatedActivateFailed", { version }));
+        await onDone(false);
+        return;
+      }
+      try {
+        await api(`${endpoint}/config-versions/${version}:activate`, {
+          method: "POST",
+          headers: { "If-Match": `"rev-${pointerRevision}"` },
+          body: JSON.stringify({ reason: "", expected_revision: pointerRevision }),
+        });
+        toast.success(t("action.success"));
+        await onDone(true);
+      } catch (error) {
+        setFormError(t("group.config.draftCreatedActivateFailed", { version }));
+        toast.error(rowActionError(error, locale));
+        await onDone(false);
+      }
     } catch (error) {
       setFormError(rowActionError(error, locale));
     } finally {
@@ -427,39 +465,7 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
             </div>
           </fieldset>
         </div>
-        <div className="field"><label htmlFor="cfg-egress">{t("group.config.egressMode")}</label>
-          <SelectField id="cfg-egress" name="egress_mode" required defaultValue={typeof active.egress_mode === "string" ? active.egress_mode : "auto"}
-            options={[{ value: "auto", label: t("group.config.egress.auto") }, { value: "direct_only", label: t("group.config.egress.direct_only") }, { value: "proxy_only", label: t("group.config.egress.proxy_only") }]} />
-        </div>
-        <div className="field"><span className="field-label">{t("group.config.fullyManaged")}</span>
-          <label className="choice-card"><input type="checkbox" name="fully_managed_required" defaultChecked={active.fully_managed_required === true} /><span>{t("common.yes")}</span></label>
-        </div>
-
-        <div className="form-section-label form-wide"><span>02</span><div><b>{t("group.config.section.limits")}</b></div></div>
-        <div className="field"><label htmlFor="cfg-concurrency">{t("group.config.groupConcurrency")}<span className="hint">{t("group.config.unlimitedHint")}</span></label>
-          <input id="cfg-concurrency" name="concurrency" className="inp" type="number" min={1} defaultValue={asNumber(limits.concurrency) ?? ""} /></div>
-        <div className="field"><label htmlFor="cfg-rpm">{t("group.config.messagesRpm")}<span className="hint">{t("group.config.unlimitedHint")}</span></label>
-          <input id="cfg-rpm" name="messages_rpm" className="inp" type="number" min={1} defaultValue={asNumber(limits.messages_rpm) ?? ""} /></div>
-        <div className="field"><label htmlFor="cfg-burst">{t("group.config.messagesBurst")}<span className="hint">{t("group.config.rpmPairHint")}</span></label>
-          <input id="cfg-burst" name="messages_burst" className="inp" type="number" min={0} defaultValue={asNumber(limits.messages_burst) ?? ""} /></div>
-
-        <div className="form-section-label form-wide"><span>03</span><div><b>{t("group.config.section.credentialDefaults")}</b></div></div>
-        <div className="field"><label htmlFor="cfg-cred-concurrency">{t("group.config.credentialConcurrency")}</label>
-          <input id="cfg-cred-concurrency" name="credential_concurrency" className="inp" type="number" required min={1} defaultValue={numberOrDefault(defaults.concurrency, 5)} /></div>
-        <div className="field"><label htmlFor="cfg-cred-rpm">{t("group.config.credentialRpm")}</label>
-          <input id="cfg-cred-rpm" name="credential_rpm" className="inp" type="number" required min={1} defaultValue={numberOrDefault(defaults.messages_rpm, 60)} /></div>
-
-        <div className="form-section-label form-wide"><span>04</span><div><b>{t("group.config.section.timeouts")}</b></div></div>
-        <div className="field"><label htmlFor="cfg-pre-upstream">{t("group.config.preUpstreamTimeout")}</label>
-          <input id="cfg-pre-upstream" name="pre_upstream_timeout_ms" className="inp" type="number" required min={1000} max={600_000} defaultValue={numberOrDefault(queue.pre_upstream_timeout_ms, 30_000)} /></div>
-        <div className="field"><label htmlFor="cfg-connect">{t("group.config.connectTimeout")}</label>
-          <input id="cfg-connect" name="upstream_connect_ms" className="inp" type="number" required min={1000} max={30_000} defaultValue={numberOrDefault(timeouts.upstream_connect_ms, 10_000)} /></div>
-        <div className="field"><label htmlFor="cfg-non-stream">{t("group.config.nonStreamTimeout")}</label>
-          <input id="cfg-non-stream" name="upstream_non_stream_total_ms" className="inp" type="number" required min={5000} max={3_600_000} defaultValue={numberOrDefault(timeouts.upstream_non_stream_total_ms, 600_000)} /></div>
-        <div className="field"><label htmlFor="cfg-stream-idle">{t("group.config.streamIdleTimeout")}</label>
-          <input id="cfg-stream-idle" name="upstream_stream_idle_ms" className="inp" type="number" required min={5000} max={600_000} defaultValue={numberOrDefault(timeouts.upstream_stream_idle_ms, 120_000)} /></div>
-
-        <div className="form-section-label form-wide"><span>05</span><div><b>{t("group.config.section.governance")}</b></div></div>
+        <div className="form-section-label form-wide"><span>02</span><div><b>{t("group.config.section.governance")}</b></div></div>
         <div className="field"><label htmlFor="cfg-system-mode">{t("group.config.systemPromptMode")}</label>
           <SelectField id="cfg-system-mode" value={systemMode} onChange={setSystemMode}
             options={[
@@ -470,9 +476,6 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
             ]} />
           {modeHighRisk && <small className="field-error" role="alert">{t("group.config.systemHighRiskHint")}</small>}
         </div>
-        <div className="field"><span className="field-label">{t("group.config.consoleFallback")}</span>
-          <label className="choice-card"><input type="checkbox" name="console_business_fallback_enabled" defaultChecked={governance.console_business_fallback_enabled === true} /><span>{t("common.yes")}</span></label>
-        </div>
         {systemMode === "replace" && (
           <>
             <div className="field"><label htmlFor="cfg-system-ref">{t("group.config.systemPromptRef")}</label>
@@ -482,15 +485,7 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
           </>
         )}
 
-        <div className="form-section-label form-wide"><span>06</span><div><b>{t("group.config.section.contentAudit")}</b></div></div>
-        <div className="field"><label htmlFor="cfg-audit-policy">{t("group.config.auditPolicy")}</label>
-          <SelectField id="cfg-audit-policy" name="content_audit_policy" required defaultValue={typeof audit.policy === "string" ? audit.policy : "allow"}
-            options={[{ value: "allow", label: t("group.config.audit.allow") }, { value: "require", label: t("group.config.audit.require") }, { value: "forbid", label: t("group.config.audit.forbid") }]} />
-        </div>
-        <div className="field"><label htmlFor="cfg-retention">{t("group.config.retentionDays")}</label>
-          <input id="cfg-retention" name="retention_days" className="inp" type="number" required min={1} max={365} defaultValue={numberOrDefault(audit.retention_days, 7)} /></div>
-
-        <div className="form-section-label form-wide"><span>07</span><div><b>{t("group.config.section.modelScope")}</b></div></div>
+        <div className="form-section-label form-wide"><span>03</span><div><b>{t("group.config.section.modelScope")}</b></div></div>
         <div className="field"><label htmlFor="cfg-model-scope">{t("group.config.modelScope")}</label>
           <SelectField id="cfg-model-scope" value={modelScope} onChange={setModelScope}
             options={[{ value: "all_published", label: t("group.config.scope.all_published") }, { value: "allowlist", label: t("group.config.scope.allowlist") }]} />
@@ -525,11 +520,57 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
             </fieldset>
           </div>
         )}
+
+        <div className="form-section-label form-wide"><span>04</span><div><b>{t("group.config.section.egress")}</b></div></div>
+        <div className="field"><label htmlFor="cfg-egress">{t("group.config.egressMode")}</label>
+          <SelectField id="cfg-egress" name="egress_mode" required defaultValue={typeof active.egress_mode === "string" ? active.egress_mode : "auto"}
+            options={[{ value: "auto", label: t("group.config.egress.auto") }, { value: "direct_only", label: t("group.config.egress.direct_only") }, { value: "proxy_only", label: t("group.config.egress.proxy_only") }]} />
+        </div>
+        <div className="field"><span className="field-label">{t("group.config.fullyManaged")}</span>
+          <label className="choice-card"><input type="checkbox" name="fully_managed_required" defaultChecked={active.fully_managed_required === true} /><span>{t("common.yes")}</span></label>
+        </div>
+
+        <div className="form-section-label form-wide"><span>05</span><div><b>{t("group.config.section.limits")}</b></div></div>
+        <div className="field"><label htmlFor="cfg-concurrency">{t("group.config.groupConcurrency")}<span className="hint">{t("group.config.unlimitedHint")}</span></label>
+          <input id="cfg-concurrency" name="concurrency" className="inp" type="number" min={1} defaultValue={asNumber(limits.concurrency) ?? ""} /></div>
+        <div className="field"><label htmlFor="cfg-rpm">{t("group.config.messagesRpm")}<span className="hint">{t("group.config.unlimitedHint")}</span></label>
+          <input id="cfg-rpm" name="messages_rpm" className="inp" type="number" min={1} defaultValue={asNumber(limits.messages_rpm) ?? ""} /></div>
+        <div className="field"><label htmlFor="cfg-burst">{t("group.config.messagesBurst")}<span className="hint">{t("group.config.rpmPairHint")}</span></label>
+          <input id="cfg-burst" name="messages_burst" className="inp" type="number" min={0} defaultValue={asNumber(limits.messages_burst) ?? ""} /></div>
+        <div className="field"><label htmlFor="cfg-queue-capacity">{t("group.config.queueCapacity")}</label>
+          <input id="cfg-queue-capacity" className="inp" value={asNumber(queue.capacity) ?? ""} placeholder={t("group.config.queueAuto")} readOnly aria-readonly="true" /></div>
+
+        <details className="advanced-settings form-wide">
+          <summary>{t("common.advanced")}</summary>
+          <p>{t("common.advancedHint")}</p>
+          <div className="config-draft-grid">
+            <div className="field"><label htmlFor="cfg-cred-concurrency">{t("group.config.credentialConcurrency")}</label>
+              <input id="cfg-cred-concurrency" name="credential_concurrency" className="inp" type="number" required min={1} defaultValue={numberOrDefault(defaults.concurrency, 5)} /></div>
+            <div className="field"><label htmlFor="cfg-cred-rpm">{t("group.config.credentialRpm")}</label>
+              <input id="cfg-cred-rpm" name="credential_rpm" className="inp" type="number" required min={1} defaultValue={numberOrDefault(defaults.messages_rpm, 60)} /></div>
+            <div className="field"><label htmlFor="cfg-pre-upstream">{t("group.config.preUpstreamTimeout")}</label>
+              <input id="cfg-pre-upstream" name="pre_upstream_timeout_ms" className="inp" type="number" required min={1000} max={600_000} defaultValue={numberOrDefault(queue.pre_upstream_timeout_ms, 30_000)} /></div>
+            <div className="field"><label htmlFor="cfg-connect">{t("group.config.connectTimeout")}</label>
+              <input id="cfg-connect" name="upstream_connect_ms" className="inp" type="number" required min={1000} max={30_000} defaultValue={numberOrDefault(timeouts.upstream_connect_ms, 10_000)} /></div>
+            <div className="field"><label htmlFor="cfg-non-stream">{t("group.config.nonStreamTimeout")}</label>
+              <input id="cfg-non-stream" name="upstream_non_stream_total_ms" className="inp" type="number" required min={5000} max={3_600_000} defaultValue={numberOrDefault(timeouts.upstream_non_stream_total_ms, 600_000)} /></div>
+            <div className="field"><label htmlFor="cfg-stream-idle">{t("group.config.streamIdleTimeout")}</label>
+              <input id="cfg-stream-idle" name="upstream_stream_idle_ms" className="inp" type="number" required min={5000} max={600_000} defaultValue={numberOrDefault(timeouts.upstream_stream_idle_ms, 120_000)} /></div>
+            <div className="field"><span className="field-label">{t("group.config.consoleFallback")}</span>
+              <label className="choice-card"><input type="checkbox" name="console_business_fallback_enabled" defaultChecked={governance.console_business_fallback_enabled === true} /><span>{t("common.yes")}</span></label>
+            </div>
+            <div className="field"><label htmlFor="cfg-default-os">{t("group.config.defaultOsFamily")}</label>
+              <SelectField id="cfg-default-os" name="default_os_family" required defaultValue={stringOf(active.default_os_family) ?? "windows"}
+                options={[{ value: "windows", label: t("group.config.os.windows") }, { value: "macos", label: t("group.config.os.macos") }, { value: "linux", label: t("group.config.os.linux") }]} />
+            </div>
+          </div>
+        </details>
       </div>
       <div className="policy-note"><Icon name="info" /><span>{t("group.config.inheritNote")}</span></div>
       <div className="modal-foot">
         <button type="button" className="btn btn-ghost" onClick={onBack} disabled={submitting}>{t("credential.form.back")}</button>
-        <button type="submit" className="btn btn-primary" disabled={submitting}>{submitting ? t("common.submitting") : t("group.config.submitDraft")}</button>
+        <button type="button" className="btn btn-ghost" disabled={submitting} onClick={(event) => { intentRef.current = "draft"; event.currentTarget.form?.requestSubmit(); }}>{t("group.config.saveDraft")}</button>
+        <button type="submit" className="btn btn-primary" disabled={submitting}>{submitting ? t("common.submitting") : t("group.config.saveAndActivate")}</button>
       </div>
     </form>
   );
@@ -544,8 +585,8 @@ export function GroupDetailDialog({ row, onClose }: { row: Row; onClose(): void 
   const capacity = useQuery({ queryKey: [`${endpoint}/capacity`], queryFn: () => api<Row>(`${endpoint}/capacity`), retry: false });
   const credentials = useQuery({ queryKey: [`${endpoint}/credentials`], queryFn: () => api<Row[]>(`${endpoint}/credentials`), retry: false });
   const versions = useQuery({ queryKey: [`${endpoint}/config-versions`], queryFn: () => api<Row[]>(`${endpoint}/config-versions`), retry: false });
-  const [tab, setTab] = useState<Tab>("overview");
-  const [configDraft, setConfigDraft] = useState(false);
+  const [tab, setTab] = useState<Tab>("scheduling");
+  const [configDraft, setConfigDraft] = useState(true);
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     document.addEventListener("keydown", closeOnEscape);
@@ -608,10 +649,12 @@ export function GroupDetailDialog({ row, onClose }: { row: Row; onClose(): void 
                 endpoint={endpoint}
                 active={activeConfig}
                 onBack={() => setConfigDraft(false)}
-                onDone={async () => {
+                onDone={async (leave) => {
                   await refreshVersions();
-                  setConfigDraft(false);
-                  setTab("versions");
+                  if (leave) {
+                    setConfigDraft(false);
+                    setTab("versions");
+                  }
                 }}
               />
             ) : (

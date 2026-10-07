@@ -355,6 +355,7 @@ where
     Ok(())
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
 fn discover_postgres_bin(data_dir: &Path) -> anyhow::Result<PathBuf> {
     if let Some(configured) = std::env::var_os("GATEWAY_LOCAL_POSTGRES_BIN") {
         let configured = PathBuf::from(configured);

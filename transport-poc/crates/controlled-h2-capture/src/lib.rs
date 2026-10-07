@@ -377,8 +377,186 @@ mod server {
         }
     }
 
+    /// Static-only export, deliberately redacted in diagnostics.
+    #[derive(Clone, Default, PartialEq, Eq)]
+    pub struct StaticSystemTemplate(Option<Value>);
+
+    impl std::fmt::Debug for StaticSystemTemplate {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("StaticSystemTemplate")
+                .field("available", &self.0.is_some())
+                .finish()
+        }
+    }
+
+    impl StaticSystemTemplate {
+        pub fn value(&self) -> Option<&Value> {
+            self.0.as_ref()
+        }
+
+        fn extract(request: &Value) -> Self {
+            let Some(system) = request.get("system") else {
+                return Self(None);
+            };
+            let segments = gateway_policy::parse_system_segments(system);
+            let Some(blocks) = system.as_array() else {
+                return Self(None);
+            };
+            // 2.1.245 also emits static text and dynamic sections in one block.
+            // Require line-aligned, ordered known headings before splitting it.
+            let mut selected = Vec::new();
+            if matches!(segments.boundary, gateway_policy::Boundary::Resolved { .. }) {
+                selected.extend(
+                    segments
+                        .static_blocks
+                        .iter()
+                        .map(|index| blocks[*index].clone()),
+                );
+            } else {
+                let Some((index, text, end)) =
+                    blocks.iter().enumerate().find_map(|(index, block)| {
+                        let text = block.get("text")?.as_str()?;
+                        let tone = text.find("\n# Tone and style\n")?;
+                        let environment = text.find("\n# Environment\n")?;
+                        let end = [
+                            "\n# auto memory\n",
+                            "\n# Environment\n",
+                            "\nsession_guidance",
+                            "\nCommunicating",
+                            "\nPronouns",
+                        ]
+                        .iter()
+                        .filter_map(|marker| text.find(marker))
+                        .min()?;
+                        (tone < end && end <= environment).then_some((index, text, end))
+                    })
+                else {
+                    return Self(None);
+                };
+                if segments.billing.is_none() {
+                    return Self(None);
+                }
+                selected.extend(blocks[1..index].iter().cloned());
+                let mut last = blocks[index].clone();
+                last["text"] = Value::String(text[..end].to_owned());
+                selected.push(last);
+            }
+            let mut output = Vec::new();
+            for block in &selected {
+                let Some(text) = block.get("text").and_then(Value::as_str) else {
+                    return Self(None);
+                };
+                // Boundary detection is necessary but mixed static/dynamic blocks must also fail closed.
+                if [
+                    "x-anthropic-billing-header:",
+                    "# Environment",
+                    "<env>",
+                    "# Contents of CLAUDE.md",
+                    "session_guidance",
+                    "Today's date is",
+                    "The current month is",
+                    "Working directory:",
+                ]
+                .iter()
+                .any(|marker| text.contains(marker))
+                    || text
+                        .lines()
+                        .any(|line| line.trim_start().starts_with("<system-reminder>"))
+                {
+                    return Self(None);
+                }
+                let mut clean = json!({"type":"text", "text":text});
+                if let Some(cache) = block.get("cache_control") {
+                    if cache.get("type").and_then(Value::as_str) != Some("ephemeral") {
+                        return Self(None);
+                    }
+                    let mut annotation = json!({"type":"ephemeral"});
+                    if let Some(ttl) = cache.get("ttl") {
+                        if !matches!(ttl.as_str(), Some("5m" | "1h")) {
+                            return Self(None);
+                        }
+                        annotation["ttl"] = ttl.clone();
+                    }
+                    clean["cache_control"] = annotation;
+                }
+                output.push(clean);
+            }
+            Self((!output.is_empty()).then_some(Value::Array(output)))
+        }
+    }
+
+    #[cfg(test)]
+    mod template_tests {
+        use super::*;
+
+        fn request() -> Value {
+            serde_json::from_str::<Value>(include_str!(
+                "../../../../crates/gateway-policy/tests/fixtures/claude-code/main-conversation.json"
+            ))
+            .unwrap()["body"]
+                .clone()
+        }
+
+        #[test]
+        fn exports_only_static_blocks_and_preserves_cache_annotation() {
+            let mut request = request();
+            request["system"][1]["cache_control"] = json!({"type":"ephemeral", "ttl":"1h"});
+            request["system"][1]["private_metadata"] = json!("do-not-export");
+            let template = StaticSystemTemplate::extract(&request);
+            let value = template.value().unwrap();
+            assert_eq!(value.as_array().unwrap().len(), 1);
+            assert_eq!(
+                value[0]["cache_control"],
+                json!({"type":"ephemeral", "ttl":"1h"})
+            );
+            assert_eq!(value[0]["text"], request["system"][1]["text"]);
+            assert!(value[0].get("private_metadata").is_none());
+            let exported = value.to_string();
+            for excluded in [
+                "billing",
+                "Primary working directory",
+                "Today's date",
+                "hello",
+            ] {
+                assert!(!exported.contains(excluded));
+            }
+            assert!(!format!("{template:?}").contains("Tone and style"));
+        }
+
+        #[test]
+        fn splits_inline_dynamic_sections_before_memory_and_environment() {
+            let mut request = request();
+            request["system"].as_array_mut().unwrap().truncate(2);
+            request["system"][1]["text"] = json!(
+                "Identity\n# Tone and style\nStatic rules\n# auto memory\nprivate-memory\n# Environment\nprivate-directory\n# Context management\ndynamic"
+            );
+            let template = StaticSystemTemplate::extract(&request);
+            assert_eq!(
+                template.value().unwrap()[0]["text"],
+                "Identity\n# Tone and style\nStatic rules"
+            );
+            assert!(!template.value().unwrap().to_string().contains("private"));
+        }
+
+        #[test]
+        fn rejects_unresolved_mixed_dynamic_and_invalid_cache() {
+            let mut unresolved = request();
+            unresolved["system"] = json!([{"type":"text", "text":"unrecognized system"}]);
+            assert!(StaticSystemTemplate::extract(&unresolved).value().is_none());
+            for marker in ["# Environment", "<system-reminder>", "Today's date is"] {
+                let mut mixed = request();
+                mixed["system"][1]["text"] = json!(format!("# Tone and style\n{marker} private"));
+                assert!(StaticSystemTemplate::extract(&mixed).value().is_none());
+            }
+            let mut invalid = request();
+            invalid["system"][1]["cache_control"] = json!({"type":"ephemeral", "ttl":"forever"});
+            assert!(StaticSystemTemplate::extract(&invalid).value().is_none());
+        }
+    }
+
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct ClaudeRequestSummary {
+        pub static_system_template: StaticSystemTemplate,
         pub request_path: String,
         pub body_bytes: usize,
         pub stream_requested: bool,
@@ -1258,6 +1436,7 @@ mod server {
 
     #[derive(Default)]
     struct RequestShapeSummary {
+        static_system_template: StaticSystemTemplate,
         top_level_field_names: Vec<String>,
         message_count: usize,
         tool_count: usize,
@@ -1318,6 +1497,7 @@ mod server {
             .unwrap_or_default();
         output_schema_required.sort();
         RequestShapeSummary {
+            static_system_template: StaticSystemTemplate::extract(request),
             message_count: request
                 .get("messages")
                 .and_then(Value::as_array)
@@ -1346,6 +1526,7 @@ mod server {
     ) -> ClaudeRequestSummary {
         let request_shape = request_shape.unwrap_or_default();
         ClaudeRequestSummary {
+            static_system_template: request_shape.static_system_template,
             request_path,
             body_bytes,
             stream_requested,
@@ -1782,7 +1963,7 @@ mod server {
 #[cfg(feature = "boring-backend")]
 pub use server::{
     ClaudeRequestSummary, ControlledCancellationObservation, ControlledH2Result,
-    ControlledH2Server, ControlledResponseMode, Http1RequestObservation,
+    ControlledH2Server, ControlledResponseMode, Http1RequestObservation, StaticSystemTemplate,
 };
 
 #[derive(Debug, Error)]

@@ -19,9 +19,9 @@ pub use retry::{ConnectionAttemptBudget, RetryContext, RetryDecision, RetryError
 pub use token_bucket::{BucketConfig, TokenBucket};
 pub use types::{
     AdmissionDecision, AffinityKey, CredentialAuthUpdate, CredentialConfig, CredentialCooldownUpdate,
-    CredentialFenceResult, CredentialLease, CredentialProfileConfig, CredentialQuotaUpdate, CredentialRemoveResult,
-    CredentialState, EligibilityClass, ExecutorIdentity, GroupConfig, LeaseRelease, OwnerGeneration, QueueResolution,
-    QueueTicket, Rejection, RejectionKind, ResourceAction, ResourceEvent, ResourceKind, RetryCredentialTarget,
-    RetryLeaseDecision, RetryLeaseRequest, RuntimeLifecycle, ScheduleEntry, SchedulerError, SchedulerSnapshot,
-    SessionCapacityConfig, TicketState,
+    CredentialExecution, CredentialFenceResult, CredentialLease, CredentialProfileConfig, CredentialQuotaUpdate,
+    CredentialRemoveResult, CredentialState, EligibilityClass, ExecutorIdentity, GroupConfig, LeaseRelease,
+    OpenAiTransportConfig, OwnerGeneration, QueueResolution, QueueTicket, Rejection, RejectionKind, ResourceAction,
+    ResourceEvent, ResourceKind, RetryCredentialTarget, RetryLeaseDecision, RetryLeaseRequest, RuntimeLifecycle,
+    ScheduleEntry, SchedulerError, SchedulerSnapshot, SessionCapacityConfig, TicketState,
 };

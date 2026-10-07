@@ -1,11 +1,11 @@
 //! Durable usage-export persistence and generation fencing.
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::too_many_lines)]
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::Row as _;
 use uuid::Uuid;
 
-use crate::{AuditOutboxRecord, PgStorage, StorageError};
+use crate::{PgStorage, StorageError};
 
 #[derive(Clone, Debug)]
 pub struct UsageExportWork {
@@ -207,27 +207,10 @@ impl PgStorage {
         .await
         .map_err(map_sqlx)?
         .ok_or(StorageError::RevisionConflict)?;
-        let revision: i64 = committed.try_get("revision").map_err(map_sqlx)?;
+        let _revision: i64 = committed.try_get("revision").map_err(map_sqlx)?;
         let action = "usage_export_generated";
-        let object_type = "usage_export";
         complete_job_in(&mut transaction, commit.job_id, commit.generation, action).await?;
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &AuditOutboxRecord {
-                actor_type: "system".to_owned(),
-                actor_id: None,
-                action: action.to_owned(),
-                object_type: object_type.to_owned(),
-                object_id: Some(commit.export_id.to_string()),
-                outcome: "success".to_owned(),
-                redacted_detail: json!({"row_count":commit.row_count,"content_length":commit.content_length}),
-                topic: format!("{object_type}.generated"),
-                aggregate_id: commit.export_id,
-                aggregate_revision: revision,
-                payload: json!({"object_id":commit.export_id,"state":"succeeded"}),
-            },
-        )
-        .await?;
+
         transaction.commit().await.map_err(map_sqlx)
     }
 
@@ -298,7 +281,6 @@ impl PgStorage {
         export_id: Uuid,
         requested_by: Uuid,
         expected_revision: i64,
-        actor_type: &str,
     ) -> Result<(), StorageError> {
         let mut transaction = self.pool().begin().await.map_err(map_sqlx)?;
         let consumed = sqlx::query(
@@ -314,26 +296,8 @@ impl PgStorage {
         .await
         .map_err(map_sqlx)?
         .ok_or(StorageError::RevisionConflict)?;
-        let revision: i64 = consumed.try_get("revision").map_err(map_sqlx)?;
-        let action = "usage_export_downloaded";
-        let object_type = "usage_export";
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &AuditOutboxRecord {
-                actor_type: actor_type.to_owned(),
-                actor_id: Some(requested_by),
-                action: action.to_owned(),
-                object_type: object_type.to_owned(),
-                object_id: Some(export_id.to_string()),
-                outcome: "success".to_owned(),
-                redacted_detail: json!({"one_shot":true}),
-                topic: format!("{object_type}.downloaded"),
-                aggregate_id: export_id,
-                aggregate_revision: revision,
-                payload: json!({"object_id":export_id,"state":"expired"}),
-            },
-        )
-        .await?;
+        let _revision: i64 = consumed.try_get("revision").map_err(map_sqlx)?;
+
         transaction.commit().await.map_err(map_sqlx)
     }
 

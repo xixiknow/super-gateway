@@ -29,8 +29,6 @@ pub enum ReadinessBlocker {
     Bootstrap,
     /// Business encryption key material is unavailable.
     BusinessKeyProvider,
-    /// Audit integrity or deletion ledger startup verification failed.
-    AuditIntegrity,
     /// Active immutable configuration is unavailable.
     ActiveConfiguration,
     /// Transport core is unavailable.
@@ -58,8 +56,6 @@ pub struct InternalReadiness {
     pub bootstrap_ready: bool,
     /// Business key provider is ready.
     pub business_key_provider_ready: bool,
-    /// Startup audit chain and deletion ledger verification passed.
-    pub audit_integrity_ready: bool,
     /// Required immutable active configuration is loaded.
     pub active_configuration_ready: bool,
     /// Transport core can create matching engines.
@@ -76,7 +72,6 @@ impl Default for InternalReadiness {
             database_schema_ready: false,
             bootstrap_ready: false,
             business_key_provider_ready: false,
-            audit_integrity_ready: false,
             active_configuration_ready: false,
             transport_core_ready: false,
             required_bundles_ready: false,
@@ -107,7 +102,6 @@ impl InternalReadiness {
             (self.database_schema_ready, ReadinessBlocker::DatabaseOrSchema),
             (self.bootstrap_ready, ReadinessBlocker::Bootstrap),
             (self.business_key_provider_ready, ReadinessBlocker::BusinessKeyProvider),
-            (self.audit_integrity_ready, ReadinessBlocker::AuditIntegrity),
             (self.active_configuration_ready, ReadinessBlocker::ActiveConfiguration),
             (self.transport_core_ready, ReadinessBlocker::TransportCore),
             (self.required_bundles_ready, ReadinessBlocker::RequiredBundle),
@@ -142,7 +136,6 @@ mod tests {
             database_schema_ready: true,
             bootstrap_ready: true,
             business_key_provider_ready: true,
-            audit_integrity_ready: true,
             active_configuration_ready: true,
             transport_core_ready: true,
             required_bundles_ready: true,

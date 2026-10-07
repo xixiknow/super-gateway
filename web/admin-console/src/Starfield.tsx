@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTheme } from "./theme";
 
 type RGB = readonly [number, number, number];
 
@@ -163,9 +164,11 @@ function ambientGradient(bx: number, by: number, t: number): { gx: number; gy: n
  * jsdom 下不启动,prefers-reduced-motion 下只画一帧静态画面。
  */
 export function Starfield() {
+  const { theme } = useTheme();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    if (theme !== "dark") return;
     const canvas = canvasRef.current;
     if (!canvas || navigator.userAgent.includes("jsdom")) return;
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -302,7 +305,9 @@ export function Starfield() {
       window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", resize);
     };
-  }, []);
+  }, [theme]);
+
+  if (theme !== "dark") return null;
 
   return (
     <div className="login-starfield" aria-hidden="true">

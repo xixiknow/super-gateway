@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex, MutexGuard},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -16,6 +16,7 @@ use axum::{
 };
 use bytes::Bytes;
 use futures_core::Stream;
+use futures_util::SinkExt as _;
 use gateway_domain::{
     AgentId, ClientClass, ClientOs, Clock, Digest, OsResolution, PlatformKeyId, RequestId, SecretValue, SessionId,
     SystemClock,
@@ -178,13 +179,30 @@ pub fn data_plane_router(state: DataPlaneState) -> Router {
 }
 
 async fn edge_entry(State(state): State<DataPlaneState>, mut request: Request) -> Response {
+    request.extensions_mut().insert(Instant::now());
     let request_id = format!("req_{}", uuid::Uuid::now_v7().simple());
     let route = classify_route(request.uri().path());
     let runtime = state.runtime.snapshot();
+    let ws_auth_headers = request.headers().clone();
+    let original_headers = gateway_domain::HeaderSnapshot::capture(
+        gateway_domain::HeaderTransport::Http,
+        request
+            .headers()
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_bytes())),
+    );
+    request.extensions_mut().insert(original_headers);
     let Some(grant) = authenticate(request.headers_mut(), runtime.access.as_ref()) else {
         return GatewayError::authentication().response(&request_id);
     };
-    if request.method() != route.expected_method() {
+    if matches!(route, BusinessRoute::OpenAi(_)) != (grant.provider == gateway_domain::Provider::Openai)
+        && !matches!(route, BusinessRoute::Models | BusinessRoute::Unknown)
+    {
+        return GatewayError::permission().response(&request_id);
+    }
+    let websocket = request.method() == Method::GET
+        && matches!(route, BusinessRoute::OpenAi(gateway_domain::OpenAiEndpoint::Responses));
+    if !websocket && request.method() != route.expected_method() {
         return route.method_error().response(&request_id);
     }
     if let Some(permission) = route.permission()
@@ -196,7 +214,13 @@ async fn edge_entry(State(state): State<DataPlaneState>, mut request: Request) -
     if !grant.ip_allowlist.is_empty() && !grant.ip_allowlist.iter().any(|network| network.contains(&source)) {
         return GatewayError::permission().response(&request_id);
     }
+    if websocket {
+        return openai_websocket(state, request, ws_auth_headers, request_id).await;
+    }
     match route {
+        BusinessRoute::OpenAi(endpoint) => {
+            messages(state, request, grant, request_id, DispatchEndpoint::OpenAi(endpoint)).await
+        }
         BusinessRoute::Messages => messages(state, request, grant, request_id, DispatchEndpoint::Messages).await,
         BusinessRoute::CountTokens => messages(state, request, grant, request_id, DispatchEndpoint::CountTokens).await,
         BusinessRoute::Models => models(&state, runtime.models.as_ref(), request.uri(), &grant, &request_id),
@@ -216,6 +240,14 @@ async fn messages(
     endpoint: DispatchEndpoint,
 ) -> Response {
     let accepted_at = state.business_rates.now();
+    let started_at = request
+        .extensions()
+        .get::<Instant>()
+        .copied()
+        .unwrap_or_else(Instant::now);
+    let client_identity = gateway_domain::ClientIdentity::from_user_agent(
+        request.headers().get(header::USER_AGENT).and_then(|h| h.to_str().ok()),
+    );
     if let Err(error) = validate_framing(request.headers()) {
         return error.response(&request_id);
     }
@@ -224,6 +256,11 @@ async fn messages(
         return GatewayError::too_large().response(&request_id);
     }
     let protocol_headers = protocol_headers(request.headers());
+    let original_headers = request.extensions().get::<gateway_domain::HeaderSnapshot>().cloned();
+    let openai_connection = request
+        .extensions()
+        .get::<Arc<tokio::sync::Mutex<gateway_transport::OpenAiConnection>>>()
+        .cloned();
     let classification_headers = request.headers().clone();
     let body = match to_bytes(request.into_body(), effective_limit).await {
         Ok(body) => Arc::<[u8]>::from(body.as_ref()),
@@ -233,7 +270,18 @@ async fn messages(
         Ok(value) => value,
         Err(_) => return GatewayError::invalid_body().response(&request_id),
     };
-    let classified_client = classify_client(&classification_headers, &classification_tree, &grant.platform_key_id);
+    let mut classified_client = classify_client(&classification_headers, &classification_tree, &grant.platform_key_id);
+    if grant.provider == gateway_domain::Provider::Openai {
+        let session = header_string(&classification_headers, "session_id")
+            .or_else(|| header_string(&classification_headers, "x-session-id"))
+            .unwrap_or_else(|| request_id.clone().into());
+        let digest = Digest::of(session.as_bytes());
+        let Ok(base_session) = SessionId::new(format!("ses_{}", &digest.as_str()[..32])) else {
+            return GatewayError::invalid_body().response(&request_id);
+        };
+        classified_client.base_session = base_session;
+        classified_client.class = ClientClass::NonClaudeCodeCli;
+    }
     let client_class = classified_client.class;
     let client_app = header_string(&classification_headers, "x-app");
     if !grant.accepted_client_classes.contains(&client_class) {
@@ -259,7 +307,39 @@ async fn messages(
         affinity_credential: None,
     };
     let original_body = body.clone();
-    let generic = match if matches!(endpoint, DispatchEndpoint::CountTokens) {
+    let generic = match if matches!(endpoint, DispatchEndpoint::OpenAi(_)) {
+        if !state
+            .runtime
+            .snapshot()
+            .models
+            .published()
+            .iter()
+            .any(|m| m.provider == grant.provider && m.id.as_ref() == model)
+        {
+            return GatewayError::model_unavailable().response(&request_id);
+        }
+        if classification_tree.get("stream").is_some_and(|v| !v.is_boolean()) {
+            return GatewayError::invalid_body().response(&request_id);
+        }
+        Ok(gateway_domain::GenericAdjustedRequest {
+            body_digest: Digest::of(&body),
+            model_id: model.into(),
+            stream: classification_tree
+                .get("stream")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            replay_body: Arc::new(gateway_domain::RequestReplayBody::new(
+                body,
+                Arc::new(classification_tree.clone()),
+                true,
+            )),
+            portability: gateway_domain::Portability::Portable,
+            attribution_suppressed: true,
+            system_template_pending: false,
+            change_set: Arc::from([]),
+            snapshot_set: grant.policy.snapshots.clone(),
+        })
+    } else if matches!(endpoint, DispatchEndpoint::CountTokens) {
         grant.policy.process_count_tokens(body, &context)
     } else {
         grant.policy.process(body, &context)
@@ -267,7 +347,7 @@ async fn messages(
         Ok(generic) => Arc::new(generic),
         Err(error) => return map_policy_error(error).response(&request_id),
     };
-    if matches!(endpoint, DispatchEndpoint::Messages)
+    if !matches!(endpoint, DispatchEndpoint::CountTokens)
         && let Err(error) = authorize_spend(&state, &grant).await
     {
         return error.response(&request_id);
@@ -296,7 +376,12 @@ async fn messages(
     else {
         return GatewayError::rate_limited(2).response(&request_id);
     };
+    let websocket = openai_connection.is_some();
     let dispatch = DispatchRequest {
+        started_at,
+        client_identity,
+        original_headers,
+        openai_connection,
         endpoint,
         request_id: RequestId::new(request_id.clone()).unwrap_or_else(|_| unreachable_request("req_fallback")),
         owner_user_id: grant.owner_user_id.clone(),
@@ -319,7 +404,9 @@ async fn messages(
     };
     state.observability.accepted();
     match state.dispatcher.dispatch(dispatch).await {
-        Ok(response) => match upstream_response(response, permit, state.observability.clone()).await {
+        Err(DispatchError::InvalidRequest) => GatewayError::invalid_body().response(&request_id),
+        Err(DispatchError::ContinuationUnavailable) => with_request_id((StatusCode::CONFLICT, Json(serde_json::json!({"error":{"type":"invalid_request_error","code":"continuation_unavailable","message":"The response is unknown to this key or its account is unavailable."}}))).into_response(), &request_id),
+        Ok(response) => match upstream_response(response, permit, state.observability.clone(), websocket).await {
             Ok(response) => response,
             Err(()) => GatewayError::unavailable_without_retry().response(&request_id),
         },
@@ -353,6 +440,96 @@ async fn authorize_spend(state: &DataPlaneState, grant: &AccessGrant) -> Result<
     }
 }
 
+async fn openai_websocket(state: DataPlaneState, request: Request, headers: HeaderMap, request_id: String) -> Response {
+    static CONNECTIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1024);
+    static KEYS: std::sync::LazyLock<KeyConcurrencyLimiter> = std::sync::LazyLock::new(KeyConcurrencyLimiter::default);
+    use axum::extract::{
+        FromRequestParts as _,
+        ws::{Message, WebSocketUpgrade},
+    };
+    use http_body_util::BodyExt as _;
+    let Some(idle) = state.dispatcher.openai_websocket_idle().await else {
+        return GatewayError::unavailable_without_retry().response(&request_id);
+    };
+    let source = source_ip(&request, &state.trusted_proxies);
+    let mut auth = headers.clone();
+    let Some(grant) = authenticate(&mut auth, state.runtime.snapshot().access.as_ref()) else {
+        return GatewayError::authentication().response(&request_id);
+    };
+    let Some(key_permit) = KEYS.try_acquire(&grant.platform_key_id, 32) else {
+        return GatewayError::rate_limited(2).response(&request_id);
+    };
+    let (mut parts, _) = request.into_parts();
+    let Ok(upgrade) = WebSocketUpgrade::from_request_parts(&mut parts, &state).await else {
+        return GatewayError::invalid_body().response(&request_id);
+    };
+    // A separate bounded connection count; each response also acquires a normal execution permit.
+    let Ok(connection_permit) = CONNECTIONS.try_acquire() else {
+        return GatewayError::rate_limited(2).response(&request_id);
+    };
+    let mut ingress_headers = gateway_domain::HeaderSnapshot::capture(
+        gateway_domain::HeaderTransport::WebsocketHandshake,
+        headers.iter().map(|(name, value)| (name.as_str(), value.as_bytes())),
+    );
+    upgrade.max_message_size(state.platform_body_limit_bytes).on_upgrade(move |mut socket|async move {
+        let _connection_permit=connection_permit;
+        let _key_permit=key_permit;
+        let connection=Arc::new(tokio::sync::Mutex::new(gateway_transport::OpenAiConnection::default()));
+        let mut next_frame=None;
+        loop {
+            let (incoming, queued_at)=if let Some((text, at))=next_frame.take(){(Ok(Some(Ok(Message::Text(text)))),Some(at))}else{(tokio::time::timeout(idle,socket.recv()).await,None)};
+            let started_at=queued_at.unwrap_or_else(Instant::now);
+            let text=match incoming { Ok(Some(Ok(Message::Text(text))))=>text, Ok(Some(Ok(Message::Ping(bytes))))=>{if socket.send(Message::Pong(bytes)).await.is_err(){break;}continue;},Ok(Some(Ok(Message::Pong(_))))=>continue,_=>break};
+            let mut body:Value=match serde_json::from_str(text.as_str()){Ok(value)=>value,Err(_)=>break};
+            if body.get("type").and_then(Value::as_str)!=Some("response.create"){break;}
+            let Some(object)=body.as_object_mut() else {break;};object.remove("type");object.insert("stream".into(),Value::Bool(true));
+            let mut auth=headers.clone();
+            let Some(grant)=authenticate(&mut auth,state.runtime.snapshot().access.as_ref()) else {break;};
+            if grant.provider!=gateway_domain::Provider::Openai || !grant.permissions.contains(&EndpointPermission::Messages){break;}
+            if !grant.ip_allowlist.is_empty() && !grant.ip_allowlist.iter().any(|network|network.contains(&source)){break;}
+            let Ok(mut request)=Request::builder().method("POST").uri("/v1/responses").body(Body::from(body.to_string())) else {break;};
+            *request.headers_mut()=auth;
+            request.extensions_mut().insert(connection.clone());
+            request.extensions_mut().insert(started_at);
+            request.extensions_mut().insert(ingress_headers.clone());
+            ingress_headers.reused = true;
+            let pending=messages(state.clone(),request,grant,format!("req_{}",uuid::Uuid::now_v7().simple()),DispatchEndpoint::OpenAi(gateway_domain::OpenAiEndpoint::Responses));
+            tokio::pin!(pending);
+            let response=loop {tokio::select! {
+                response=&mut pending=>break Some(response),
+                incoming=socket.recv()=>match incoming {
+                    Some(Ok(Message::Ping(bytes)))=>{if socket.send(Message::Pong(bytes)).await.is_err(){break None;}},
+                    Some(Ok(Message::Pong(_)))=>{},
+                    _=>break None,
+                }
+            }};
+            let Some(mut response)=response else {break;};
+            let delivery=response.extensions_mut().remove::<Arc<Mutex<WebSocketDelivery>>>();
+            if !response.status().is_success(){let _=socket.send(Message::Text(serde_json::json!({"type":"error","error":{"code":"request_failed","message":"Response admission or upstream request failed."}}).to_string().into())).await;break;}
+            let mut stream=response.into_body();
+            let mut decoder=gateway_services::openai::usage::SseDecoder::new(4*1024*1024);
+            let mut good=true;
+            let mut terminal_sent=false;
+            loop {
+                tokio::select! {
+                    incoming=socket.recv(), if next_frame.is_none()=>{match incoming {Some(Ok(Message::Text(text))) if terminal_sent=>{next_frame=Some((text,Instant::now()));},Some(Ok(Message::Ping(bytes)))=>{if socket.send(Message::Pong(bytes)).await.is_err(){good=false;break;}},Some(Ok(Message::Pong(_)))=>{},_=>{good=false;break;}}},
+                    frame=stream.frame()=>{
+                        let Some(frame)=frame else {break;};
+                        let Ok(frame)=frame else {good=false;break;};
+                        let Ok(bytes)=frame.into_data() else {continue;};
+                        let Ok(events)=decoder.push(&bytes) else {good=false;break;};
+                        for event in events {terminal_sent |= matches!(event.get("type").and_then(Value::as_str),Some("response.completed"|"response.failed"|"response.incomplete"));let payload=event.to_string();let delivered=payload.len() as u64;if !matches!(tokio::time::timeout(idle,socket.send(Message::Text(payload.into()))).await,Ok(Ok(()))){good=false;break;}if let Some(delivery)=&delivery {let mut delivery=delivery.lock().unwrap_or_else(std::sync::PoisonError::into_inner);delivery.bytes_delivered=delivery.bytes_delivered.saturating_add(delivered);}}
+                        if !good {break;}
+                    }
+                }
+            }
+            if let Some(delivery)=&delivery {let mut delivery=delivery.lock().unwrap_or_else(std::sync::PoisonError::into_inner);let outcome=if good {delivery.state.eof_outcome()} else {gateway_domain::DeliveryOutcome::ClientDisconnected};delivery.finish(outcome);}
+            if !good {break;}
+        }
+        let _=socket.close().await;
+    }).into_response()
+}
+
 fn models(
     state: &DataPlaneState,
     catalog: &dyn ModelCatalog,
@@ -364,17 +541,46 @@ fn models(
     if let RateDecision::Limited { retry_after } = state.business_rates.allow(rate_key, grant.models_rate) {
         return GatewayError::rate_limited(retry_after).response(request_id);
     }
-    let query = match ModelsQuery::parse(uri.query()) {
-        Ok(query) => query,
-        Err(error) => return error.response(request_id),
-    };
     let visible = catalog
         .published()
         .iter()
+        .filter(|model| model.provider == grant.provider)
         .filter(|model| model_in_scope(&model.id, &grant.group_model_scope))
         .filter(|model| model_in_scope(&model.id, &grant.key_model_scope))
         .cloned()
         .collect::<Vec<_>>();
+    if grant.provider == gateway_domain::Provider::Openai {
+        if let Some(id) = uri
+            .path()
+            .strip_prefix("/v1/models/")
+            .or_else(|| uri.path().strip_prefix("/models/"))
+        {
+            let Some(model) = visible.iter().find(|model| model.id.as_ref() == id) else {
+                return GatewayError::not_found().response(request_id);
+            };
+            return with_request_id(Json(serde_json::json!({"id":model.id,"object":"model","created":model.created_at.parse::<i64>().unwrap_or(0),"owned_by":"openai"})).into_response(), request_id);
+        }
+        if uri.path() == "/backend-api/codex/models"
+            || uri
+                .query()
+                .is_some_and(|query| query.split('&').any(|pair| pair.starts_with("client_version=")))
+        {
+            let models = visible
+                .iter()
+                .filter_map(|model| model.openai_metadata.clone())
+                .collect::<Vec<_>>();
+            return with_request_id(Json(serde_json::json!({"models":models})).into_response(), request_id);
+        }
+        let data = visible.iter().map(|m| serde_json::json!({"id":m.id,"object":"model","created":m.created_at.parse::<i64>().unwrap_or(0),"owned_by":"openai"})).collect::<Vec<_>>();
+        return with_request_id(
+            Json(serde_json::json!({"object":"list","data":data})).into_response(),
+            request_id,
+        );
+    }
+    let query = match ModelsQuery::parse(uri.query()) {
+        Ok(query) => query,
+        Err(error) => return error.response(request_id),
+    };
     let start = match query.after_id {
         None => 0,
         Some(after_id) => match visible.iter().position(|model| model.id == after_id) {
@@ -395,6 +601,7 @@ fn models(
 
 #[derive(Clone, Copy)]
 enum BusinessRoute {
+    OpenAi(gateway_domain::OpenAiEndpoint),
     Messages,
     CountTokens,
     Models,
@@ -404,14 +611,14 @@ enum BusinessRoute {
 impl BusinessRoute {
     fn expected_method(self) -> &'static Method {
         match self {
-            Self::Messages | Self::CountTokens => &Method::POST,
+            Self::Messages | Self::CountTokens | Self::OpenAi(_) => &Method::POST,
             Self::Models | Self::Unknown => &Method::GET,
         }
     }
 
     fn permission(self) -> Option<EndpointPermission> {
         match self {
-            Self::Messages | Self::CountTokens => Some(EndpointPermission::Messages),
+            Self::Messages | Self::CountTokens | Self::OpenAi(_) => Some(EndpointPermission::Messages),
             Self::Models => Some(EndpointPermission::Models),
             Self::Unknown => None,
         }
@@ -419,7 +626,7 @@ impl BusinessRoute {
 
     fn method_error(self) -> GatewayError {
         match self {
-            Self::Messages | Self::CountTokens => GatewayError::method("POST"),
+            Self::Messages | Self::CountTokens | Self::OpenAi(_) => GatewayError::method("POST"),
             Self::Models => GatewayError::method("GET"),
             Self::Unknown => GatewayError::not_found(),
         }
@@ -428,9 +635,17 @@ impl BusinessRoute {
 
 fn classify_route(path: &str) -> BusinessRoute {
     match path {
+        "/v1/responses" | "/responses" => BusinessRoute::OpenAi(gateway_domain::OpenAiEndpoint::Responses),
+        "/v1/chat/completions" | "/chat/completions" => {
+            BusinessRoute::OpenAi(gateway_domain::OpenAiEndpoint::ChatCompletions)
+        }
+        "/v1/responses/compact" | "/responses/compact" => {
+            BusinessRoute::OpenAi(gateway_domain::OpenAiEndpoint::Compact)
+        }
         "/v1/messages" => BusinessRoute::Messages,
         "/v1/messages/count_tokens" => BusinessRoute::CountTokens,
-        "/v1/models" => BusinessRoute::Models,
+        "/v1/models" | "/models" | "/backend-api/codex/models" => BusinessRoute::Models,
+        path if path.starts_with("/v1/models/") || path.starts_with("/models/") => BusinessRoute::Models,
         _ => BusinessRoute::Unknown,
     }
 }
@@ -760,6 +975,7 @@ async fn upstream_response(
     mut response: crate::UpstreamResponse,
     permit: KeyPermit,
     observability: gateway_services::observability::DataPlaneObservability,
+    websocket: bool,
 ) -> Result<Response, ()> {
     if let Some(completion) = response.completion.clone() {
         let usage = response.usage;
@@ -773,6 +989,11 @@ async fn upstream_response(
         completion.committed().await.map_err(|_| ())?;
     }
     observability.response_committed();
+    let websocket_completion = websocket.then(|| WebSocketDelivery {
+        completion: response.completion.take(),
+        state: response.delivery_state.clone(),
+        bytes_delivered: 0,
+    });
     let nominated = connection_nominated_headers(&response.headers);
     let stream = ClientBodyStream {
         receiver: response.body,
@@ -786,6 +1007,9 @@ async fn upstream_response(
         _response_admission: response.admission.take(),
     };
     let mut output = Response::new(Body::from_stream(stream));
+    if let Some(completion) = websocket_completion {
+        output.extensions_mut().insert(Arc::new(Mutex::new(completion)));
+    }
     *output.status_mut() = StatusCode::from_u16(response.status).unwrap_or(StatusCode::BAD_GATEWAY);
     for (name, value) in response.headers.drain(..) {
         let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
@@ -832,6 +1056,34 @@ fn safe_upstream_header(name: &HeaderName, nominated: &std::collections::BTreeSe
         )
 }
 
+// The WS socket owns completion; reading its internal SSE body is not delivery.
+struct WebSocketDelivery {
+    completion: Option<Arc<dyn gateway_services::response::DeliveryCompletion>>,
+    state: gateway_services::response::PreparedDeliveryState,
+    bytes_delivered: u64,
+}
+
+impl WebSocketDelivery {
+    fn finish(&mut self, outcome: gateway_domain::DeliveryOutcome) {
+        if let Some(completion) = self.completion.take() {
+            let report = gateway_services::response::DeliveryReport {
+                finished_at: Instant::now(),
+                outcome,
+                bytes_delivered: self.bytes_delivered,
+            };
+            tokio::spawn(async move {
+                completion.completed(report).await;
+            });
+        }
+    }
+}
+
+impl Drop for WebSocketDelivery {
+    fn drop(&mut self) {
+        self.finish(gateway_domain::DeliveryOutcome::ClientDisconnected);
+    }
+}
+
 struct ClientBodyStream {
     receiver: tokio::sync::mpsc::Receiver<gateway_services::response::PreparedBodyItem>,
     permit: Option<KeyPermit>,
@@ -851,6 +1103,7 @@ impl ClientBodyStream {
         self.observability.delivery_finished(outcome, self.bytes_delivered);
         if let Some(completion) = self.completion.take() {
             let report = gateway_services::response::DeliveryReport {
+                finished_at: Instant::now(),
                 outcome,
                 bytes_delivered: self.bytes_delivered,
             };
@@ -1222,6 +1475,76 @@ mod tests {
         next_error: Mutex<Option<DispatchError>>,
     }
 
+    #[derive(Default)]
+    struct RecordingCompletion(Mutex<Vec<gateway_services::response::DeliveryReport>>);
+
+    #[async_trait]
+    impl gateway_services::response::DeliveryCompletion for RecordingCompletion {
+        async fn committed(&self) -> Result<(), gateway_services::response::DeliveryCompletionError> {
+            Ok(())
+        }
+        async fn completed(&self, report: gateway_services::response::DeliveryReport) {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).push(report);
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_completion_waits_for_socket_delivery_and_is_exactly_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let completion = Arc::new(RecordingCompletion::default());
+        let mut prepared = UpstreamResponse::from_bytes(200, vec![], Bytes::from_static(b"fixture"));
+        prepared.completion = Some(completion.clone());
+        let limiter = KeyConcurrencyLimiter::default();
+        let key = gateway_domain::PlatformKeyId::new("key-timing")?;
+        let permit = limiter.try_acquire(&key, 1).ok_or("permit")?;
+        let mut response = super::upstream_response(prepared, permit, Default::default(), true)
+            .await
+            .map_err(|()| "response")?;
+        let delivery = response
+            .extensions_mut()
+            .remove::<Arc<Mutex<super::WebSocketDelivery>>>()
+            .ok_or("completion")?;
+        response.into_body().collect().await?;
+        tokio::task::yield_now().await;
+        assert!(completion.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
+        let socket_finished = std::time::Instant::now();
+        {
+            let mut delivery = delivery.lock().unwrap_or_else(|e| e.into_inner());
+            delivery.bytes_delivered = 42;
+            delivery.finish(gateway_domain::DeliveryOutcome::Complete);
+            delivery.finish(gateway_domain::DeliveryOutcome::ClientDisconnected);
+        }
+        drop(delivery);
+        tokio::task::yield_now().await;
+        let reports = completion.0.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].bytes_delivered, 42);
+        assert!(reports[0].finished_at >= socket_finished);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn caller_version_and_ingress_timestamp_survive_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+        let dispatcher = Arc::new(CapturingDispatcher::default());
+        let started = std::time::Instant::now();
+        let response = test_app(dispatcher.clone())
+            .oneshot(
+                Request::post("/v1/messages")
+                    .header("content-type", "application/json")
+                    .header("x-api-key", "platform-secret")
+                    .header("user-agent", "claude-cli/2.1.245 (external, cli)")
+                    .body(Body::from(
+                        r#"{"model":"model-a","max_tokens":32,"messages":[{"role":"user","content":"fixture"}]}"#,
+                    ))?,
+            )
+            .await?;
+        assert_eq!(response.status(), 200);
+        let captured = dispatcher.captured.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(captured[0].client_identity.version.as_deref(), Some("2.1.245"));
+        assert!(captured[0].started_at >= started);
+        Ok(())
+    }
+
     #[async_trait]
     impl MessageDispatcher for CapturingDispatcher {
         async fn dispatch(&self, request: DispatchRequest) -> Result<UpstreamResponse, DispatchError> {
@@ -1271,6 +1594,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("test policy must compile: {error}")),
         );
         let grant = Arc::new(AccessGrant {
+            provider: gateway_domain::Provider::Anthropic,
             owner_user_id: gateway_domain::UserId::new("user-1").unwrap_or_else(|error| panic!("id: {error}")),
             platform_key_id: gateway_domain::PlatformKeyId::new("key-1").unwrap_or_else(|error| panic!("id: {error}")),
             group_id: gateway_domain::GroupId::new("group-1").unwrap_or_else(|error| panic!("id: {error}")),
@@ -1303,7 +1627,6 @@ mod tests {
             database_schema_ready: true,
             bootstrap_ready: true,
             business_key_provider_ready: true,
-            audit_integrity_ready: true,
             active_configuration_ready: true,
             transport_core_ready: true,
             required_bundles_ready: true,
@@ -1317,11 +1640,15 @@ mod tests {
             access,
             Arc::new(StaticModelCatalog::new(vec![
                 ModelRecord {
+                    provider: gateway_domain::Provider::Anthropic,
+                    openai_metadata: None,
                     id: Box::from("model-a"),
                     display_name: Box::from("Model A"),
                     created_at: Box::from("2026-08-24T00:00:00Z"),
                 },
                 ModelRecord {
+                    provider: gateway_domain::Provider::Anthropic,
+                    openai_metadata: None,
                     id: Box::from("model-b"),
                     display_name: Box::from("Model B"),
                     created_at: Box::from("2026-08-24T00:00:00Z"),
@@ -1431,6 +1758,20 @@ mod tests {
         let debug = format!("{:?}", captured[0]);
         assert!(!debug.contains("platform-secret"));
         assert!(!debug.contains("identity-canary"));
+        let headers = captured[0].original_headers.as_ref().ok_or("missing ingress headers")?;
+        assert!(
+            headers
+                .entries
+                .iter()
+                .any(|h| h.name == "user-agent" && h.value == "identity-canary")
+        );
+        assert!(
+            headers
+                .entries
+                .iter()
+                .filter(|h| h.name == "authorization" || h.name == "x-api-key")
+                .all(|h| h.redacted && h.value == "[REDACTED]")
+        );
         Ok(())
     }
 

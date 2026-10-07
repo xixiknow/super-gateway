@@ -10,7 +10,7 @@
   "testkit_abi_version": "gateway-testkit-r1-v1",
   "schema_compatibility": {
     "minimum": 20260824000100,
-    "maximum": 20260907000100
+    "maximum": 20261004000100
   },
   "cargo_lock_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "contract_tree_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -64,7 +64,18 @@
     "20260904000200_t4_multi_os.sql": "5f60eb1c1f23be661e9d83ea2eb33076dc5d497325f5ff6764f66041fb19caae",
     "20260904000300_t6_body_capture.sql": "3f71f7779d989df382a8aa7bcd49941c69bb5dae666b2f9700310d0c054956b4",
     "20260904000400_price_sync.sql": "9f496b5c89eb61158c1b2836226afe2203ccf5fa435c39972ab51c2e8bb73ac4",
-    "20260907000100_t6_retire_content_audit.sql": "243ecb791aaf8a75b450377870b61fce60ad780080ed4a37a96672ed14cc3fbc"
+    "20260907000100_t6_retire_content_audit.sql": "243ecb791aaf8a75b450377870b61fce60ad780080ed4a37a96672ed14cc3fbc",
+    "20260920000100_openai_provider.sql": "5ad4231f6b9e7cb7302212b3bd0fd0ea294acdba07136f3f96d94b8299a37739",
+    "20260920000200_openai_runtime.sql": "03c9136bca6f292633761418edf5db9912acfb94d2ff7aea99f418a00b7cb189",
+    "20260920000300_openai_oauth.sql": "4a57c6f7a3caeeb419724994cb743c88ecc6fd121a606fb4338c0930c8ff6ccb",
+    "20260920000400_openai_catalog.sql": "60b39e59cf6829b5ce8a2c3fd198b8bab53e26eca55231f69d74dcd05168fdfb",
+    "20260920000500_openai_oauth_checkpoint.sql": "249c9f7f95013531c25096fa01e93ba977ade25f971ecfe91de54e7f4450f0d4",
+    "20260920000600_openai_session_identity.sql": "f6d923ef5cf8617a6046458d7aec8dc91b1858267e1d5609ad98ce5587cc63a1",
+    "20260929000100_group_owner_lease_hot_update.sql": "d66f46b99d7ef58a8133da37f7935fb55dc780c5e4b835c498a12fd7b2ff1b23",
+    "20260929000200_request_reasoning_effort.sql": "aa4af13ff7bca4ee04ccda8bc080c466fecd0b164e347cc9fb8b251c23eed54c",
+    "20260929000300_request_headers.sql": "500b5e7007c9eadc12a43f133a5b01764ce5ebd73d0845233d393eee3568b661",
+    "20260929000400_request_metrics.sql": "4e75dbfe2c13b67565f23828c04d863d448778c45ce2dbae0686240769ca4ab1",
+    "20261004000100_account_error_state.sql": "8786c2342c1d4144ed307289fdf28e5fb6d85431c680fbbd7dc41c74ab8f1a8c"
   },
   "artifacts": [
     {

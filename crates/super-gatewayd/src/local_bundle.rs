@@ -523,3 +523,34 @@ fn decode_hex(value: &str) -> anyhow::Result<Vec<u8>> {
         .map(|index| u8::from_str_radix(&value[index..index + 2], 16).context("hex value contains invalid digits"))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The committed built-in Bundle must always verify against the current
+    /// envelope constants, trust store and runtime gates. A mismatch here means
+    /// the asset drifted from the verifier (schema bump, template edit, trust
+    /// change) and would fail at startup — re-sign it with the
+    /// `resign_builtin_bundle` example instead of shipping the drift.
+    #[test]
+    fn builtin_bundle_verifies_against_current_verifier() -> anyhow::Result<()> {
+        let trust_store: BundleTrustStore = serde_json::from_slice(BUILTIN_TRUST_STORE_BYTES)?;
+        let context = BundleLoadContext {
+            engine_abi_version: "1.0".into(),
+            engine_build: env!("CARGO_PKG_VERSION").into(),
+            target: BUILTIN_TARGET.into(),
+            supported_capabilities: BTreeSet::from(["tls_client_hello".into(), "ordered_http1".into()]),
+            now_unix_seconds: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            for_new_activation: true,
+        };
+        let verified = SignedBundleEnvelope::verify_json(BUILTIN_BUNDLE_BYTES, &trust_store, &context)
+            .map_err(|error| anyhow::anyhow!("built-in Bundle verification failed: {error}"))?;
+        ensure!(verified.payload.schema_version.as_ref() == gateway_transport::current_payload_schema_version());
+        ensure!(verified.payload.source_archetype_version_id.as_ref() == BUILTIN_ARCHETYPE_VERSION_ID);
+        ensure!(verified.payload.capture_cohort.as_ref() == BUILTIN_CAPTURE_COHORT);
+        Ok(())
+    }
+}

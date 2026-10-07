@@ -100,13 +100,6 @@
       "explicit_role": ""
     },
     {
-      "method": "get",
-      "path": "/admin/v1/audit-events",
-      "description": "全局管理审计；Key Owner 自动限定本人范围",
-      "tag": "告警、通知与运维",
-      "explicit_role": ""
-    },
-    {
       "method": "post",
       "path": "/admin/v1/auth/login",
       "description": "用户名和密码登录",
@@ -324,6 +317,13 @@
       "explicit_role": ""
     },
     {
+      "method": "get",
+      "path": "/admin/v1/credentials/{id}/usage",
+      "description": "按凭证聚合的用量概览、按日历史与按模型分解",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
       "method": "post",
       "path": "/admin/v1/credentials/{id}:archive",
       "description": "归档",
@@ -340,7 +340,7 @@
     {
       "method": "post",
       "path": "/admin/v1/credentials/{id}:clear-cooldown",
-      "description": "明确清除 cooldown",
+      "description": "明确清除 cooldown，含账号级拒绝 blocked 恢复与 last_error 清除",
       "tag": "Credential Enrollment 与生命周期",
       "explicit_role": ""
     },
@@ -362,6 +362,13 @@
       "method": "post",
       "path": "/admin/v1/credentials/{id}:migrate-profile-cohort",
       "description": "迁移 Archetype 版本",
+      "tag": "Credential Enrollment 与生命周期",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/credentials/{id}:probe-usage",
+      "description": "主动探测 OAuth 账号官方 5h/7d 用量窗口并按观测落库",
       "tag": "Credential Enrollment 与生命周期",
       "explicit_role": ""
     },
@@ -583,6 +590,20 @@
       "explicit_role": ""
     },
     {
+      "method": "get",
+      "path": "/admin/v1/groups/{id}/openai-policy",
+      "description": "OpenAI 分组推理强度上限与超限行为，使用分组修订号",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "put",
+      "path": "/admin/v1/groups/{id}/openai-policy",
+      "description": "OpenAI 分组推理强度上限与超限行为，使用分组修订号",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
       "method": "post",
       "path": "/admin/v1/groups/{id}:archive",
       "description": "归档",
@@ -692,6 +713,62 @@
       "path": "/admin/v1/notifications:read-all",
       "description": "当前用户全部已读",
       "tag": "告警、通知与运维",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/openai/accounts",
+      "description": "OpenAI 账号列表和加密导入，导入后默认停用",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/openai/accounts",
+      "description": "OpenAI 账号列表和加密导入，导入后默认停用",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "patch",
+      "path": "/admin/v1/openai/accounts/{id}",
+      "description": "更新账号名称、启停、并发、优先级、模型和 WebSocket 设置；启用需连接验证",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/openai/accounts/{id}/usage",
+      "description": "按账号聚合的用量概览、按日历史与按模型分解",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/openai/accounts/{id}:refresh",
+      "description": "立即刷新 OAuth 令牌，单账号互斥",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/openai/accounts/{id}:test",
+      "description": "固定出口连接验证，订阅账号身份和额度快照核验，结果按修订号提交",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/openai/oauth-sessions",
+      "description": "开始 OpenAI PKCE 浏览器授权",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "post",
+      "path": "/admin/v1/openai/oauth-sessions/{id}:complete",
+      "description": "提交授权回调 code 与 state，单次兑换并加密导入",
+      "tag": "查询",
       "explicit_role": ""
     },
     {
@@ -885,13 +962,6 @@
     },
     {
       "method": "get",
-      "path": "/admin/v1/platform-keys/{id}/audit-events",
-      "description": "Key 范围审计",
-      "tag": "路径",
-      "explicit_role": ""
-    },
-    {
-      "method": "get",
       "path": "/admin/v1/platform-keys/{id}/client-config",
       "description": "生成不含 secret 的客户端配置模板",
       "tag": "路径",
@@ -1054,7 +1124,14 @@
     {
       "method": "get",
       "path": "/admin/v1/requests/{id}/body",
-      "description": "请求三阶段正文与上游响应正文",
+      "description": "请求三阶段正文、上游响应正文，以及原始入站/最终上行/上游响应三组脱敏 Header",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/requests/{id}/preview",
+      "description": "基于已采集正文的无凭据重组预览，返回单对象，不发送上游请求",
       "tag": "查询",
       "explicit_role": ""
     },
@@ -1104,6 +1181,20 @@
       "method": "put",
       "path": "/admin/v1/settings/body-capture",
       "description": "更新正文采集设置",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/settings/openai",
+      "description": "OpenAI 全局设置，更新需 If-Match",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "put",
+      "path": "/admin/v1/settings/openai",
+      "description": "OpenAI 全局设置，更新需 If-Match",
       "tag": "查询",
       "explicit_role": ""
     },
@@ -1174,6 +1265,13 @@
       "method": "get",
       "path": "/admin/v1/usage/timeseries",
       "description": "使用量与估算成本时序",
+      "tag": "查询",
+      "explicit_role": ""
+    },
+    {
+      "method": "get",
+      "path": "/admin/v1/usage/today-by-credential",
+      "description": "当日按 Credential 聚合的请求、token 与估算成本",
       "tag": "查询",
       "explicit_role": ""
     },

@@ -114,6 +114,8 @@ pub enum ManagementBackendError {
     NotFound,
     #[error("management precondition failed")]
     Precondition,
+    #[error("platform key name already exists")]
+    PlatformKeyNameConflict,
     #[error("management input is invalid")]
     InvalidInput,
     #[error("management dependency is unavailable")]
@@ -463,6 +465,11 @@ fn backend_error_response(error: ManagementBackendError) -> Response {
         ManagementBackendError::Precondition => {
             error_response(StatusCode::CONFLICT, "conflict_error", "Resource revision conflict.")
         }
+        ManagementBackendError::PlatformKeyNameConflict => error_response(
+            StatusCode::CONFLICT,
+            "platform_key_name_conflict",
+            "Platform key name already exists. Choose another name.",
+        ),
         ManagementBackendError::InvalidInput => error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_request_error",
@@ -707,6 +714,20 @@ mod tests {
     #[derive(Debug, Default)]
     struct FixtureBackend;
 
+    #[tokio::test]
+    async fn platform_key_name_conflict_has_actionable_error_code() -> Result<(), Box<dyn std::error::Error>> {
+        let response = super::backend_error_response(ManagementBackendError::PlatformKeyNameConflict);
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = response.into_body().collect().await?.to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(body["error"]["code"], "platform_key_name_conflict");
+        assert_eq!(
+            body["error"]["message"],
+            "Platform key name already exists. Choose another name."
+        );
+        Ok(())
+    }
+
     #[async_trait]
     impl ManagementBackend for FixtureBackend {
         async fn resolve_session(
@@ -748,9 +769,9 @@ mod tests {
     }
 
     #[test]
-    fn embedded_contract_contains_exactly_178_operations() -> Result<(), Box<dyn std::error::Error>> {
+    fn embedded_contract_contains_exactly_192_operations() -> Result<(), Box<dyn std::error::Error>> {
         let state = ManagementState::new(Arc::new(FixtureBackend))?;
-        assert_eq!(state.operation_count(), 178);
+        assert_eq!(state.operation_count(), 192);
         let contract = state.contract;
         let (_, parameters) = contract
             .resolve(&http::Method::POST, "/admin/v1/credentials/credential-7:begin-recovery")
@@ -804,6 +825,24 @@ mod tests {
         assert_eq!(accepted.status(), StatusCode::OK);
         let body = accepted.into_body().collect().await?.to_bytes();
         assert!(String::from_utf8_lossy(&body).contains("postUsersByIdDisable"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn preview_route_reaches_backend_as_a_single_object() -> Result<(), Box<dyn std::error::Error>> {
+        let app = management_router(ManagementState::new(Arc::new(FixtureBackend))?);
+        let response = app
+            .oneshot(
+                Request::get("/admin/v1/requests/01a0ed35-2732-7fa1-8de9-b8995ee07426/preview")
+                    .header("cookie", "gateway_admin_session=session-admin")
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await?.to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["data"]["operation_id"], "getRequestsByIdPreview");
+        assert!(payload.get("page").is_none());
         Ok(())
     }
 

@@ -7,6 +7,7 @@ mod egress_rebind;
 mod export;
 mod group_migration;
 mod model_discovery;
+mod openai;
 mod postgres;
 mod proxy;
 mod telemetry;
@@ -26,10 +27,11 @@ pub use egress_rebind::EgressRebindCommit;
 pub use export::{UsageExportArtifactCommit, UsageExportDataRow, UsageExportDownload, UsageExportWork};
 pub use group_migration::{CredentialGroupMigrationCommit, CredentialGroupMigrationWork};
 pub use model_discovery::{DiscoveredCapabilityCandidate, DiscoveredModel, ModelDiscoveryCommit, ModelDiscoverySource};
+pub use openai::OpenAiRefreshCommit;
 pub use postgres::{
-    AuditOutboxRecord, AuditVerificationReport, BootstrapAdminRecord, BootstrapOutcome, CURRENT_SCHEMA_VERSION,
-    GroupOwnerClaim, JobLease, MINIMUM_SCHEMA_VERSION, MigrationReport, OutboxLease, PgStorage, RuntimeRolePolicy,
-    SchedulerResourceEventRecord, SecretRewrapCandidate, embedded_migration_count,
+    BootstrapAdminRecord, BootstrapOutcome, CURRENT_SCHEMA_VERSION, GroupOwnerClaim, JobLease, MINIMUM_SCHEMA_VERSION,
+    MigrationReport, OutboxLease, PgStorage, RuntimeRolePolicy, SchedulerResourceEventRecord, SecretRewrapCandidate,
+    embedded_migration_count,
 };
 pub use proxy::ProxyProbeCommit;
 pub use telemetry::{

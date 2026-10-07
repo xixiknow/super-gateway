@@ -7,13 +7,13 @@
 )]
 
 use std::{
+    borrow::Cow,
     str::FromStr,
     sync::atomic::{AtomicU8, Ordering},
     time::Duration,
 };
 
 use gateway_domain::{SecretBytes, SecretValue};
-use hmac::{Hmac, Mac as _};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
@@ -30,14 +30,40 @@ use crate::{StorageError, StorageHealth, StorageState};
 /// First schema version accepted by this binary.
 pub const MINIMUM_SCHEMA_VERSION: i64 = 20_260_824_000_100;
 /// Latest schema version understood by this binary.
-pub const CURRENT_SCHEMA_VERSION: i64 = 20_260_907_000_100;
+pub const CURRENT_SCHEMA_VERSION: i64 = 20_260_929_000_400;
 const BOOTSTRAP_ADVISORY_LOCK: i64 = 0x4757_4254_5354_5250;
 const BUSINESS_KEY_ADVISORY_LOCK: i64 = 0x4757_4255_534b_4559;
-const AUDIT_SEAL_ADVISORY_LOCK: i64 = 0x4757_4155_4453_454c;
-const DELETION_LEDGER_ADVISORY_LOCK: i64 = 0x4757_4445_4c4c_4544;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
-type HmacSha256 = Hmac<Sha256>;
+
+// Keep released migration checksums stable for databases which already applied them.
+// SQLx executes this compatibility wrapper, the original SQL and its history insert
+// in one transaction under its migration lock. Failure rolls back the trigger DDL too.
+//
+// Version 20_260_901_000_100 backfills a NOT NULL column into an existing table.
+// That migration was written before the immutable-content trigger was added, so it
+// fails on a live database because the trigger fires on the UPDATE used by the backfill.
+// Rather than re-checksum the already-shipped migration (which would break databases
+// that applied it before this wrapper existed), we wrap it: disable the trigger, run
+// the original SQL unchanged, then re-enable. The wrapper runs inside SQLx's own
+// migration transaction, so any failure rolls back the trigger DDL change as well.
+// Only this one version needs the workaround; future migrations should avoid the
+// pattern by using a deferred constraint or a separate migration step.
+fn upgrade_migrator() -> sqlx::migrate::Migrator {
+    let mut migrator = sqlx::migrate!();
+    let migrations = migrator.migrations.to_mut();
+    for migration in migrations {
+        if migration.version == 20_260_901_000_100 {
+            migration.sql = Cow::Owned(format!(
+                "SET CONSTRAINTS ALL IMMEDIATE;\n\
+                 ALTER TABLE gateway.group_config DISABLE TRIGGER group_config_content_immutable;\n{}\n\
+                 ALTER TABLE gateway.group_config ENABLE TRIGGER group_config_content_immutable;",
+                migration.sql
+            ));
+        }
+    }
+    migrator
+}
 
 /// Number of migrations embedded in this exact binary.
 #[must_use]
@@ -99,44 +125,6 @@ pub struct SchedulerResourceEventRecord {
     pub event_sequence: i64,
     /// Optional terminal/release reason.
     pub release_reason_code: Option<String>,
-}
-
-/// Redacted management/security event committed with its durable Outbox message.
-#[derive(Clone, Debug)]
-pub struct AuditOutboxRecord {
-    /// Actor class from the fixed audit vocabulary.
-    pub actor_type: String,
-    /// Authenticated actor when one exists.
-    pub actor_id: Option<Uuid>,
-    /// Stable redacted action code.
-    pub action: String,
-    /// Aggregate class.
-    pub object_type: String,
-    /// Display-safe aggregate identity.
-    pub object_id: Option<String>,
-    /// `success`, `denied`, or `failed`.
-    pub outcome: String,
-    /// Secret-free canonical event facts.
-    pub redacted_detail: serde_json::Value,
-    /// Durable consumer topic.
-    pub topic: String,
-    /// UUID aggregate identity required by Outbox fencing.
-    pub aggregate_id: Uuid,
-    /// Aggregate revision bound to this event.
-    pub aggregate_revision: i64,
-    /// Secret-free consumer payload.
-    pub payload: serde_json::Value,
-}
-
-/// Cold-start integrity verification summary.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuditVerificationReport {
-    /// Verified append-only Audit events.
-    pub audit_event_count: u64,
-    /// Verified completed-day seals.
-    pub daily_seal_count: u64,
-    /// Verified Deletion Ledger entries.
-    pub deletion_ledger_count: u64,
 }
 
 /// Already-hashed administrator material passed into the atomic bootstrap transaction.
@@ -242,7 +230,7 @@ impl PgStorage {
             .connect_with(options)
             .await
             .map_err(|_| StorageError::ConnectionFailed)?;
-        MIGRATOR.run(&pool).await.map_err(|error| {
+        upgrade_migrator().run(&pool).await.map_err(|error| {
             tracing::error!(error = %error, "database migration failed");
             StorageError::MigrationFailed
         })?;
@@ -286,6 +274,29 @@ impl PgStorage {
             .collect()
     }
 
+    /// Flip a transport bundle into runtime quarantine: only the orthogonal
+    /// `runtime_state_code` dial moves, so the R6 lifecycle CHECK (which forbids a
+    /// `quarantined` lifecycle value) is never violated. Returns the bundle's
+    /// `artifact_version` when the state transition happened, `None` when the bundle
+    /// was already quarantined.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sanitized storage error when the quarantine update cannot be applied.
+    pub async fn quarantine_transport_bundle_runtime(
+        executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+        bundle_id: Uuid,
+    ) -> Result<Option<i64>, StorageError> {
+        sqlx::query_scalar(
+            "UPDATE catalog.transport_bundle SET runtime_state_code='quarantined' \
+             WHERE id=$1 AND runtime_state_code<>'quarantined' RETURNING artifact_version",
+        )
+        .bind(bundle_id)
+        .fetch_optional(executor)
+        .await
+        .map_err(|_| StorageError::TransactionFailed)
+    }
+
     /// Verify `SQLx` migration success/count/range without performing DDL.
     pub async fn validate_schema(&self) -> Result<MigrationReport, StorageError> {
         validate_embedded_migration_checksums(&self.pool).await?;
@@ -322,7 +333,6 @@ impl PgStorage {
         }
         let candidate = candidate.ok_or(StorageError::BootstrapRequired)?;
         insert_bootstrap_admin(&mut transaction, &candidate).await?;
-        append_bootstrap_audit_and_outbox(&mut transaction, &candidate).await?;
         transaction
             .commit()
             .await
@@ -466,8 +476,7 @@ impl PgStorage {
     }
 
     /// Restore-gated, generation-fenced Business Key retirement or destruction.
-    /// The key mutation, Deletion Ledger, Audit/Outbox and Job terminal state
-    /// commit atomically.
+    /// The key mutation and Job terminal state commit atomically.
     #[allow(clippy::too_many_arguments)]
     pub async fn complete_database_business_key_lifecycle(
         &self,
@@ -510,7 +519,7 @@ impl PgStorage {
             .execute(&mut *transaction)
             .await
             .map_err(transaction_error)?;
-        let checksum: Vec<u8> = sqlx::query_scalar(
+        let _checksum: Vec<u8> = sqlx::query_scalar(
             "SELECT target.checksum \
              FROM security.business_key_material target \
              JOIN ops.durable_job rotation ON rotation.id=$3 \
@@ -555,20 +564,7 @@ impl PgStorage {
         if references != 0 {
             return Err(StorageError::InvalidLifecycle);
         }
-        let checksum_array: [u8; 32] = checksum
-            .as_slice()
-            .try_into()
-            .map_err(|_| StorageError::IntegrityViolation)?;
         if target_state == "destroyed" {
-            self.append_deletion_ledger_in(
-                &mut transaction,
-                "business_key_material",
-                &format!("database:{key_version}"),
-                &checksum_array,
-                "key_destroyed",
-                &json!({"job_id":job_id,"backup_run_id":backup_run_id,"restore_drill_id":restore_drill_id}),
-            )
-            .await?;
             sqlx::query(
                 "UPDATE security.business_key_material SET state_code='destroyed',key_material=NULL, \
                    destroyed_at=clock_timestamp() \
@@ -588,29 +584,6 @@ impl PgStorage {
             .await
             .map_err(transaction_error)?;
         }
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &AuditOutboxRecord {
-                actor_type: "system".to_owned(),
-                actor_id: None,
-                action: format!("business_key_{target_state}"),
-                object_type: "business_key_material".to_owned(),
-                object_id: Some(format!("database:{key_version}")),
-                outcome: "success".to_owned(),
-                redacted_detail: json!({
-                    "provider":"database","key_version":key_version,"target_state":target_state,
-                    "job_id":job_id,"backup_run_id":backup_run_id,"restore_drill_id":restore_drill_id
-                }),
-                topic: "security.business_key.lifecycle_completed".to_owned(),
-                aggregate_id: job_id,
-                aggregate_revision: generation,
-                payload: json!({
-                    "provider":"database","key_version":key_version,"target_state":target_state,
-                    "job_id":job_id
-                }),
-            },
-        )
-        .await?;
         let completed = sqlx::query(
             "UPDATE ops.durable_job SET state_code='succeeded',lease_owner=NULL,lease_expires_at=NULL, \
                checkpoint=jsonb_build_object('schema_version',1,'phase','complete','target_state',$3), \
@@ -640,222 +613,6 @@ impl PgStorage {
         .await
         .map_err(transaction_error)?;
         transaction.commit().await.map_err(transaction_error)
-    }
-
-    /// Verify Audit event hashes, chain heads, daily seals and Deletion Ledger continuity.
-    pub async fn verify_audit_integrity(
-        &self,
-        integrity_key: &SecretValue,
-    ) -> Result<AuditVerificationReport, StorageError> {
-        verify_audit_integrity(&self.pool, integrity_key).await
-    }
-
-    /// Seal one completed UTC audit day; an existing seal is immutable.
-    pub async fn seal_audit_day(&self, integrity_key: &SecretValue, day: &str) -> Result<(), StorageError> {
-        let mut transaction = self.pool.begin().await.map_err(|_| StorageError::TransactionFailed)?;
-        sqlx::query("SELECT pg_advisory_xact_lock($1)")
-            .bind(AUDIT_SEAL_ADVISORY_LOCK)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|_| StorageError::TransactionFailed)?;
-        let is_completed: bool = sqlx::query_scalar("SELECT $1::date < CURRENT_DATE")
-            .bind(day)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(|_| StorageError::TransactionFailed)?;
-        if !is_completed {
-            return Err(StorageError::TransactionFailed);
-        }
-        let already_sealed: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM security.audit_daily_seal WHERE event_day=$1::date)")
-                .bind(day)
-                .fetch_one(&mut *transaction)
-                .await
-                .map_err(|_| StorageError::TransactionFailed)?;
-        if already_sealed {
-            transaction
-                .commit()
-                .await
-                .map_err(|_| StorageError::TransactionFailed)?;
-            return Ok(());
-        }
-        let row = sqlx::query(
-            "SELECT h.event_count,e.event_hash AS first_event_hash,h.last_event_hash \
-             FROM security.audit_chain_head h \
-             JOIN LATERAL (SELECT event_hash FROM security.audit_event WHERE event_day=h.event_day ORDER BY daily_sequence LIMIT 1) e ON true \
-             WHERE h.event_day=$1::date FOR UPDATE OF h",
-        )
-        .bind(day)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?;
-        let count: i64 = row
-            .try_get("event_count")
-            .map_err(|_| StorageError::TransactionFailed)?;
-        let first: Vec<u8> = row
-            .try_get("first_event_hash")
-            .map_err(|_| StorageError::TransactionFailed)?;
-        let last: Vec<u8> = row
-            .try_get("last_event_hash")
-            .map_err(|_| StorageError::TransactionFailed)?;
-        let previous: Option<Vec<u8>> = sqlx::query_scalar(
-            "SELECT seal_digest FROM security.audit_daily_seal WHERE event_day < $1::date ORDER BY event_day DESC LIMIT 1",
-        )
-        .bind(day)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?;
-        let seal = audit_daily_seal(
-            integrity_key.expose().as_bytes(),
-            day,
-            count,
-            &first,
-            &last,
-            previous.as_deref(),
-        )?;
-        sqlx::query(
-            "INSERT INTO security.audit_daily_seal \
-             (event_day,event_count,first_event_hash,last_event_hash,previous_day_seal_digest,seal_digest,integrity_key_version,sealed_at) \
-             VALUES ($1::date,$2,$3,$4,$5,$6,1,clock_timestamp())",
-        )
-        .bind(day)
-        .bind(count)
-        .bind(&first)
-        .bind(&last)
-        .bind(previous)
-        .bind(seal.as_slice())
-        .execute(&mut *transaction)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?;
-        transaction.commit().await.map_err(|_| StorageError::TransactionFailed)
-    }
-
-    /// Catch up every completed, unsealed UTC day oldest-first before running
-    /// the integrity verifier. Returns the number of newly considered days.
-    pub async fn seal_completed_audit_days(&self, integrity_key: &SecretValue) -> Result<usize, StorageError> {
-        let days = sqlx::query_scalar::<_, String>(
-            "SELECT h.event_day::text FROM security.audit_chain_head h \
-             LEFT JOIN security.audit_daily_seal s ON s.event_day=h.event_day \
-             WHERE h.event_day<CURRENT_DATE AND s.event_day IS NULL ORDER BY h.event_day",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?;
-        for day in &days {
-            self.seal_audit_day(integrity_key, day).await?;
-        }
-        Ok(days.len())
-    }
-
-    /// Append one immutable Deletion Ledger fact under a global chain lock.
-    pub async fn append_deletion_ledger(
-        &self,
-        object_type: &str,
-        object_id: &str,
-        object_digest: &[u8; 32],
-        action: &str,
-        metadata: &serde_json::Value,
-    ) -> Result<i64, StorageError> {
-        let mut transaction = self.pool.begin().await.map_err(|_| StorageError::TransactionFailed)?;
-        let sequence = self
-            .append_deletion_ledger_in(
-                &mut transaction,
-                object_type,
-                object_id,
-                object_digest,
-                action,
-                metadata,
-            )
-            .await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|_| StorageError::TransactionFailed)?;
-        Ok(sequence)
-    }
-
-    /// Append a Deletion Ledger fact inside the caller's object-state transaction.
-    pub async fn append_deletion_ledger_in(
-        &self,
-        transaction: &mut Transaction<'_, Postgres>,
-        object_type: &str,
-        object_id: &str,
-        object_digest: &[u8; 32],
-        action: &str,
-        metadata: &serde_json::Value,
-    ) -> Result<i64, StorageError> {
-        if !matches!(
-            action,
-            "scheduled" | "key_destroyed" | "object_deleted" | "verified_absent" | "restored_object_deleted"
-        ) {
-            return Err(StorageError::TransactionFailed);
-        }
-        let canonical_metadata = canonical_json_bytes(metadata)?;
-        sqlx::query("SELECT pg_advisory_xact_lock($1)")
-            .bind(DELETION_LEDGER_ADVISORY_LOCK)
-            .execute(&mut **transaction)
-            .await
-            .map_err(|_| StorageError::TransactionFailed)?;
-        if let Some(existing) = sqlx::query(
-            "SELECT ledger_sequence,object_digest FROM security.deletion_ledger \
-             WHERE object_type_code=$1 AND object_id=$2 AND action_code=$3",
-        )
-        .bind(object_type)
-        .bind(object_id)
-        .bind(action)
-        .fetch_optional(&mut **transaction)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?
-        {
-            let existing_digest: Vec<u8> = existing
-                .try_get("object_digest")
-                .map_err(|_| StorageError::TransactionFailed)?;
-            if existing_digest.as_slice() != object_digest {
-                return Err(StorageError::IntegrityViolation);
-            }
-            return existing
-                .try_get("ledger_sequence")
-                .map_err(|_| StorageError::TransactionFailed);
-        }
-        let previous: Option<Vec<u8>> = sqlx::query_scalar(
-            "SELECT entry_hash FROM security.deletion_ledger ORDER BY ledger_sequence DESC LIMIT 1 FOR UPDATE",
-        )
-        .fetch_optional(&mut **transaction)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?;
-        let sequence: i64 = sqlx::query_scalar(
-            "SELECT nextval(pg_get_serial_sequence('security.deletion_ledger','ledger_sequence'))::bigint",
-        )
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?;
-        let entry_hash = deletion_ledger_hash(
-            sequence,
-            object_type,
-            object_id,
-            object_digest,
-            action,
-            previous.as_deref(),
-            &canonical_metadata,
-        );
-        sqlx::query(
-            "INSERT INTO security.deletion_ledger \
-             (ledger_sequence,entry_id,object_type_code,object_id,object_digest,action_code,previous_hash,entry_hash,occurred_at,metadata) \
-             OVERRIDING SYSTEM VALUE VALUES ($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp(),$9)",
-        )
-        .bind(sequence)
-        .bind(Uuid::now_v7())
-        .bind(object_type)
-        .bind(object_id)
-        .bind(object_digest.as_slice())
-        .bind(action)
-        .bind(previous)
-        .bind(entry_hash.as_slice())
-        .bind(metadata)
-        .execute(&mut **transaction)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?;
-        Ok(sequence)
     }
 
     /// Bind one Credential to a Proxy using the frozen Credential → Egress → Proxy lock order.
@@ -1075,24 +832,51 @@ impl PgStorage {
     }
 
     /// Renew the exact owner generation. A stale process receives a revision conflict.
+    ///
+    /// The lease column is the only write. `updated_at` stays put so a heartbeat is
+    /// not a group edit, and `lock_timeout` keeps a busy group row from pinning a
+    /// pooled connection behind a management transaction.
     pub async fn heartbeat_group_owner(
         &self,
         group_id: Uuid,
         executor_id: &str,
         owner_generation: i64,
     ) -> Result<(), StorageError> {
+        let mut transaction = self.pool.begin().await.map_err(|_| StorageError::TransactionFailed)?;
+        if let Err(error) = sqlx::query("SET LOCAL lock_timeout = '250ms'")
+            .execute(&mut *transaction)
+            .await
+        {
+            let _ = transaction.rollback().await;
+            return Err(transaction_error(error));
+        }
         let affected = sqlx::query(
             "UPDATE gateway.credential_group \
-             SET owner_lease_expires_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp() \
+             SET owner_lease_expires_at=clock_timestamp()+interval '30 seconds' \
              WHERE id=$1 AND owner_executor_id=$2 AND owner_generation=$3 AND status_code='active'",
         )
         .bind(group_id)
         .bind(executor_id)
         .bind(owner_generation)
-        .execute(&self.pool)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?
-        .rows_affected();
+        .execute(&mut *transaction)
+        .await;
+        let affected = match affected {
+            Ok(result) => result.rows_affected(),
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                // 55P03: the group row is locked by a management transaction. Retry
+                // on the next interval instead of treating the wait as a failure.
+                let locked = error
+                    .as_database_error()
+                    .and_then(sqlx::error::DatabaseError::code)
+                    .is_some_and(|code| code == "55P03");
+                if locked {
+                    return Err(StorageError::TransactionFailed);
+                }
+                return Err(transaction_error(error));
+            }
+        };
+        transaction.commit().await.map_err(transaction_error)?;
         if affected != 1 {
             return Err(StorageError::RevisionConflict);
         }
@@ -1169,26 +953,7 @@ impl PgStorage {
         Ok(())
     }
 
-    /// Append one hash-chained Audit event and its at-least-once Outbox message in
-    /// the caller's existing business transaction.
-    pub async fn append_audit_outbox_in(
-        &self,
-        transaction: &mut Transaction<'_, Postgres>,
-        record: &AuditOutboxRecord,
-    ) -> Result<Uuid, StorageError> {
-        append_audit_outbox(transaction, record).await
-    }
-
-    /// Append one standalone hash-chained Audit event and Outbox message.
-    pub async fn append_audit_outbox(&self, record: &AuditOutboxRecord) -> Result<Uuid, StorageError> {
-        let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
-        let event_id = append_audit_outbox(&mut transaction, record).await?;
-        transaction.commit().await.map_err(transaction_error)?;
-        Ok(event_id)
-    }
-
-    /// Mark active platform keys whose configured expiration has passed and
-    /// append one immutable audit event for every transition.
+    /// Mark active platform keys whose configured expiration has passed.
     pub async fn expire_platform_keys(&self, limit: i64) -> Result<u64, StorageError> {
         if limit < 1 {
             return Ok(0);
@@ -1205,27 +970,6 @@ impl PgStorage {
         .fetch_all(&mut *transaction)
         .await
         .map_err(transaction_error)?;
-        for row in &rows {
-            let key_id: Uuid = row.try_get("id").map_err(transaction_error)?;
-            let revision: i64 = row.try_get("revision").map_err(transaction_error)?;
-            self.append_audit_outbox_in(
-                &mut transaction,
-                &AuditOutboxRecord {
-                    actor_type: "system".to_owned(),
-                    actor_id: None,
-                    action: "platform_key_expired".to_owned(),
-                    object_type: "platform_key".to_owned(),
-                    object_id: Some(key_id.to_string()),
-                    outcome: "success".to_owned(),
-                    redacted_detail: json!({"reason":"expires_at_reached"}),
-                    topic: "platform_key.expired".to_owned(),
-                    aggregate_id: key_id,
-                    aggregate_revision: revision,
-                    payload: json!({"object_id":key_id,"revision":revision,"status":"expired"}),
-                },
-            )
-            .await?;
-        }
         transaction.commit().await.map_err(transaction_error)?;
         u64::try_from(rows.len()).map_err(|_| StorageError::TransactionFailed)
     }
@@ -2004,197 +1748,6 @@ impl StorageHealth for PgStorage {
     }
 }
 
-async fn verify_audit_integrity(
-    pool: &PgPool,
-    integrity_key: &SecretValue,
-) -> Result<AuditVerificationReport, StorageError> {
-    let events = sqlx::query(
-        "SELECT event_day::text AS event_day,daily_sequence,canonical_redacted_event,previous_hash,event_hash \
-         FROM security.audit_event ORDER BY event_day,daily_sequence",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| StorageError::IntegrityViolation)?;
-    let mut summaries = std::collections::BTreeMap::<String, (i64, Vec<u8>, Vec<u8>)>::new();
-    let mut active_day = String::new();
-    let mut expected_sequence = 0_i64;
-    let mut expected_previous: Option<Vec<u8>> = None;
-    for row in &events {
-        let day: String = row.try_get("event_day").map_err(|_| StorageError::IntegrityViolation)?;
-        if day != active_day {
-            active_day.clone_from(&day);
-            expected_sequence = 0;
-            expected_previous = None;
-        }
-        expected_sequence = expected_sequence
-            .checked_add(1)
-            .ok_or(StorageError::IntegrityViolation)?;
-        let sequence: i64 = row
-            .try_get("daily_sequence")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let previous: Option<Vec<u8>> = row
-            .try_get("previous_hash")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let stored_hash: Vec<u8> = row
-            .try_get("event_hash")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let canonical: serde_json::Value = row
-            .try_get("canonical_redacted_event")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        if sequence != expected_sequence || previous != expected_previous {
-            return Err(StorageError::IntegrityViolation);
-        }
-        let calculated = audit_event_hash(&day, sequence, &canonical_json_bytes(&canonical)?, previous.as_deref());
-        if stored_hash.as_slice() != calculated {
-            return Err(StorageError::IntegrityViolation);
-        }
-        let summary = summaries
-            .entry(day)
-            .or_insert_with(|| (0, stored_hash.clone(), stored_hash.clone()));
-        summary.0 = sequence;
-        summary.2.clone_from(&stored_hash);
-        expected_previous = Some(stored_hash);
-    }
-
-    let heads = sqlx::query(
-        "SELECT event_day::text AS event_day,event_count,last_sequence,last_event_hash \
-         FROM security.audit_chain_head ORDER BY event_day",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| StorageError::IntegrityViolation)?;
-    if heads.len() != summaries.len() {
-        return Err(StorageError::IntegrityViolation);
-    }
-    for row in heads {
-        let day: String = row.try_get("event_day").map_err(|_| StorageError::IntegrityViolation)?;
-        let summary = summaries.get(&day).ok_or(StorageError::IntegrityViolation)?;
-        let count: i64 = row
-            .try_get("event_count")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let sequence: i64 = row
-            .try_get("last_sequence")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let hash: Vec<u8> = row
-            .try_get("last_event_hash")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        if count != summary.0 || sequence != summary.0 || hash != summary.2 {
-            return Err(StorageError::IntegrityViolation);
-        }
-    }
-
-    let seals = sqlx::query(
-        "SELECT event_day::text AS event_day,event_count,first_event_hash,last_event_hash,previous_day_seal_digest,seal_digest \
-         FROM security.audit_daily_seal ORDER BY event_day",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| StorageError::IntegrityViolation)?;
-    let mut previous_seal: Option<Vec<u8>> = None;
-    let mut sealed_days = std::collections::BTreeSet::new();
-    for row in &seals {
-        let day: String = row.try_get("event_day").map_err(|_| StorageError::IntegrityViolation)?;
-        let count: i64 = row
-            .try_get("event_count")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let first: Vec<u8> = row
-            .try_get("first_event_hash")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let last: Vec<u8> = row
-            .try_get("last_event_hash")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let stored_previous: Option<Vec<u8>> = row
-            .try_get("previous_day_seal_digest")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let stored: Vec<u8> = row
-            .try_get("seal_digest")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let summary = summaries.get(&day).ok_or(StorageError::IntegrityViolation)?;
-        if count != summary.0 || first != summary.1 || last != summary.2 || stored_previous != previous_seal {
-            return Err(StorageError::IntegrityViolation);
-        }
-        let calculated = audit_daily_seal(
-            integrity_key.expose().as_bytes(),
-            &day,
-            count,
-            &first,
-            &last,
-            stored_previous.as_deref(),
-        )?;
-        if stored.as_slice() != calculated {
-            return Err(StorageError::IntegrityViolation);
-        }
-        sealed_days.insert(day);
-        previous_seal = Some(stored);
-    }
-    let current_day: String = sqlx::query_scalar("SELECT CURRENT_DATE::text")
-        .fetch_one(pool)
-        .await
-        .map_err(|_| StorageError::IntegrityViolation)?;
-    if summaries
-        .keys()
-        .any(|day| day < &current_day && !sealed_days.contains(day))
-    {
-        return Err(StorageError::IntegrityViolation);
-    }
-
-    let ledger = sqlx::query(
-        "SELECT ledger_sequence,object_type_code,object_id,object_digest,action_code,previous_hash,entry_hash,metadata \
-         FROM security.deletion_ledger ORDER BY ledger_sequence",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| StorageError::IntegrityViolation)?;
-    let mut previous_ledger: Option<Vec<u8>> = None;
-    let mut expected_ledger_sequence = 0_i64;
-    for row in &ledger {
-        expected_ledger_sequence = expected_ledger_sequence
-            .checked_add(1)
-            .ok_or(StorageError::IntegrityViolation)?;
-        let sequence: i64 = row
-            .try_get("ledger_sequence")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let object_type: String = row
-            .try_get("object_type_code")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let object_id: String = row.try_get("object_id").map_err(|_| StorageError::IntegrityViolation)?;
-        let object_digest: Vec<u8> = row
-            .try_get("object_digest")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let action: String = row
-            .try_get("action_code")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let previous: Option<Vec<u8>> = row
-            .try_get("previous_hash")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let stored: Vec<u8> = row
-            .try_get("entry_hash")
-            .map_err(|_| StorageError::IntegrityViolation)?;
-        let metadata: serde_json::Value = row.try_get("metadata").map_err(|_| StorageError::IntegrityViolation)?;
-        if sequence != expected_ledger_sequence || previous != previous_ledger {
-            return Err(StorageError::IntegrityViolation);
-        }
-        let calculated = deletion_ledger_hash(
-            sequence,
-            &object_type,
-            &object_id,
-            &object_digest,
-            &action,
-            previous.as_deref(),
-            &canonical_json_bytes(&metadata)?,
-        );
-        if stored.as_slice() != calculated {
-            return Err(StorageError::IntegrityViolation);
-        }
-        previous_ledger = Some(stored);
-    }
-    Ok(AuditVerificationReport {
-        audit_event_count: events.len() as u64,
-        daily_seal_count: seals.len() as u64,
-        deletion_ledger_count: ledger.len() as u64,
-    })
-}
-
 async fn read_migration_report(pool: &PgPool) -> Result<MigrationReport, StorageError> {
     let row = sqlx::query(
         "SELECT COALESCE(max(version) FILTER (WHERE success), 0) AS current_version, \
@@ -2252,188 +1805,6 @@ async fn insert_bootstrap_admin(
     .await
     .map_err(|_| StorageError::TransactionFailed)?;
     Ok(())
-}
-
-async fn append_bootstrap_audit_and_outbox(
-    transaction: &mut Transaction<'_, Postgres>,
-    candidate: &BootstrapAdminRecord,
-) -> Result<(), StorageError> {
-    let event_id = Uuid::now_v7();
-    let canonical = json!({
-        "action": "bootstrap_admin_created",
-        "actor": "system",
-        "object_id": candidate.user_id,
-        "object_type": "user_account",
-        "outcome": "success"
-    });
-    let event_day: String = sqlx::query_scalar("SELECT CURRENT_DATE::text")
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(|_| StorageError::TransactionFailed)?;
-    sqlx::query(
-        "INSERT INTO security.audit_chain_head (event_day,event_count,last_sequence,updated_at) \
-         VALUES ($1::date,0,0,clock_timestamp()) ON CONFLICT (event_day) DO NOTHING",
-    )
-    .bind(&event_day)
-    .execute(&mut **transaction)
-    .await
-    .map_err(|_| StorageError::TransactionFailed)?;
-    let head = sqlx::query(
-        "SELECT last_sequence,last_event_hash FROM security.audit_chain_head WHERE event_day=$1::date FOR UPDATE",
-    )
-    .bind(&event_day)
-    .fetch_one(&mut **transaction)
-    .await
-    .map_err(|_| StorageError::TransactionFailed)?;
-    let previous_sequence: i64 = head
-        .try_get("last_sequence")
-        .map_err(|_| StorageError::TransactionFailed)?;
-    let previous_hash: Option<Vec<u8>> = head
-        .try_get("last_event_hash")
-        .map_err(|_| StorageError::TransactionFailed)?;
-    let sequence = previous_sequence
-        .checked_add(1)
-        .ok_or(StorageError::TransactionFailed)?;
-    let canonical_bytes = canonical_json_bytes(&canonical)?;
-    let event_hash = audit_event_hash(&event_day, sequence, &canonical_bytes, previous_hash.as_deref());
-    sqlx::query(
-        "INSERT INTO security.audit_event \
-         (event_day,event_id,daily_sequence,actor_type_code,action_code,object_type_code,object_id,outcome_code,canonical_redacted_event,previous_hash,event_hash,occurred_at) \
-         VALUES ($1::date,$2,$3,'system','bootstrap_admin_created','user_account',$4,'success',$5,$6,$7,clock_timestamp())",
-    )
-    .bind(&event_day)
-    .bind(event_id)
-    .bind(sequence)
-    .bind(candidate.user_id.to_string())
-    .bind(&canonical)
-    .bind(&previous_hash)
-    .bind(event_hash.as_slice())
-    .execute(&mut **transaction)
-    .await
-    .map_err(|_| StorageError::TransactionFailed)?;
-    sqlx::query(
-        "UPDATE security.audit_chain_head SET event_count=$2,last_sequence=$2,last_event_hash=$3,updated_at=clock_timestamp() WHERE event_day=$1::date",
-    )
-    .bind(&event_day)
-    .bind(sequence)
-    .bind(event_hash.as_slice())
-    .execute(&mut **transaction)
-    .await
-    .map_err(|_| StorageError::TransactionFailed)?;
-    sqlx::query(
-        "INSERT INTO ops.outbox_message \
-         (id,event_id,topic_code,aggregate_type,aggregate_id,aggregate_revision,payload_schema_version,payload,state_code,lease_generation,attempt_count,available_at,created_at) \
-         VALUES ($1,$2,'user.created','user_account',$3,1,1,$4,'pending',0,0,clock_timestamp(),clock_timestamp())",
-    )
-    .bind(Uuid::now_v7())
-    .bind(event_id)
-    .bind(candidate.user_id)
-    .bind(json!({"user_id": candidate.user_id, "role": "platform_admin", "mfa_state": "pending"}))
-    .execute(&mut **transaction)
-    .await
-    .map_err(|_| StorageError::TransactionFailed)?;
-    Ok(())
-}
-
-async fn append_audit_outbox(
-    transaction: &mut Transaction<'_, Postgres>,
-    record: &AuditOutboxRecord,
-) -> Result<Uuid, StorageError> {
-    if !matches!(
-        record.actor_type.as_str(),
-        "system" | "platform_admin" | "key_owner" | "platform_key"
-    ) || !matches!(record.outcome.as_str(), "success" | "denied" | "failed")
-        || record.action.trim().is_empty()
-        || record.object_type.trim().is_empty()
-        || record.topic.trim().is_empty()
-        || record.aggregate_revision < 1
-    {
-        return Err(StorageError::TransactionFailed);
-    }
-    let event_id = Uuid::now_v7();
-    let canonical = json!({
-        "action": record.action,
-        "actor_id": record.actor_id,
-        "actor_type": record.actor_type,
-        "detail": record.redacted_detail,
-        "object_id": record.object_id,
-        "object_type": record.object_type,
-        "outcome": record.outcome,
-    });
-    let event_day: String = sqlx::query_scalar("SELECT CURRENT_DATE::text")
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(transaction_error)?;
-    sqlx::query(
-        "INSERT INTO security.audit_chain_head (event_day,event_count,last_sequence,updated_at) \
-         VALUES ($1::date,0,0,clock_timestamp()) ON CONFLICT (event_day) DO NOTHING",
-    )
-    .bind(&event_day)
-    .execute(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    let head = sqlx::query(
-        "SELECT last_sequence,last_event_hash FROM security.audit_chain_head WHERE event_day=$1::date FOR UPDATE",
-    )
-    .bind(&event_day)
-    .fetch_one(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    let previous_sequence: i64 = head.try_get("last_sequence").map_err(transaction_error)?;
-    let previous_hash: Option<Vec<u8>> = head.try_get("last_event_hash").map_err(transaction_error)?;
-    let sequence = previous_sequence
-        .checked_add(1)
-        .ok_or(StorageError::TransactionFailed)?;
-    let canonical_bytes = canonical_json_bytes(&canonical)?;
-    let event_hash = audit_event_hash(&event_day, sequence, &canonical_bytes, previous_hash.as_deref());
-    sqlx::query(
-        "INSERT INTO security.audit_event \
-         (event_day,event_id,daily_sequence,actor_type_code,actor_id,action_code,object_type_code,object_id, \
-          outcome_code,canonical_redacted_event,previous_hash,event_hash,occurred_at) \
-         VALUES ($1::date,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,clock_timestamp())",
-    )
-    .bind(&event_day)
-    .bind(event_id)
-    .bind(sequence)
-    .bind(&record.actor_type)
-    .bind(record.actor_id)
-    .bind(&record.action)
-    .bind(&record.object_type)
-    .bind(&record.object_id)
-    .bind(&record.outcome)
-    .bind(&canonical)
-    .bind(&previous_hash)
-    .bind(event_hash.as_slice())
-    .execute(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    sqlx::query(
-        "UPDATE security.audit_chain_head SET event_count=$2,last_sequence=$2,last_event_hash=$3,updated_at=clock_timestamp() \
-         WHERE event_day=$1::date",
-    )
-    .bind(&event_day)
-    .bind(sequence)
-    .bind(event_hash.as_slice())
-    .execute(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    sqlx::query(
-        "INSERT INTO ops.outbox_message \
-         (id,event_id,topic_code,aggregate_type,aggregate_id,aggregate_revision,payload_schema_version,payload,state_code, \
-          lease_generation,attempt_count,available_at,created_at) \
-         VALUES ($1,$2,$3,$4,$5,$6,1,$7,'pending',0,0,clock_timestamp(),clock_timestamp())",
-    )
-    .bind(Uuid::now_v7())
-    .bind(event_id)
-    .bind(&record.topic)
-    .bind(&record.object_type)
-    .bind(record.aggregate_id)
-    .bind(record.aggregate_revision)
-    .bind(&record.payload)
-    .execute(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    Ok(event_id)
 }
 
 #[allow(
@@ -2521,115 +1892,6 @@ fn notification_destination_matches(
 fn transaction_error(error: sqlx::Error) -> StorageError {
     tracing::error!(error = %error, "sanitized PostgreSQL operation failed");
     StorageError::TransactionFailed
-}
-
-fn canonical_json_bytes(value: &serde_json::Value) -> Result<Vec<u8>, StorageError> {
-    fn sort(value: &serde_json::Value) -> serde_json::Value {
-        match value {
-            serde_json::Value::Object(map) => {
-                let mut keys: Vec<_> = map.keys().collect();
-                keys.sort_unstable();
-                let sorted = keys.into_iter().map(|key| (key.clone(), sort(&map[key]))).collect();
-                serde_json::Value::Object(sorted)
-            }
-            serde_json::Value::Array(items) => serde_json::Value::Array(items.iter().map(sort).collect()),
-            scalar => scalar.clone(),
-        }
-    }
-    serde_json::to_vec(&sort(value)).map_err(|_| StorageError::TransactionFailed)
-}
-
-fn audit_event_hash(day: &str, sequence: i64, canonical: &[u8], previous_hash: Option<&[u8]>) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    digest.update(b"gateway-audit-event-v1");
-    digest.update(day.as_bytes());
-    digest.update(sequence.to_be_bytes());
-    digest.update(canonical);
-    if let Some(previous) = previous_hash {
-        digest.update(previous);
-    }
-    digest.finalize().into()
-}
-
-fn audit_daily_seal(
-    integrity_key: &[u8],
-    day: &str,
-    count: i64,
-    first_hash: &[u8],
-    last_hash: &[u8],
-    previous_seal: Option<&[u8]>,
-) -> Result<[u8; 32], StorageError> {
-    let mut hmac = <HmacSha256 as hmac::digest::KeyInit>::new_from_slice(integrity_key)
-        .map_err(|_| StorageError::IntegrityViolation)?;
-    hmac.update(b"gateway-audit-day-v1");
-    hmac.update(day.as_bytes());
-    hmac.update(&count.to_be_bytes());
-    hmac.update(first_hash);
-    hmac.update(last_hash);
-    if let Some(previous) = previous_seal {
-        hmac.update(previous);
-    }
-    Ok(hmac.finalize().into_bytes().into())
-}
-
-fn deletion_ledger_hash(
-    sequence: i64,
-    object_type: &str,
-    object_id: &str,
-    object_digest: &[u8],
-    action: &str,
-    previous_hash: Option<&[u8]>,
-    canonical_metadata: &[u8],
-) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    digest.update(b"gateway-deletion-ledger-v1");
-    digest.update(sequence.to_be_bytes());
-    for field in [
-        object_type.as_bytes(),
-        object_id.as_bytes(),
-        object_digest,
-        action.as_bytes(),
-    ] {
-        digest.update((field.len() as u64).to_be_bytes());
-        digest.update(field);
-    }
-    if let Some(previous) = previous_hash {
-        digest.update(previous);
-    }
-    digest.update(canonical_metadata);
-    digest.finalize().into()
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{audit_daily_seal, audit_event_hash, canonical_json_bytes};
-
-    #[test]
-    fn audit_canonicalization_sorts_object_keys() -> Result<(), Box<dyn std::error::Error>> {
-        let first = canonical_json_bytes(&json!({"z": 1, "a": {"y": 2, "b": 3}}))?;
-        let second = canonical_json_bytes(&json!({"a": {"b": 3, "y": 2}, "z": 1}))?;
-        assert_eq!(first, second);
-        Ok(())
-    }
-
-    #[test]
-    fn audit_hash_binds_sequence_and_previous_hash() {
-        let one = audit_event_hash("2026-08-24", 1, b"{}", None);
-        let two = audit_event_hash("2026-08-24", 2, b"{}", Some(&one));
-        assert_ne!(one, two);
-    }
-
-    #[test]
-    fn daily_seal_binds_day_count_and_chain_edges() -> Result<(), Box<dyn std::error::Error>> {
-        let first = [1_u8; 32];
-        let last = [2_u8; 32];
-        let seal = audit_daily_seal(b"fixture-integrity-key", "2026-08-23", 2, &first, &last, None)?;
-        let changed = audit_daily_seal(b"fixture-integrity-key", "2026-08-23", 3, &first, &last, None)?;
-        assert_ne!(seal, changed);
-        Ok(())
-    }
 }
 
 /// Generation-fenced durable job lease.

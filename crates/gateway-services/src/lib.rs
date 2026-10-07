@@ -9,6 +9,7 @@ pub mod credential_provider;
 pub mod export;
 pub mod model_discovery;
 pub mod observability;
+pub mod openai;
 pub mod operations;
 pub mod plan;
 pub mod quota;

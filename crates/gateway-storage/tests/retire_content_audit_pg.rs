@@ -20,7 +20,7 @@ async fn audit_retirement_preserves_history_and_rejects_new_audit_work() -> Resu
     before.migrations = Cow::Owned(
         before
             .iter()
-            .filter(|migration| migration.version <= 20_260_901_000_100)
+            .filter(|migration| migration.version < 20_260_901_000_100)
             .cloned()
             .collect(),
     );
@@ -34,6 +34,19 @@ async fn audit_retirement_preserves_history_and_rejects_new_audit_work() -> Resu
           (id,username,username_normalized,role_code,status_code,created_at,updated_at)
         VALUES ('00000000-0000-0000-0000-000000000001','upgrade-test','upgrade-test',
                 'platform_admin','active',now(),now());
+        INSERT INTO gateway.credential_group (id,name,status_code,created_at,updated_at)
+        VALUES ('00000000-0000-0000-0000-000000000010','legacy-group','active',now(),now());
+        INSERT INTO catalog.versioned_artifact
+          (id,artifact_kind_code,scope_type_code,scope_id,artifact_version,lifecycle_code,
+           payload,content_hash,schema_version,created_at)
+        VALUES ('00000000-0000-0000-0000-000000000011','enforcement','group',
+                '00000000-0000-0000-0000-000000000010',1,'active','{}',decode(repeat('02',32),'hex'),1,now());
+        INSERT INTO gateway.group_config
+          (id,group_id,config_version,content_hash,default_rpm,queue_capacity,queue_timeout_ms,
+           system_prompt_mode_code,proxy_policy_code,model_scope_code,created_at,enforcement_artifact_id)
+        VALUES ('00000000-0000-0000-0000-000000000012','00000000-0000-0000-0000-000000000010',
+                1,decode(repeat('03',32),'hex'),60,10,1000,'preserve','auto','all_published',now(),
+                '00000000-0000-0000-0000-000000000011');
         INSERT INTO ops.durable_job
           (id,kind_code,idempotency_key,state_code,payload_schema_version,payload,run_after,
            lease_owner,lease_expires_at,max_attempts,created_at,updated_at)
@@ -65,6 +78,19 @@ async fn audit_retirement_preserves_history_and_rejects_new_audit_work() -> Resu
     )
     .execute(&pool)
     .await?;
+    // Reproduce the released migration's failure and prove its transaction rolls back.
+    let original_error = sqlx::migrate!("./migrations").run(&pool).await.err();
+    assert!(original_error.is_some_and(|error| error.to_string().contains("Group config content is immutable")));
+    let still_bound: bool = sqlx::query_scalar(
+        "SELECT enforcement_artifact_id IS NOT NULL FROM gateway.group_config \
+         WHERE id='00000000-0000-0000-0000-000000000012'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(still_bound);
+    // Release the session advisory lock retained by SQLx's failed migration run.
+    pool.close().await;
+    let pool = sqlx::PgPool::connect(&url).await?;
     let url = SecretValue::new(url);
     let report = PgStorage::migrate(&url).await?;
     assert_eq!(report.current_version, CURRENT_SCHEMA_VERSION);
@@ -74,6 +100,21 @@ async fn audit_retirement_preserves_history_and_rejects_new_audit_work() -> Resu
         r"
         DO $$
         BEGIN
+          IF NOT EXISTS (SELECT 1 FROM gateway.group_config
+              WHERE id='00000000-0000-0000-0000-000000000012'
+                AND enforcement_artifact_id IS NULL AND default_rpm=60) THEN
+            RAISE EXCEPTION 'legacy group config was not preserved and unbound';
+          END IF;
+          IF EXISTS (SELECT 1 FROM catalog.versioned_artifact
+              WHERE id='00000000-0000-0000-0000-000000000011') THEN
+            RAISE EXCEPTION 'legacy enforcement artifact remains';
+          END IF;
+          BEGIN
+            UPDATE gateway.group_config SET default_rpm=61
+              WHERE id='00000000-0000-0000-0000-000000000012';
+            RAISE EXCEPTION 'group config immutability was not restored';
+          EXCEPTION WHEN check_violation THEN NULL;
+          END;
           IF (SELECT count(*) FROM ops.durable_job
               WHERE kind_code LIKE 'content_audit_%' AND state_code='cancelled'
                 AND lease_owner IS NULL AND lease_expires_at IS NULL AND completed_at IS NOT NULL) <> 6 THEN

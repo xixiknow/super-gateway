@@ -46,6 +46,10 @@ function renderModels(version: Record<string, unknown> = baseVersion) {
   return render(<I18nProvider initialLocale="zh-CN"><QueryClientProvider client={client}><FeedbackProvider><ModelsTable
     loading={false}
     title="模型与能力"
+    rowActions={[
+      { key: "details", labelKey: "request.viewDetail", icon: "activity", primary: true, requiresRevision: false, custom: () => undefined },
+      { key: "refresh", labelKey: "table.refresh", icon: "refresh", requiresRevision: false, custom: () => undefined },
+    ]}
     items={[{
       id: "model-1",
       upstream_model_id: "claude-opus-fixture",
@@ -68,6 +72,22 @@ function renderModels(version: Record<string, unknown> = baseVersion) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+it("labels price status explicitly, removes its separate button, and refreshes the status", async () => {
+  let priceReads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    if (String(input) === "/admin/v1/price-sync/status") return response({ state: ++priceReads === 1 ? "failed" : "succeeded" });
+    return response([]);
+  });
+  renderModels();
+  expect(await screen.findByText("价格同步失败")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "立即同步价格" })).not.toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole("button", { name: "刷新" }));
+  expect(await screen.findByText("价格已同步")).toBeInTheDocument();
+  expect(document.querySelectorAll(".models-table col")).toHaveLength(9);
+  expect(screen.getByRole("columnheader", { name: "查看能力" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "操作" })).toBeInTheDocument();
 });
 
 it("opens capabilities in a right drawer and edits a system version as a new structured candidate", async () => {

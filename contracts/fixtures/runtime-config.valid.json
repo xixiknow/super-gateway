@@ -85,16 +85,6 @@
       "default": null
     },
     {
-      "name": "GATEWAY_AUDIT_INTEGRITY_KEY_FILE",
-      "kind": "secret_file",
-      "required": true,
-      "secret": true,
-      "readiness_gate": true,
-      "relationship": "independent",
-      "related_to": null,
-      "default": null
-    },
-    {
       "name": "GATEWAY_BUNDLE_TRUST_STORE",
       "kind": "path",
       "required": true,

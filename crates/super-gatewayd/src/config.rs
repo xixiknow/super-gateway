@@ -22,7 +22,6 @@ const BUSINESS_KEY_PROVIDER: &str = "GATEWAY_BUSINESS_KEY_PROVIDER";
 const KEY_PROVIDER_URI: &str = "GATEWAY_KEY_PROVIDER_URI";
 const APP_KEY_FILE: &str = "GATEWAY_APP_KEY_FILE";
 const DIGEST_KEY_FILE: &str = "GATEWAY_DIGEST_KEY_FILE";
-const AUDIT_INTEGRITY_KEY_FILE: &str = "GATEWAY_AUDIT_INTEGRITY_KEY_FILE";
 const BUNDLE_TRUST_STORE: &str = "GATEWAY_BUNDLE_TRUST_STORE";
 const BUNDLE_DIR: &str = "GATEWAY_BUNDLE_DIR";
 const RESPONSE_TMP_DIR: &str = "GATEWAY_RESPONSE_TMP_DIR";
@@ -45,7 +44,6 @@ pub struct GatewayConfig {
     pub database_url_file: PathBuf,
     pub business_key_provider: BusinessKeyProvider,
     pub digest_key_file: PathBuf,
-    pub audit_integrity_key_file: PathBuf,
     pub bundle_trust_store: PathBuf,
     pub bundle_dir: PathBuf,
     pub response_tmp_dir: PathBuf,
@@ -65,7 +63,6 @@ impl fmt::Debug for GatewayConfig {
             .field("database_url_file", &self.database_url_file)
             .field("business_key_provider", &self.business_key_provider)
             .field("digest_key_file", &self.digest_key_file)
-            .field("audit_integrity_key_file", &self.audit_integrity_key_file)
             .field("bundle_trust_store", &self.bundle_trust_store)
             .field("bundle_dir", &self.bundle_dir)
             .field("response_tmp_dir", &self.response_tmp_dir)
@@ -157,9 +154,7 @@ impl GatewayConfig {
         let database_url_file = state_dir.join("database-url");
         std::fs::write(&database_url_file, database_url.expose()).map_err(|_| ConfigError::LocalStateUnavailable)?;
         let digest_key_file = state_dir.join("digest-key");
-        let audit_integrity_key_file = state_dir.join("audit-integrity-key");
         ensure_local_secret(&digest_key_file)?;
-        ensure_local_secret(&audit_integrity_key_file)?;
 
         let mut values = HashMap::new();
         copy_environment_value(&mut values, DRAIN_DEADLINE);
@@ -177,10 +172,6 @@ impl GatewayConfig {
         values.insert(
             DIGEST_KEY_FILE.to_owned(),
             digest_key_file.to_string_lossy().into_owned(),
-        );
-        values.insert(
-            AUDIT_INTEGRITY_KEY_FILE.to_owned(),
-            audit_integrity_key_file.to_string_lossy().into_owned(),
         );
         values.insert(
             BUNDLE_TRUST_STORE.to_owned(),
@@ -207,7 +198,6 @@ impl GatewayConfig {
         let database_url_file = required_path(values, DATABASE_URL_FILE)?;
         let business_key_provider = parse_business_key_provider(values)?;
         let digest_key_file = required_path(values, DIGEST_KEY_FILE)?;
-        let audit_integrity_key_file = required_path(values, AUDIT_INTEGRITY_KEY_FILE)?;
         let bundle_trust_store = required_path(values, BUNDLE_TRUST_STORE)?;
         let bundle_dir = required_path(values, BUNDLE_DIR)?;
         let response_tmp_dir = required_path(values, RESPONSE_TMP_DIR)?;
@@ -263,7 +253,6 @@ impl GatewayConfig {
             database_url_file,
             business_key_provider,
             digest_key_file,
-            audit_integrity_key_file,
             bundle_trust_store,
             bundle_dir,
             response_tmp_dir,
@@ -498,7 +487,6 @@ mod tests {
             ("GATEWAY_DATABASE_URL_FILE".to_owned(), "db.secret".to_owned()),
             ("GATEWAY_BUSINESS_KEY_PROVIDER".to_owned(), "database".to_owned()),
             ("GATEWAY_DIGEST_KEY_FILE".to_owned(), "digest.secret".to_owned()),
-            ("GATEWAY_AUDIT_INTEGRITY_KEY_FILE".to_owned(), "audit.secret".to_owned()),
             ("GATEWAY_BUNDLE_TRUST_STORE".to_owned(), "trust.json".to_owned()),
             ("GATEWAY_BUNDLE_DIR".to_owned(), "bundles".to_owned()),
             ("GATEWAY_RESPONSE_TMP_DIR".to_owned(), "tmp".to_owned()),

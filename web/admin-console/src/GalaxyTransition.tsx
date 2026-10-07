@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTheme } from "./theme";
 
 type RGB = readonly [number, number, number];
 
@@ -282,9 +283,11 @@ function renderGalaxyTexture(
 }
 
 export function GalaxyTransition({ compact = false, hold = false }: { compact?: boolean; hold?: boolean }) {
+  const { theme } = useTheme();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    if (theme !== "dark") return;
     const canvas = canvasRef.current;
     if (!canvas || navigator.userAgent.includes("jsdom")) return;
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
@@ -373,7 +376,9 @@ export function GalaxyTransition({ compact = false, hold = false }: { compact?: 
       window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", resize);
     };
-  }, [compact, hold]);
+  }, [compact, hold, theme]);
+
+  if (theme !== "dark") return null;
 
   return (
     <div className={`galaxy-transition${compact ? " compact" : ""}${hold ? " hold" : ""}`} aria-hidden="true">

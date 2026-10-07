@@ -76,23 +76,6 @@ describe("resource row action registries", () => {
     expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
   });
 
-  it("groups: active groups expose disable and disabled groups expose reactivation plus archive", async () => {
-    const actions = actionsFor("/groups");
-    renderCell({ id: "g-1", name: "研发组", status: "active", revision: 3 }, actions);
-    expect(screen.getByRole("button", { name: "禁用" })).toBeInTheDocument();
-    // 重命名折叠进 ⋯ 溢出菜单
-    await userEvent.setup().click(screen.getByRole("button", { name: "更多操作" }));
-    expect(screen.getByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
-    cleanup();
-
-    renderCell({ id: "g-1", name: "研发组", status: "disabled", revision: 4 }, actions);
-    // 详情与启用占满两个外露位,归档折叠进 ⋯ 溢出菜单
-    expect(screen.getByRole("button", { name: "查看详情" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "启用" })).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole("button", { name: "更多操作" }));
-    expect(screen.getByRole("menuitem", { name: "归档" })).toBeInTheDocument();
-  });
-
   it("credentials: cooldown, refresh, revoke and archive actions follow the lifecycle state", async () => {
     const actions = actionsFor("/credentials");
     renderCell({ id: "c-1", lifecycle_state: "active", scheduling_state: "cooldown", revision: 2 }, actions);

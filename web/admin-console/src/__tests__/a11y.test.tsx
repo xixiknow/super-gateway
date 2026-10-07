@@ -48,7 +48,7 @@ it("renders the authenticated admin navigation with a skip target and no automat
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<I18nProvider initialLocale="zh-CN"><FeedbackProvider><QueryClientProvider client={client}><MemoryRouter><App /></MemoryRouter></QueryClientProvider></FeedbackProvider></I18nProvider>);
   expect(await screen.findByRole("navigation", { name: "主导航" })).toBeInTheDocument();
-  expect(screen.getByText("凭据分组")).toBeInTheDocument();
+  expect(screen.getByText("凭据")).toBeInTheDocument();
   expect(document.querySelector(".skip-link")).toHaveAttribute("href", "#main-content");
   await userEvent.setup().click(screen.getByRole("button", { name: "消息与通知" }));
   expect(screen.getByRole("dialog", { name: "通知" })).toBeInTheDocument();
@@ -79,7 +79,7 @@ it("distinguishes upstream model synchronization from reloading the current tabl
   render(<I18nProvider initialLocale="zh-CN"><FeedbackProvider><QueryClientProvider client={client}><MemoryRouter initialEntries={["/models"]}><App /></MemoryRouter></QueryClientProvider></FeedbackProvider></I18nProvider>);
 
   expect(await screen.findByRole("heading", { name: "模型与能力", level: 1 })).toBeInTheDocument();
-  const syncButton = screen.getByRole("button", { name: "同步公开目录" });
+  const syncButton = screen.getByRole("button", { name: "同步目录与价格" });
   const reloadButton = screen.getByRole("button", { name: "刷新" });
   expect(syncButton.querySelector("use")).toHaveAttribute("href", "#i-globe");
   expect(reloadButton.querySelector("use")).toHaveAttribute("href", "#i-refresh");

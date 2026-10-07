@@ -8,12 +8,20 @@ mod engine;
 mod error;
 mod event;
 mod h1;
+#[cfg(feature = "boring-backend")]
+mod openai_http;
+mod openai_ws;
 mod pool;
 mod port;
+pub use openai_ws::OpenAiConnection;
 #[cfg(feature = "boring-backend")]
 mod production;
 #[cfg(feature = "boring-backend")]
 mod provider_http;
+#[cfg(feature = "boring-backend")]
+pub use openai_http::{
+    OpenAiHeaderEvent, OpenAiHttpRequest, OpenAiHttpResponse, execute_openai_http, execute_openai_websocket,
+};
 #[cfg(feature = "boring-backend")]
 mod tls;
 
@@ -22,7 +30,7 @@ pub use bundle::{
     ApplicationProfile, BundleCanonicalization, BundleConnectionPolicy, BundleEvidenceGate, BundleLifecycle,
     BundleLoadContext, BundleLoadError, BundleRuntimeState, BundleSignature, BundleTrustStore, EngineBuild,
     HeaderTemplate, Http1Profile, Http2Profile, SignedBundleEnvelope, TlsProfile, TransportBundlePayload, TrustKey,
-    TrustKeyStatus, VerifiedBundle,
+    TrustKeyStatus, VerifiedBundle, current_payload_schema_version,
 };
 pub use egress::{AsyncIo, BoxedIo, EgressDialer};
 pub use engine::{

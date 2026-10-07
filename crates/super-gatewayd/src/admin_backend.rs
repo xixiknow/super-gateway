@@ -14,6 +14,10 @@
     clippy::unused_self
 )]
 
+mod anthropic;
+mod openai;
+mod openai_oauth;
+
 use std::{
     collections::BTreeSet,
     fs::OpenOptions,
@@ -47,9 +51,8 @@ use gateway_services::{
     },
 };
 use gateway_storage::{
-    AuditOutboxRecord, CredentialEnrollmentCreate, CredentialGroupMigrationBegin, CredentialLifecycleCommand,
-    DeviceIdentityRebuild, EgressAllocation, EgressAllocationRequest, OAuthCallbackClaim, PgStorage,
-    ProfileCohortUpgrade, StorageError,
+    CredentialEnrollmentCreate, CredentialGroupMigrationBegin, CredentialLifecycleCommand, DeviceIdentityRebuild,
+    EgressAllocation, EgressAllocationRequest, OAuthCallbackClaim, PgStorage, ProfileCohortUpgrade, StorageError,
 };
 use gateway_transport::{
     ApplicationProfile, BundleEvidenceGate, BundleLifecycle, BundleLoadContext, BundleRuntimeState, BundleTrustStore,
@@ -61,7 +64,6 @@ use sha2::{Digest as _, Sha256};
 use sqlx::Row as _;
 use uuid::Uuid;
 
-use crate::operations::IntegrityGuard;
 use crate::production_dispatcher::ProductionDispatcher;
 
 const DEFAULT_PLATFORM_KEY_BODY_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
@@ -158,7 +160,6 @@ pub struct PgManagementBackend {
     session_digest_key: Arc<SecretBytes>,
     readiness: ReadinessCoordinator,
     data_metrics: DataPlaneObservability,
-    integrity_guard: IntegrityGuard,
     export_store: Arc<ExportArtifactStore>,
     management_runtime: ManagementRuntimeBridge,
     scheduler_runtime: Option<Arc<ProductionDispatcher>>,
@@ -253,7 +254,6 @@ impl PgManagementBackend {
         session_digest_key: SecretBytes,
         readiness: ReadinessCoordinator,
         data_metrics: DataPlaneObservability,
-        integrity_guard: IntegrityGuard,
         export_store: Arc<ExportArtifactStore>,
         management_runtime: ManagementRuntimeBridge,
         scheduler_runtime: Option<Arc<ProductionDispatcher>>,
@@ -269,7 +269,6 @@ impl PgManagementBackend {
             session_digest_key: Arc::new(session_digest_key),
             readiness,
             data_metrics,
-            integrity_guard,
             export_store,
             management_runtime,
             scheduler_runtime,
@@ -695,7 +694,7 @@ impl PgManagementBackend {
         request: &ManagementRequest,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         let command: LifecycleActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(command.reason.as_deref())?;
+        required_action_reason(command.reason.as_deref())?;
         let user_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         if command
@@ -732,23 +731,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?
         .rows_affected();
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "user_sessions_revoked_all",
-                    "user_account",
-                    user_id,
-                    next_revision,
-                    json!({"revoked_session_count":revoked,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|error| {
-                tracing::error!(error = ?error, "user creation audit transaction failed");
-                ManagementBackendError::Unavailable
-            })?;
+
         transaction.commit().await.map_err(|error| {
             tracing::error!(
                 database_code = error
@@ -831,20 +814,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "mfa_enrollment_created",
-                    "user_account",
-                    user_id,
-                    1,
-                    json!({"state":"pending"}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -1275,20 +1245,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "approval_requested",
-                    "approval_case",
-                    id,
-                    1,
-                    json!({"kind":command.kind,"object_type":object_type,"object_id":object_id}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -1446,7 +1403,17 @@ impl PgManagementBackend {
         .bind(command.spend_limit_amount.as_deref())
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ManagementBackendError::Precondition)?;
+        .map_err(|error| {
+            let database_error = error.as_database_error();
+            let code = database_error.and_then(sqlx::error::DatabaseError::code);
+            let constraint = database_error.and_then(|error| error.constraint());
+            if code.as_deref() == Some("23505") && constraint == Some("platform_key_owner_user_id_name_key") {
+                ManagementBackendError::PlatformKeyNameConflict
+            } else {
+                tracing::error!(sqlstate = ?code, constraint = ?constraint, "platform key insert failed");
+                ManagementBackendError::Unavailable
+            }
+        })?;
         let messages_enabled = command.endpoint_permissions.iter().any(|value| value == "messages");
         let models_enabled = command.endpoint_permissions.iter().any(|value| value == "models");
         // Body capture is a system-wide plaintext setting; Keys no longer carry
@@ -1489,20 +1456,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "platform_key_created",
-                    "platform_key",
-                    key_id,
-                    1,
-                    json!({"group_id":group_id,"owner_user_id":owner_user_id,"display_prefix":prefix}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -1524,7 +1478,7 @@ impl PgManagementBackend {
         request: &ManagementRequest,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         let command: PlatformKeyRevealCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let step_up_id = parse_input_uuid(&command.step_up_grant_id)?;
         let key_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
@@ -1607,20 +1561,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "platform_key_secret_revealed",
-                    "platform_key_secret_reveal",
-                    reveal_id,
-                    1,
-                    json!({"platform_key_id":key_id,"reason":reason,"expires_in_seconds":60}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -1729,24 +1670,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    if decision == "reject" {
-                        "approval_rejected"
-                    } else {
-                        "approval_approved"
-                    },
-                    "approval_case",
-                    case_id,
-                    1,
-                    json!({"decision":decision,"state":target_state,"reason":command.reason.trim()}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         sqlx::query(
             "UPDATE iam.management_step_up_grant SET consumed_at=clock_timestamp() WHERE id=$1 AND consumed_at IS NULL",
         )
@@ -1793,20 +1717,7 @@ impl PgManagementBackend {
         if result.rows_affected() != 1 {
             return Err(ManagementBackendError::Precondition);
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "approval_cancelled",
-                    "approval_case",
-                    case_id,
-                    command.expected_revision + 1,
-                    json!({"reason":command.reason.trim()}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -1905,27 +1816,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "business_key_rotation_scheduled",
-                    "durable_job",
-                    job_id,
-                    1,
-                    json!({
-                        "provider":"database",
-                        "old_key_version":old_key_version,
-                        "new_key_version":new_key_version,
-                        "batch_size":command.batch_size,
-                        "approval_case_id":approval_id,
-                        "reason":reason
-                    }),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -1996,7 +1887,7 @@ impl PgManagementBackend {
             &snapshot_digest,
         )
         .await?;
-        let checksum = business_key_lifecycle_evidence_in(
+        let _checksum = business_key_lifecycle_evidence_in(
             &mut transaction,
             command.key_version,
             &command.target_state,
@@ -2066,42 +1957,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        if command.target_state == "destroyed" {
-            let checksum: [u8; 32] = checksum
-                .as_slice()
-                .try_into()
-                .map_err(|_| ManagementBackendError::Precondition)?;
-            self.storage
-                .append_deletion_ledger_in(
-                    &mut transaction,
-                    "business_key_material",
-                    &format!("database:{}", command.key_version),
-                    &checksum,
-                    "scheduled",
-                    &json!({"job_id":job_id,"backup_run_id":backup_run_id,"restore_drill_id":restore_drill_id}),
-                )
-                .await
-                .map_err(|_| ManagementBackendError::Unavailable)?;
-        }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "business_key_lifecycle_scheduled",
-                    "durable_job",
-                    job_id,
-                    1,
-                    json!({
-                        "provider":"database","key_version":command.key_version,
-                        "target_state":command.target_state,"rotation_job_id":rotation_job_id,
-                        "backup_run_id":backup_run_id,"restore_drill_id":restore_drill_id,
-                        "approval_case_id":approval_id,"reason":reason
-                    }),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -2229,7 +2085,7 @@ impl PgManagementBackend {
 
     async fn create_user(
         &self,
-        principal: &ManagementPrincipal,
+        _principal: &ManagementPrincipal,
         request: &ManagementRequest,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         let command: UserCreateCommand = deserialize_body(request)?;
@@ -2312,20 +2168,7 @@ impl PgManagementBackend {
             );
             ManagementBackendError::Unavailable
         })?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "user_created",
-                    "user_account",
-                    user_id,
-                    1,
-                    json!({"role":command.role,"status":initial_status,"max_concurrency":command.max_concurrency,"rpm":command.rpm}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -2450,20 +2293,7 @@ impl PgManagementBackend {
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "user_updated",
-                    "user_account",
-                    id,
-                    next_revision,
-                    json!({"role":next_role,"balance_changed":balance_mode != 0}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         let row = sqlx::query(&format!("{USER_LIST_PROJECTION_SQL} WHERE account.id=$1"))
             .bind(id)
             .fetch_one(&mut *transaction)
@@ -2548,20 +2378,7 @@ impl PgManagementBackend {
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    &format!("user_{action}"),
-                    "user_account",
-                    id,
-                    revision + 1,
-                    json!({"status":target}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -2624,41 +2441,6 @@ impl PgManagementBackend {
             .try_get("revision")
             .map_err(|_| ManagementBackendError::Unavailable)?;
         Ok(single_response(&platform_key_projection(&row)?, revision))
-    }
-
-    async fn list_platform_key_audit_events(
-        &self,
-        principal: &ManagementPrincipal,
-        request: &ManagementRequest,
-    ) -> Result<ManagementBackendResponse, ManagementBackendError> {
-        let key_id = path_uuid(request, "id")?;
-        let owner_id = parse_uuid(&principal.user_id)?;
-        let visible: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM iam.platform_key WHERE id=$1 AND ($2 OR owner_user_id=$3))",
-        )
-        .bind(key_id)
-        .bind(principal.role == ManagementRole::PlatformAdmin)
-        .bind(owner_id)
-        .fetch_one(&self.storage.pool())
-        .await
-        .map_err(|_| ManagementBackendError::Unavailable)?;
-        if !visible {
-            return Err(ManagementBackendError::NotFound);
-        }
-        let rows = sqlx::query(
-            "SELECT event_id,event_day::text AS event_day,daily_sequence,actor_type_code,actor_id,action_code, \
-                    object_type_code,object_id,outcome_code,canonical_redacted_event,occurred_at::text AS occurred_at \
-             FROM security.audit_event \
-             WHERE (object_type_code='platform_key' AND object_id=$1::text) \
-                OR (actor_type_code='platform_key' AND actor_id=$1) \
-             ORDER BY occurred_at DESC,event_id DESC LIMIT 100",
-        )
-        .bind(key_id)
-        .fetch_all(&self.storage.pool())
-        .await
-        .map_err(|_| ManagementBackendError::Unavailable)?;
-        let data = rows.iter().map(audit_projection).collect::<Result<Vec<_>, _>>()?;
-        Ok(list_response(&data))
     }
 
     async fn get_platform_key_client_config(
@@ -3027,20 +2809,7 @@ impl PgManagementBackend {
         if !matches!(command.spend_limit_amount, PatchField::Missing) {
             changed_fields.push("spend_limit_amount");
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "platform_key_updated",
-                    "platform_key",
-                    key_id,
-                    next_revision,
-                    json!({"changed_fields":changed_fields}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         let row = sqlx::query(&format!("{PLATFORM_KEY_LIST_PROJECTION_SQL} WHERE k.id=$1"))
             .bind(key_id)
             .fetch_one(&mut *transaction)
@@ -3122,25 +2891,7 @@ impl PgManagementBackend {
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    match target {
-                        "disabled" => "platform_key_disabled",
-                        "active" => "platform_key_reactivated",
-                        "revoked" => "platform_key_revoked",
-                        _ => return Err(ManagementBackendError::InvalidInput),
-                    },
-                    "platform_key",
-                    id,
-                    next_revision,
-                    json!({"status":target,"reason":command.reason.as_deref()}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -3190,12 +2941,13 @@ impl PgManagementBackend {
             .map_err(|_| ManagementBackendError::Unavailable)?;
         sqlx::query(
             "INSERT INTO gateway.credential_group \
-             (id,name,status_code,owner_generation,revision,created_by,created_at,updated_at) \
-             VALUES ($1,$2,'active',1,1,$3,clock_timestamp(),clock_timestamp())",
+             (id,name,status_code,owner_generation,revision,created_by,created_at,updated_at,provider_code) \
+             VALUES ($1,$2,'active',1,1,$3,clock_timestamp(),clock_timestamp(),$4)",
         )
         .bind(group_id)
         .bind(command.name.trim())
         .bind(actor)
+        .bind(command.provider.as_str())
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Precondition)?;
@@ -3236,20 +2988,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "credential_group_created",
-                    "credential_group",
-                    group_id,
-                    1,
-                    json!({"status":"active","config_version":1}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -3271,7 +3010,7 @@ impl PgManagementBackend {
         }
         Ok(ManagementBackendResponse {
             status: axum::http::StatusCode::CREATED,
-            body: json!({"data":{"id":group_id,"name":command.name.trim(),"status":"active","revision":1,"active_config_version":1},"meta":{}}),
+            body: json!({"data":{"id":group_id,"name":command.name.trim(),"provider":command.provider,"status":"active","revision":1,"active_config_version":1},"meta":{}}),
             etag: Some("\"rev-1\"".into()),
             session_cookie: None,
             clear_session_cookie: false,
@@ -3497,9 +3236,10 @@ impl PgManagementBackend {
             // 显式给出模型范围:allowlist 逐一校验模型存在且已发布;all_published 不写白名单行
             Some(ids) if !ids.is_empty() => {
                 let published: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM catalog.model_definition WHERE id=ANY($1) AND lifecycle_code='published'",
+                    "SELECT count(*) FROM catalog.model_definition WHERE id=ANY($1) AND lifecycle_code='published' AND provider_code=(SELECT provider_code FROM gateway.credential_group WHERE id=$2)",
                 )
                 .bind(ids)
+                .bind(group_id)
                 .fetch_one(&mut *transaction)
                 .await
                 .map_err(|_| ManagementBackendError::Unavailable)?;
@@ -3531,20 +3271,7 @@ impl PgManagementBackend {
                 .map_err(|_| ManagementBackendError::Unavailable)?;
             }
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "group_config_candidate_created",
-                    "group_config",
-                    config_id,
-                    version,
-                    json!({"group_id":group_id,"version":version,"content_hash":lower_hex(&content_hash)}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -3589,7 +3316,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?
         .ok_or(ManagementBackendError::NotFound)?;
-        let config_id = required::<Uuid>(&target, "id")?;
+        required::<Uuid>(&target, "id")?;
         let lifecycle = required::<String>(&target, "lifecycle_code")?;
         // 蓝图 A1:发布链仅保留可选的结构校验;Shadow/Canary 观察期已取消
         let next = match action {
@@ -3650,20 +3377,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "group_config_validated",
-                    "group_config",
-                    config_id,
-                    version,
-                    json!({"group_id":group_id,"version":version,"state":next,"reason":reason,"validation":validation}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -3783,10 +3497,7 @@ impl PgManagementBackend {
         if !allowed {
             return Err(ManagementBackendError::Precondition);
         }
-        // 高风险变更(System 切到 replace|strip_all)不再阻断,仅作为审计标记留痕
-        let target_system_mode = required::<String>(&target, "system_prompt_mode_code")?;
-        let system_mode_high_risk = target_system_mode != required::<String>(&pointer, "system_prompt_mode_code")?
-            && matches!(target_system_mode.as_str(), "replace" | "strip_all");
+        required::<String>(&target, "system_prompt_mode_code")?;
         sqlx::query("UPDATE gateway.group_config SET lifecycle_code='retired' WHERE id=$1 AND lifecycle_code='active'")
             .bind(current_id)
             .execute(&mut *transaction)
@@ -3818,28 +3529,7 @@ impl PgManagementBackend {
         .fetch_one(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    if rollback {
-                        "group_config_rolled_back"
-                    } else {
-                        "group_config_activated"
-                    },
-                    "credential_group",
-                    group_id,
-                    group_revision,
-                    json!({
-                        "from_version":required::<i64>(&pointer,"config_version")?,"to_version":target_version,
-                        "pointer_revision":pointer_revision,"reason":reason,
-                        "system_mode_high_risk":system_mode_high_risk
-                    }),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -3865,7 +3555,7 @@ impl PgManagementBackend {
 
     async fn group_lifecycle(
         &self,
-        principal: &ManagementPrincipal,
+        _principal: &ManagementPrincipal,
         request: &ManagementRequest,
         target: &'static str,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
@@ -3890,25 +3580,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?
         .ok_or(ManagementBackendError::Precondition)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    match target {
-                        "disabled" => "credential_group_disabled",
-                        "archived" => "credential_group_archived",
-                        "active" => "credential_group_reactivated",
-                        _ => return Err(ManagementBackendError::InvalidInput),
-                    },
-                    "credential_group",
-                    id,
-                    next_revision,
-                    json!({"status":target}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -4023,20 +3695,7 @@ impl PgManagementBackend {
         .map_err(|_| ManagementBackendError::Precondition)?
         .ok_or(ManagementBackendError::Precondition)?;
         let revision = required::<i64>(&row, "revision")?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "credential_group_metadata_updated",
-                    "credential_group",
-                    group_id,
-                    revision,
-                    json!({"name":name}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -4309,20 +3968,7 @@ impl PgManagementBackend {
             .execute(&mut *transaction)
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
-            self.storage
-                .append_audit_outbox_in(
-                    &mut transaction,
-                    &management_audit(
-                        principal,
-                        "credential_scheduling_config_updated",
-                        "anthropic_credential",
-                        credential_id,
-                        credential_revision,
-                        json!({"config_id":config_id,"config_version":config_version,"pointer_revision":pointer_revision}),
-                    )?,
-                )
-                .await
-                .map_err(|_| ManagementBackendError::Unavailable)?;
+
             (config_id, config_version, pointer_revision, credential_revision)
         };
         transaction
@@ -4368,7 +4014,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: CredentialGroupMigrationCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let credential_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         if command
@@ -4389,26 +4035,13 @@ impl PgManagementBackend {
             .scheduler_runtime
             .as_ref()
             .ok_or(ManagementBackendError::Unavailable)?;
-        let active_leases = runtime
+        let _active_leases = runtime
             .fence_credential_for_admin(snapshot.group_id, credential_id)
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?
             .ok_or(ManagementBackendError::Unavailable)?;
         let migration_id = Uuid::now_v7();
         let job_id = Uuid::now_v7();
-        let next_revision = expected_revision
-            .checked_add(1)
-            .ok_or(ManagementBackendError::Precondition)?;
-        let audit = management_audit(
-            principal,
-            "credential_group_migration_scheduled",
-            "anthropic_credential",
-            credential_id,
-            next_revision,
-            json!({"migration_id":migration_id,"source_group_id":snapshot.group_id,
-              "target_group_id":command.target_group_id,"drain_seconds":300,
-              "active_leases_at_fence":active_leases,"reason":reason}),
-        )?;
         let started = self
             .storage
             .begin_credential_group_migration_with_job(
@@ -4422,7 +4055,6 @@ impl PgManagementBackend {
                     drain_seconds: 300,
                 },
                 job_id,
-                &audit,
             )
             .await;
         let (credential_revision, created_at) = match started {
@@ -4541,21 +4173,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Precondition)?;
         insert_job_created_history(&mut transaction, job_id, "credential_egress_rebind_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "credential_egress_rebind_scheduled",
-                    "anthropic_credential",
-                    credential_id,
-                    expected_revision,
-                    json!({"job_id":job_id,"group_id":group_id,"mode":mode,"proxy_id":proxy_id,
-                      "profile_epoch":profile_epoch,"egress_epoch":egress_epoch,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -4604,38 +4222,19 @@ impl PgManagementBackend {
                 .map_err(|_| ManagementBackendError::Unavailable)?
                 .is_some();
         }
-        let next_revision = expected_revision
-            .checked_add(1)
-            .ok_or(ManagementBackendError::Precondition)?;
-        let audit = management_audit(
-            principal,
-            "credential_profile_cohort_migrated",
-            "credential_profile",
-            credential_id,
-            next_revision,
-            json!({
-                "target_archetype_version_id":command.target_archetype_version_id,
-                "target_capture_cohort":command.target_capture_cohort,
-                "allow_explicit_rollback":command.allow_explicit_rollback,
-                "reason":reason
-            }),
-        )?;
         let commit = self
             .storage
-            .upgrade_profile_cohort_with_audit(
-                &ProfileCohortUpgrade {
-                    change_id: Uuid::now_v7(),
-                    credential_id,
-                    target_archetype_version_id: command.target_archetype_version_id,
-                    target_capture_cohort: command.target_capture_cohort,
-                    reason_code: reason.to_owned(),
-                    approved_by: parse_uuid(&principal.user_id)?,
-                    expected_credential_revision: expected_revision,
-                    expected_profile_epoch,
-                    allow_explicit_rollback: command.allow_explicit_rollback,
-                },
-                &audit,
-            )
+            .upgrade_profile_cohort(&ProfileCohortUpgrade {
+                change_id: Uuid::now_v7(),
+                credential_id,
+                target_archetype_version_id: command.target_archetype_version_id,
+                target_capture_cohort: command.target_capture_cohort,
+                reason_code: reason.to_owned(),
+                approved_by: parse_uuid(&principal.user_id)?,
+                expected_credential_revision: expected_revision,
+                expected_profile_epoch,
+                allow_explicit_rollback: command.allow_explicit_rollback,
+            })
             .await;
         let commit = match commit {
             Ok(commit) => commit,
@@ -4754,22 +4353,6 @@ impl PgManagementBackend {
             for (secret_id, aad, envelope) in &prepared.encrypted {
                 insert_secret(&mut transaction, *secret_id, aad, envelope).await?;
             }
-            let next_revision = expected_revision
-                .checked_add(1)
-                .ok_or(ManagementBackendError::Precondition)?;
-            let audit = management_audit(
-                principal,
-                "credential_device_identity_rebuilt",
-                "credential_profile",
-                credential_id,
-                next_revision,
-                json!({
-                    "approval_case_id":command.approval_case_id,
-                    "expected_profile_epoch":expected_profile_epoch,
-                    "expected_device_epoch":expected_device_epoch,
-                    "reason":reason
-                }),
-            )?;
             let commit = self
                 .storage
                 .rebuild_device_identity_in(
@@ -4790,7 +4373,6 @@ impl PgManagementBackend {
                         expected_profile_epoch,
                         expected_device_epoch,
                     },
-                    Some(&audit),
                 )
                 .await
                 .map_err(|error| map_storage_error(&error))?;
@@ -4954,7 +4536,7 @@ impl PgManagementBackend {
             return Err(ManagementBackendError::Precondition);
         }
         let command: ReasonActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let credential_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         if command
@@ -5097,21 +4679,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Precondition)?;
         insert_job_created_history(&mut transaction, job_id, "managed_browser_operation_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "managed_browser_operation_scheduled",
-                    "anthropic_credential",
-                    credential_id,
-                    next_credential_revision,
-                    json!({"job_id":job_id,"operation_id":operation_id,"strategy_id":strategy_id,
-                      "intent":intent,"egress_epoch":egress_epoch,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -5225,7 +4793,7 @@ impl PgManagementBackend {
             return Err(ManagementBackendError::NotFound);
         }
         let command: ReasonActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let credential_id = path_uuid(request, "id")?;
         let operation_id = path_uuid(request, "operation_id")?;
         let expected_generation = request_revision(request)?;
@@ -5300,20 +4868,7 @@ impl PgManagementBackend {
                 .map_err(|_| ManagementBackendError::Unavailable)?;
             }
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "browser_operation_cancelled",
-                    "maintenance_operation",
-                    operation_id,
-                    next_generation,
-                    json!({"credential_id":credential_id,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -5335,7 +4890,7 @@ impl PgManagementBackend {
             return Err(ManagementBackendError::NotFound);
         }
         let command: ReasonActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let credential_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         if command
@@ -5423,20 +4978,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?
         .ok_or(ManagementBackendError::Precondition)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "managed_browser_strategy_disabled",
-                    "credential",
-                    credential_id,
-                    credential_revision,
-                    json!({"strategy_revision":strategy_revision,"fully_managed_required":fully_managed_required,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -5531,23 +5073,10 @@ impl PgManagementBackend {
             actor_id: parse_uuid(&principal.user_id)?,
             reason_code,
         };
-        let audit = management_audit(
-            principal,
-            match action {
-                "disable" => "credential_disabled",
-                "reactivate" => "credential_reactivated",
-                "revoke" => "credential_revoked",
-                _ => return Err(ManagementBackendError::InvalidInput),
-            },
-            "credential",
-            credential_id,
-            expected_revision + 1,
-            json!({"status":target,"reason":action_command.reason.as_deref()}),
-        )?;
         let next_revision = match match action {
-            "disable" => self.storage.disable_credential_with_audit(&command, &audit).await,
-            "reactivate" => self.storage.reactivate_credential_with_audit(&command, &audit).await,
-            "revoke" => self.storage.revoke_credential_with_audit(&command, &audit).await,
+            "disable" => self.storage.disable_credential(&command).await,
+            "reactivate" => self.storage.reactivate_credential(&command).await,
+            "revoke" => self.storage.revoke_credential(&command).await,
             _ => return Err(ManagementBackendError::InvalidInput),
         } {
             Ok(revision) => revision,
@@ -5886,7 +5415,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: ReasonActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let credential_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         if command
@@ -5903,8 +5432,9 @@ impl PgManagementBackend {
             .map_err(|_| ManagementBackendError::Unavailable)?;
         let row = sqlx::query(
             "UPDATE gateway.anthropic_credential SET consecutive_cooldown_count=0,cooldown_until=NULL, \
-               scheduling_state_code=CASE WHEN scheduling_state_code='cooldown' THEN 'eligible' ELSE scheduling_state_code END, \
+               scheduling_state_code=CASE WHEN scheduling_state_code IN ('cooldown','blocked') THEN 'eligible' ELSE scheduling_state_code END, \
                capacity_state_code=CASE WHEN capacity_state_code='cooldown' THEN 'available' ELSE capacity_state_code END, \
+               last_error_code=NULL,last_error_message=NULL,last_error_at=NULL, \
                revision=revision+1,updated_at=clock_timestamp() \
              WHERE id=$1 AND revision=$2 AND lifecycle_state_code='active' \
              RETURNING group_id,revision,scheduling_state_code,capacity_state_code",
@@ -5925,29 +5455,19 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "credential_cooldown_cleared",
-                    "credential",
-                    credential_id,
-                    revision,
-                    json!({"group_id":group_id,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
         let runtime_applied = if let Some(runtime) = &self.scheduler_runtime {
-            runtime
+            let cooldown_cleared = runtime
                 .clear_credential_cooldown_projection(group_id, credential_id)
                 .await
-                .map_err(|_| ManagementBackendError::Unavailable)?
+                .map_err(|_| ManagementBackendError::Unavailable)?;
+            // A cleared account-level rejection may have left an admin fence behind.
+            let _ = runtime.unfence_credential_for_admin(group_id, credential_id).await;
+            cooldown_cleared
         } else {
             false
         };
@@ -6014,19 +5534,7 @@ impl PgManagementBackend {
             actor_id: parse_uuid(&principal.user_id)?,
             reason_code: reason.to_owned(),
         };
-        let audit = management_audit(
-            principal,
-            "credential_archived",
-            "credential",
-            credential_id,
-            expected_revision + 1,
-            json!({"group_id":group_id,"reason":reason,"secret_cleanup":"completed"}),
-        )?;
-        let revision = match self
-            .storage
-            .archive_credential_with_audit(&command, active_leases, &audit)
-            .await
-        {
+        let revision = match self.storage.archive_credential(&command, active_leases).await {
             Ok(revision) => revision,
             Err(error) => {
                 if let Some(runtime) = &self.scheduler_runtime {
@@ -6121,23 +5629,7 @@ impl PgManagementBackend {
             .execute(&mut *transaction)
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
-            self.storage
-                .append_audit_outbox_in(
-                    &mut transaction,
-                    &management_audit(
-                        principal,
-                        "credential_token_refresh_scheduled",
-                        "durable_job",
-                        job_id,
-                        1,
-                        json!({
-                            "credential_id":credential_id,"group_id":group_id,
-                            "expected_token_version":token_version,"reason":reason
-                        }),
-                    )?,
-                )
-                .await
-                .map_err(|_| ManagementBackendError::Unavailable)?;
+
             (job_id, "scheduled".to_owned())
         } else {
             let existing = sqlx::query(
@@ -6177,7 +5669,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let action: ReasonActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&action.reason))?;
+        required_action_reason(Some(&action.reason))?;
         let credential_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         if action
@@ -6264,20 +5756,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         insert_job_created_history(&mut transaction, job_id, "credential_plan_collection_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "credential_plan_collection_scheduled",
-                    "anthropic_credential",
-                    credential_id,
-                    expected_revision,
-                    json!({"job_id":job_id,"group_id":group_id,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -6312,7 +5791,7 @@ impl PgManagementBackend {
 
     async fn submit_credential_material(
         &self,
-        principal: &ManagementPrincipal,
+        _principal: &ManagementPrincipal,
         request: &ManagementRequest,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         let command: EnrollmentMaterialCommand = deserialize_body(request)?;
@@ -6409,20 +5888,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "credential_material_staged",
-                    "credential_enrollment",
-                    enrollment_id,
-                    expected_revision + 1,
-                    json!({"enrollment_id":enrollment_id,"material_count":secret_ids.len()}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -6434,7 +5900,7 @@ impl PgManagementBackend {
 
     async fn complete_credential_oauth_callback(
         &self,
-        principal: &ManagementPrincipal,
+        _principal: &ManagementPrincipal,
         request: &ManagementRequest,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         let command: OAuthCallbackCommand = deserialize_body(request)?;
@@ -6491,27 +5957,14 @@ impl PgManagementBackend {
             )
             .await
             .map_err(|error| map_storage_error(&error))?;
-        let OAuthCallbackClaim::Claimed(revision) = outcome else {
+        let OAuthCallbackClaim::Claimed(_revision) = outcome else {
             transaction
                 .commit()
                 .await
                 .map_err(|_| ManagementBackendError::Unavailable)?;
             return Err(ManagementBackendError::Precondition);
         };
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "credential_oauth_callback_claimed",
-                    "credential_enrollment",
-                    enrollment_id,
-                    revision,
-                    json!({"enrollment_id":enrollment_id}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -6529,8 +5982,15 @@ impl PgManagementBackend {
             "SELECT r.request_id,r.request_month::text AS request_month,r.platform_key_id,r.group_id,r.endpoint_code, \
                     r.client_class_code,r.phase_code,r.outcome_code,r.http_status,r.request_body_bytes,r.response_body_bytes, \
                     r.response_mode_code,r.client_commit_state_code,r.terminal_kind_code,r.usage_completeness_code, \
-                    r.created_at::text AS created_at,r.completed_at::text AS completed_at \
+                    r.created_at::text AS created_at,r.completed_at::text AS completed_at, \
+                    k.name AS platform_key_name,g.name AS group_name,m.upstream_model_id AS model, \
+                    r.reasoning_effort,r.client_name,r.client_version,r.request_type,r.first_content_ms, \
+                    COALESCE(r.duration_ms,CASE WHEN r.completed_at>=r.created_at THEN FLOOR(EXTRACT(EPOCH FROM (r.completed_at-r.created_at))*1000)::bigint END) AS duration_ms, \
+                    u.input_tokens,u.output_tokens,u.cache_read_input_tokens,u.cache_creation_input_tokens \
              FROM telemetry.request_record r JOIN iam.platform_key k ON k.id=r.platform_key_id \
+             LEFT JOIN gateway.credential_group g ON g.id=r.group_id \
+             LEFT JOIN catalog.model_definition m ON m.id=r.model_id \
+             LEFT JOIN telemetry.usage_observation u ON u.request_month=r.request_month AND u.request_id=r.request_id AND u.is_final_basis \
              WHERE ($1 OR k.owner_user_id=$2) ORDER BY r.created_at DESC,r.request_id DESC LIMIT 100",
         )
         .bind(principal.role == ManagementRole::PlatformAdmin)
@@ -6551,8 +6011,15 @@ impl PgManagementBackend {
             "SELECT r.request_id,r.request_month::text AS request_month,r.platform_key_id,r.group_id,r.endpoint_code, \
                     r.client_class_code,r.phase_code,r.outcome_code,r.http_status,r.request_body_bytes,r.response_body_bytes, \
                     r.response_mode_code,r.client_commit_state_code,r.terminal_kind_code,r.usage_completeness_code, \
-                    r.created_at::text AS created_at,r.completed_at::text AS completed_at \
+                    r.created_at::text AS created_at,r.completed_at::text AS completed_at, \
+                    k.name AS platform_key_name,g.name AS group_name,m.upstream_model_id AS model, \
+                    r.reasoning_effort,r.client_name,r.client_version,r.request_type,r.first_content_ms, \
+                    COALESCE(r.duration_ms,CASE WHEN r.completed_at>=r.created_at THEN FLOOR(EXTRACT(EPOCH FROM (r.completed_at-r.created_at))*1000)::bigint END) AS duration_ms, \
+                    u.input_tokens,u.output_tokens,u.cache_read_input_tokens,u.cache_creation_input_tokens \
              FROM telemetry.request_record r JOIN iam.platform_key k ON k.id=r.platform_key_id \
+             LEFT JOIN gateway.credential_group g ON g.id=r.group_id \
+             LEFT JOIN catalog.model_definition m ON m.id=r.model_id \
+             LEFT JOIN telemetry.usage_observation u ON u.request_month=r.request_month AND u.request_id=r.request_id AND u.is_final_basis \
              WHERE r.request_id=$1 AND ($2 OR k.owner_user_id=$3) ORDER BY r.request_month DESC LIMIT 1",
         )
         .bind(path_uuid(request, "id")?)
@@ -6589,10 +6056,36 @@ impl PgManagementBackend {
             .storage
             .get_request_body(request_id)
             .await
-            .map_err(|_| ManagementBackendError::Unavailable)?
-            .ok_or(ManagementBackendError::NotFound)?;
+            .map_err(|_| ManagementBackendError::Unavailable)?;
+        let Some(capture) = capture.filter(|capture| {
+            capture.original_headers.is_some()
+                || capture.final_upstream_headers.is_some()
+                || capture.upstream_response_headers.is_some()
+                || capture.original_request.is_some()
+                || capture.policy_request.is_some()
+                || capture.final_upstream_request.is_some()
+                || capture.upstream_response.is_some()
+                || capture.upstream_response_final.is_some()
+        }) else {
+            let config = self
+                .storage
+                .body_capture_config()
+                .await
+                .map_err(|_| ManagementBackendError::Unavailable)?;
+            return Ok(ManagementBackendResponse::ok(json!({"data": {
+                "request_id": request_id,
+                "capture_status": "unavailable",
+                "capture_enabled": config.enabled,
+                "retention_days": config.retention_days,
+                "max_bytes": config.max_bytes,
+            }, "meta": {}})));
+        };
         Ok(ManagementBackendResponse::ok(json!({"data": {
             "request_id": capture.request_id,
+            "capture_status": "captured",
+            "original_headers": capture.original_headers,
+            "final_upstream_headers": capture.final_upstream_headers,
+            "upstream_response_headers": capture.upstream_response_headers,
             "original_request": capture.original_request,
             "policy_request": capture.policy_request,
             "final_upstream_request": capture.final_upstream_request,
@@ -6601,6 +6094,41 @@ impl PgManagementBackend {
             "captured_at": capture.captured_at,
             "body_digest_mismatch": capture.body_digest_mismatch,
         }, "meta": {}})))
+    }
+
+    async fn get_request_preview(
+        &self,
+        principal: &ManagementPrincipal,
+        request: &ManagementRequest,
+    ) -> Result<ManagementBackendResponse, ManagementBackendError> {
+        let request_id = path_uuid(request, "id")?;
+        let (provider, endpoint): (String, String) = sqlx::query_as(
+            "SELECT g.provider_code,r.endpoint_code FROM telemetry.request_record r \
+             JOIN iam.platform_key k ON k.id=r.platform_key_id \
+             JOIN gateway.credential_group g ON g.id=r.group_id \
+             WHERE r.request_id=$1 AND ($2 OR k.owner_user_id=$3) ORDER BY r.request_month DESC LIMIT 1",
+        )
+        .bind(request_id)
+        .bind(principal.role == ManagementRole::PlatformAdmin)
+        .bind(parse_uuid(&principal.user_id)?)
+        .fetch_optional(&self.storage.pool())
+        .await
+        .map_err(|_| ManagementBackendError::Unavailable)?
+        .ok_or(ManagementBackendError::NotFound)?;
+        let capture = self
+            .storage
+            .get_request_body(request_id)
+            .await
+            .map_err(|_| ManagementBackendError::Unavailable)?;
+        let (original, policy) = capture.map_or((None, None), |c| (c.original_request, c.policy_request));
+        Ok(ManagementBackendResponse {
+            status: axum::http::StatusCode::OK,
+            body: json!({"data": request_preview_data(request_id, &provider, &endpoint, original, policy), "meta": {}}),
+            etag: None,
+            session_cookie: None,
+            clear_session_cookie: false,
+            no_store: true,
+        })
     }
 
     async fn get_body_capture_settings(&self) -> Result<ManagementBackendResponse, ManagementBackendError> {
@@ -6755,9 +6283,9 @@ impl PgManagementBackend {
                 if is_admin {
                     item["internal"] = json!({
                         "credential_id":required::<Uuid>(row,"credential_id")?,
-                        "profile_epoch":required::<i64>(row,"profile_epoch")?,
+                        "profile_epoch":required::<Option<i64>>(row,"profile_epoch")?,
                         "egress_epoch":required::<i64>(row,"egress_epoch")?,
-                        "transport_bundle_id":required::<Uuid>(row,"transport_bundle_id")?,
+                        "transport_bundle_id":required::<Option<Uuid>>(row,"transport_bundle_id")?,
                         "bundle_version":required::<Option<i64>>(row,"bundle_version")?,
                         "authority":required::<Option<String>>(row,"authority")?,
                         "protocol":required::<Option<String>>(row,"protocol_code")?,
@@ -6836,6 +6364,158 @@ impl PgManagementBackend {
                     "estimated_amount":required::<Option<String>>(row,"estimated_amount")?,
                     "currency":"USD",
                     "completeness":required::<String>(row,"completeness")?
+                }))
+            })
+            .collect::<Result<Vec<_>, ManagementBackendError>>()?;
+        Ok(list_response(&data))
+    }
+
+    async fn credential_usage(
+        &self,
+        principal: &ManagementPrincipal,
+        request: &ManagementRequest,
+    ) -> Result<ManagementBackendResponse, ManagementBackendError> {
+        require_platform_admin(principal)?;
+        let credential_id = path_uuid(request, "id")?;
+        let days = usage_window_days(request)?;
+        let exists = sqlx::query("SELECT 1 FROM gateway.anthropic_credential WHERE id=$1")
+            .bind(credential_id)
+            .fetch_optional(&self.storage.pool())
+            .await
+            .map_err(|_| ManagementBackendError::Unavailable)?;
+        if exists.is_none() {
+            return Err(ManagementBackendError::Precondition);
+        }
+        let payload = self.credential_usage_payload(credential_id, days).await?;
+        Ok(ManagementBackendResponse::ok(json!({"data":payload,"meta":{}})))
+    }
+
+    async fn openai_account_usage(
+        &self,
+        principal: &ManagementPrincipal,
+        request: &ManagementRequest,
+    ) -> Result<ManagementBackendResponse, ManagementBackendError> {
+        require_platform_admin(principal)?;
+        let account_id = path_uuid(request, "id")?;
+        let days = usage_window_days(request)?;
+        let exists = sqlx::query("SELECT 1 FROM gateway.openai_account WHERE id=$1")
+            .bind(account_id)
+            .fetch_optional(&self.storage.pool())
+            .await
+            .map_err(|_| ManagementBackendError::Unavailable)?;
+        if exists.is_none() {
+            return Err(ManagementBackendError::Precondition);
+        }
+        let payload = self.credential_usage_payload(account_id, days).await?;
+        Ok(ManagementBackendResponse::ok(json!({"data":payload,"meta":{}})))
+    }
+
+    /// Shared per-credential aggregation over `telemetry.usage_daily`; both
+    /// providers attribute usage rows to the same credential identity.
+    async fn credential_usage_payload(&self, credential_id: Uuid, days: i64) -> Result<Value, ManagementBackendError> {
+        let summary = sqlx::query(
+            "SELECT COALESCE(SUM(u.request_count),0)::bigint AS request_count, \
+                    SUM(u.input_tokens)::bigint AS input_tokens, \
+                    SUM(u.output_tokens)::bigint AS output_tokens, \
+                    SUM(u.estimated_amount)::text AS estimated_amount, \
+                    CASE WHEN BOOL_OR(u.completeness_code='unknown') THEN 'unknown' \
+                         WHEN BOOL_OR(u.completeness_code='partial') THEN 'partial' ELSE 'complete' END AS completeness \
+             FROM telemetry.usage_daily u \
+             WHERE u.credential_id=$1 AND u.bucket_day>=current_date-$2",
+        )
+        .bind(credential_id)
+        .bind(days)
+        .fetch_one(&self.storage.pool())
+        .await
+        .map_err(|_| ManagementBackendError::Unavailable)?;
+        let daily = sqlx::query(
+            "SELECT u.bucket_day::text AS bucket_day, \
+                    COALESCE(SUM(u.request_count),0)::bigint AS request_count, \
+                    SUM(u.input_tokens)::bigint AS input_tokens, \
+                    SUM(u.output_tokens)::bigint AS output_tokens, \
+                    SUM(u.estimated_amount)::text AS estimated_amount \
+             FROM telemetry.usage_daily u \
+             WHERE u.credential_id=$1 AND u.bucket_day>=current_date-$2 \
+             GROUP BY u.bucket_day ORDER BY u.bucket_day DESC LIMIT 90",
+        )
+        .bind(credential_id)
+        .bind(days)
+        .fetch_all(&self.storage.pool())
+        .await
+        .map_err(|_| ManagementBackendError::Unavailable)?;
+        let models = sqlx::query(
+            "SELECT COALESCE(md.upstream_model_id,'(unknown)') AS model, \
+                    COALESCE(SUM(u.request_count),0)::bigint AS request_count, \
+                    SUM(u.input_tokens)::bigint AS input_tokens, \
+                    SUM(u.output_tokens)::bigint AS output_tokens, \
+                    SUM(u.estimated_amount)::text AS estimated_amount \
+             FROM telemetry.usage_daily u \
+             LEFT JOIN catalog.model_definition md ON md.id=u.model_id \
+             WHERE u.credential_id=$1 AND u.bucket_day>=current_date-$2 \
+             GROUP BY md.upstream_model_id \
+             ORDER BY COALESCE(SUM(u.request_count),0) DESC LIMIT 50",
+        )
+        .bind(credential_id)
+        .bind(days)
+        .fetch_all(&self.storage.pool())
+        .await
+        .map_err(|_| ManagementBackendError::Unavailable)?;
+        Ok(json!({
+            "credential_id": credential_id,
+            "days": days,
+            "summary": {
+                "request_count": required::<i64>(&summary,"request_count").map_err(|_| ManagementBackendError::Unavailable)?,
+                "input_tokens": required::<Option<i64>>(&summary,"input_tokens").map_err(|_| ManagementBackendError::Unavailable)?,
+                "output_tokens": required::<Option<i64>>(&summary,"output_tokens").map_err(|_| ManagementBackendError::Unavailable)?,
+                "estimated_amount": required::<Option<String>>(&summary,"estimated_amount").map_err(|_| ManagementBackendError::Unavailable)?,
+                "currency":"USD",
+                "completeness": required::<String>(&summary,"completeness").map_err(|_| ManagementBackendError::Unavailable)?
+            },
+            "daily": daily.iter().map(|row| Ok(json!({
+                "bucket_day": required::<String>(row,"bucket_day")?,
+                "request_count": required::<i64>(row,"request_count")?,
+                "input_tokens": required::<Option<i64>>(row,"input_tokens")?,
+                "output_tokens": required::<Option<i64>>(row,"output_tokens")?,
+                "estimated_amount": required::<Option<String>>(row,"estimated_amount")?
+            }))).collect::<Result<Vec<_>, ManagementBackendError>>()?,
+            "models": models.iter().map(|row| Ok(json!({
+                "model": required::<String>(row,"model")?,
+                "request_count": required::<i64>(row,"request_count")?,
+                "input_tokens": required::<Option<i64>>(row,"input_tokens")?,
+                "output_tokens": required::<Option<i64>>(row,"output_tokens")?,
+                "estimated_amount": required::<Option<String>>(row,"estimated_amount")?
+            }))).collect::<Result<Vec<_>, ManagementBackendError>>()?
+        }))
+    }
+
+    async fn usage_today_by_credential(
+        &self,
+        principal: &ManagementPrincipal,
+    ) -> Result<ManagementBackendResponse, ManagementBackendError> {
+        let rows = sqlx::query(
+            "SELECT u.credential_id, \
+                    COALESCE(SUM(u.request_count),0)::bigint AS request_count, \
+                    SUM(u.input_tokens)::bigint AS input_tokens, \
+                    SUM(u.output_tokens)::bigint AS output_tokens, \
+                    SUM(u.estimated_amount)::text AS estimated_amount \
+             FROM telemetry.usage_daily u JOIN iam.platform_key k ON k.id=u.platform_key_id \
+             WHERE u.bucket_day=current_date AND u.credential_id IS NOT NULL AND ($1 OR k.owner_user_id=$2) \
+             GROUP BY u.credential_id ORDER BY u.credential_id LIMIT 1000",
+        )
+        .bind(principal.role == ManagementRole::PlatformAdmin)
+        .bind(parse_uuid(&principal.user_id)?)
+        .fetch_all(&self.storage.pool())
+        .await
+        .map_err(|_| ManagementBackendError::Unavailable)?;
+        let data = rows
+            .iter()
+            .map(|row| {
+                Ok(json!({
+                    "credential_id": required::<Uuid>(row,"credential_id")?,
+                    "request_count": required::<i64>(row,"request_count")?,
+                    "input_tokens": required::<Option<i64>>(row,"input_tokens")?,
+                    "output_tokens": required::<Option<i64>>(row,"output_tokens")?,
+                    "estimated_amount": required::<Option<String>>(row,"estimated_amount")?
                 }))
             })
             .collect::<Result<Vec<_>, ManagementBackendError>>()?;
@@ -6947,20 +6627,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "usage_export_scheduled",
-                    "usage_export",
-                    export_id,
-                    1,
-                    json!({"scope":scope,"dataset":"usage_requests_v1","format":command.format}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -7120,7 +6787,7 @@ impl PgManagementBackend {
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
         self.storage
-            .consume_usage_export_download(export_id, requested_by, artifact.revision, role_code(principal.role))
+            .consume_usage_export_download(export_id, requested_by, artifact.revision)
             .await
             .map_err(|error| match error {
                 StorageError::RevisionConflict => ManagementBackendError::NotFound,
@@ -7145,7 +6812,7 @@ impl PgManagementBackend {
             return Err(ManagementBackendError::NotFound);
         }
         let command: BackupJobCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let step_up_id = parse_input_uuid(&command.step_up_grant_id)?;
         let run_id = Uuid::now_v7();
         let job_id = Uuid::now_v7();
@@ -7181,20 +6848,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "backup_scheduled",
-                    "backup_run",
-                    run_id,
-                    1,
-                    json!({"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -7291,20 +6945,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "upgrade_preflight_scheduled",
-                    "upgrade_check",
-                    run_id,
-                    1,
-                    json!({"reason":reason,"candidate_release":release_version,"candidate_digest":lower_hex(&manifest_digest)}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -7398,7 +7039,7 @@ impl PgManagementBackend {
             return Err(ManagementBackendError::NotFound);
         }
         let command: RestoreOperationCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let backup_run_id = parse_input_uuid(&command.backup_run_id)?;
         let step_up_id = parse_input_uuid(&command.step_up_grant_id)?;
         let recovery_point = if let Some(value) = command.recovery_point.as_deref() {
@@ -7468,20 +7109,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "restore_scheduled",
-                    kind,
-                    drill_id,
-                    1,
-                    json!({"backup_run_id":backup_run_id,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -7676,20 +7304,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Precondition)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "proxy_created",
-                    "proxy",
-                    proxy_id,
-                    1,
-                    json!({"type":command.proxy_type,"stability":"static","has_auth":has_credentials}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -7744,21 +7359,8 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Precondition)?
         .ok_or(ManagementBackendError::Precondition)?;
-        let revision = required::<i64>(&row, "revision")?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "proxy_updated",
-                    "proxy",
-                    proxy_id,
-                    revision,
-                    json!({"name_changed":command.name.is_some(),"capacity_changed":command.max_active_credentials.is_some()}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+        required::<i64>(&row, "revision")?;
+
         transaction
             .commit()
             .await
@@ -7815,7 +7417,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: ReasonActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let expected_revision = request_revision(request)?;
         if command
             .expected_revision
@@ -7844,7 +7446,7 @@ impl PgManagementBackend {
         .map_err(|_| ManagementBackendError::Unavailable)?
         .ok_or(ManagementBackendError::Precondition)?;
         let generation = required::<i64>(&proxy, "probe_generation")?;
-        let revision = required::<i64>(&proxy, "revision")?;
+        required::<i64>(&proxy, "revision")?;
         let created_at: String = sqlx::query_scalar(
             "INSERT INTO ops.durable_job \
              (id,kind_code,idempotency_key,state_code,payload_schema_version,payload,run_after,lease_generation,attempt_count,max_attempts,created_at,updated_at) \
@@ -7858,20 +7460,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         insert_job_created_history(&mut transaction, job_id, "proxy_probe_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "proxy_probe_scheduled",
-                    "proxy",
-                    proxy_id,
-                    revision,
-                    json!({"reason":reason,"probe_generation":generation,"job_id":job_id}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -7892,7 +7481,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: ReasonActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let expected_revision = request_revision(request)?;
         if command
             .expected_revision
@@ -8007,7 +7596,7 @@ impl PgManagementBackend {
             _ => return Err(ManagementBackendError::InvalidInput),
         }
         .ok_or(ManagementBackendError::Precondition)?;
-        let revision = required::<i64>(&row, "revision")?;
+        required::<i64>(&row, "revision")?;
         if action == "archive"
             && let Some(secret_id) = required::<Option<Uuid>>(&row, "auth_secret_id")?
         {
@@ -8021,20 +7610,7 @@ impl PgManagementBackend {
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    &format!("proxy_{action}"),
-                    "proxy",
-                    proxy_id,
-                    revision,
-                    json!({"reason":reason,"affected_credentials":credential_ids.len()}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -8049,7 +7625,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: ProxyReplaceSecretCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         if command.username.is_empty()
             || command.username.len() > 1_024
             || command.password.is_empty()
@@ -8114,7 +7690,7 @@ impl PgManagementBackend {
             .map_err(|_| ManagementBackendError::Unavailable)?;
         }
         let generation = required::<i64>(&update, "probe_generation")?;
-        let revision = required::<i64>(&update, "revision")?;
+        required::<i64>(&update, "revision")?;
         let created_at: String = sqlx::query_scalar(
             "INSERT INTO ops.durable_job \
              (id,kind_code,idempotency_key,state_code,payload_schema_version,payload,run_after,lease_generation,attempt_count,max_attempts,created_at,updated_at) \
@@ -8128,20 +7704,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         insert_job_created_history(&mut transaction, job_id, "proxy_secret_replaced_probe_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "proxy_secret_replaced",
-                    "proxy",
-                    proxy_id,
-                    revision,
-                    json!({"reason":reason,"probe_generation":generation,"job_id":job_id}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -8346,7 +7909,7 @@ impl PgManagementBackend {
             .as_ref()
             .ok_or(ManagementBackendError::Unavailable)?;
         let command: TransportBundleCreateCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         if command.name.trim().is_empty()
             || command.name.len() > 128
             || command.schema_version != 1
@@ -8459,24 +8022,7 @@ impl PgManagementBackend {
             .execute(&mut *transaction)
             .await
             .map_err(|_| ManagementBackendError::Precondition)?;
-            self.storage
-                .append_audit_outbox_in(
-                    &mut transaction,
-                    &management_audit(
-                        principal,
-                        "transport_bundle_created",
-                        "transport_bundle",
-                        bundle_id,
-                        artifact_version,
-                        json!({
-                            "name":command.name.trim(),"source_archetype_version_id":source_version_id,
-                            "capture_cohort":envelope.payload.capture_cohort,"protocol":protocol,
-                            "manifest_hash":lower_hex(&manifest_hash),"reason":reason
-                        }),
-                    )?,
-                )
-                .await
-                .map_err(|_| ManagementBackendError::Unavailable)?;
+
             transaction
                 .commit()
                 .await
@@ -8510,7 +8056,7 @@ impl PgManagementBackend {
             .as_ref()
             .ok_or(ManagementBackendError::Unavailable)?;
         let command: LifecycleActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(command.reason.as_deref())?;
+        required_action_reason(command.reason.as_deref())?;
         let expected_revision = request_revision(request)?;
         if command
             .expected_revision
@@ -8554,44 +8100,62 @@ impl PgManagementBackend {
         {
             return Err(ManagementBackendError::Precondition);
         }
-        let evidence_set_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT evidence_set_id FROM catalog.environment_archetype_version \
-             WHERE id=$1 AND lifecycle_code IN ('verified','canary','active') AND capture_cohort=$2",
+        let source = sqlx::query(
+            "SELECT version.evidence_set_id,version.protocol_profile,version.content_hash \
+             FROM catalog.environment_archetype_version version \
+             JOIN catalog.evidence_set evidence ON evidence.id=version.evidence_set_id \
+             WHERE version.id=$1 AND version.lifecycle_code IN ('verified','canary','active') \
+               AND version.capture_cohort=$2 AND evidence.capture_cohort=$2 AND evidence.state_code='complete'",
         )
         .bind(source_version_id)
         .bind(envelope.payload.capture_cohort.as_ref())
         .fetch_optional(&self.storage.pool())
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?
-        .flatten();
-        let evidence_set_id = evidence_set_id.ok_or(ManagementBackendError::Precondition)?;
-        for hash in &envelope.payload.evidence_hashes {
-            let digest = decode_sha256_hex(hash)?;
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM catalog.evidence_item WHERE evidence_set_id=$1 AND content_hash=$2)",
+        .ok_or(ManagementBackendError::Precondition)?;
+        let evidence_set_id = required::<Uuid>(&source, "evidence_set_id")?;
+        // verify_and_compile above revalidates the current trust key and signed payload.
+        // Imported releases carry the publisher's evidence decision; they do not
+        // contain raw captures and must not manufacture local replay results.
+        let signed_release = signed_release_source_matches(
+            &envelope,
+            &required::<Value>(&source, "protocol_profile")?,
+            &required::<Vec<u8>>(&source, "content_hash")?,
+        )?;
+        if !signed_release {
+            for hash in &envelope.payload.evidence_hashes {
+                let digest = decode_sha256_hex(hash)?;
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM catalog.evidence_item WHERE evidence_set_id=$1 AND content_hash=$2)",
+                )
+                .bind(evidence_set_id)
+                .bind(digest.to_vec())
+                .fetch_one(&self.storage.pool())
+                .await
+                .map_err(|_| ManagementBackendError::Unavailable)?;
+                if !exists {
+                    return Err(ManagementBackendError::Precondition);
+                }
+            }
+            let replay_passed: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM catalog.replay_verification \
+             WHERE archetype_version_id=$1 AND transport_bundle_id=$2 AND evidence_set_id=$3 AND state_code='passed')",
             )
+            .bind(source_version_id)
+            .bind(bundle_id)
             .bind(evidence_set_id)
-            .bind(digest.to_vec())
             .fetch_one(&self.storage.pool())
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
-            if !exists {
+            if !replay_passed {
                 return Err(ManagementBackendError::Precondition);
             }
         }
-        let replay_passed: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM catalog.replay_verification \
-             WHERE archetype_version_id=$1 AND transport_bundle_id=$2 AND evidence_set_id=$3 AND state_code='passed')",
-        )
-        .bind(source_version_id)
-        .bind(bundle_id)
-        .bind(evidence_set_id)
-        .fetch_one(&self.storage.pool())
-        .await
-        .map_err(|_| ManagementBackendError::Unavailable)?;
-        if !replay_passed {
-            return Err(ManagementBackendError::Precondition);
-        }
+        let verification_basis = if signed_release {
+            "signed_release_attestation"
+        } else {
+            "local_evidence_and_replay"
+        };
 
         let job_id = Uuid::now_v7();
         let mut transaction = self
@@ -8632,24 +8196,11 @@ impl PgManagementBackend {
         )
         .bind(Uuid::now_v7())
         .bind(job_id)
-        .bind(json!({"bundle_id":bundle_id,"evidence_set_id":evidence_set_id}))
+        .bind(json!({"bundle_id":bundle_id,"evidence_set_id":evidence_set_id,"verification_basis":verification_basis}))
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "transport_bundle_verified",
-                    "transport_bundle",
-                    bundle_id,
-                    artifact_version,
-                    json!({"evidence_set_id":evidence_set_id,"job_id":job_id,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -8674,7 +8225,7 @@ impl PgManagementBackend {
             .ok_or(ManagementBackendError::Unavailable)?;
         let _activation_guard = runtime.activation_lock.lock().await;
         let command: TransportBundleActivateCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let expected_revision = request_revision(request)?;
         if command
             .expected_revision
@@ -8795,28 +8346,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    if rollback {
-                        "transport_bundle_rolled_back"
-                    } else {
-                        "transport_bundle_activated"
-                    },
-                    "transport_bundle",
-                    bundle_id,
-                    activation_generation,
-                    json!({
-                        "artifact_version":artifact_version,"source_archetype_version_id":source_version_id,
-                        "protocol":protocol,"previous_bundle_id":previous_bundle_id,
-                        "reason":reason
-                    }),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -8843,7 +8373,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: EnvironmentArchetypeCreateCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let payload = &command.payload;
         if command.name.trim().is_empty()
             || command.name.len() > 128
@@ -9011,24 +8541,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "environment_archetype_version_created",
-                    "environment_archetype",
-                    archetype_id,
-                    root_revision,
-                    json!({
-                        "version_id":version_id,"version":version,"os_family":payload.os_family,
-                        "architecture":payload.architecture,"capture_cohort":payload.capture_cohort,
-                        "evidence_set_id":evidence_set_id,"content_hash":lower_hex(&content_hash),"reason":reason
-                    }),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -9052,7 +8565,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: LifecycleActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(command.reason.as_deref())?;
+        required_action_reason(command.reason.as_deref())?;
         let expected_revision = request_revision(request)?;
         if command
             .expected_revision
@@ -9205,22 +8718,7 @@ impl PgManagementBackend {
             "retire" => "retired",
             _ => unreachable!(),
         };
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    &format!("environment_archetype_{action}"),
-                    "environment_archetype",
-                    archetype_id,
-                    root_revision,
-                    json!({
-                        "version_id":version_id,"version":version_number,"from":state,"to":next_state,"reason":reason
-                    }),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -9283,7 +8781,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: PlanMappingCreateCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         validate_plan_mapping_value(&command.mapping)?;
         let artifact_id = Uuid::now_v7();
         let payload = json!({"mappings":command.mapping});
@@ -9318,20 +8816,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "plan_mapping_created",
-                    "plan_mapping",
-                    artifact_id,
-                    version,
-                    json!({"reason":reason,"content_sha256":lower_hex(&hash)}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -9386,7 +8871,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: ArtifactActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let expected_revision = command.expected_revision;
         let artifact_id = path_uuid(request, "id")?;
         let job_id = Uuid::now_v7();
@@ -9477,20 +8962,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         insert_job_created_history(&mut transaction, job_id, "plan_mapping_recompute_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "plan_mapping_activated",
-                    "plan_mapping",
-                    artifact_id,
-                    pointer_revision,
-                    json!({"reason":reason,"recompute_job_id":job_id}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -9539,20 +9011,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         insert_job_created_history(&mut transaction, job_id, "plan_mapping_manual_recompute_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "plan_mapping_recompute_scheduled",
-                    "plan_mapping",
-                    artifact_id,
-                    pointer_revision,
-                    json!({"job_id":job_id}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -9663,7 +9122,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: ModelRefreshCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let mut transaction = self
             .storage
             .pool()
@@ -9711,20 +9170,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         insert_job_created_history(&mut transaction, job_id, "model_catalog_discovery_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "model_catalog_discovery_scheduled",
-                    "model_catalog",
-                    job_id,
-                    1,
-                    json!({"job_id":job_id,"reason":reason,"source":"anthropic_public_docs"}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -9792,7 +9238,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: CapabilityCreateCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let model_id = parse_input_uuid(&command.model_id)?;
         if command.schema_version != 1 || command.rules.is_empty() || command.rules.len() > 4_096 {
             return Err(ManagementBackendError::InvalidInput);
@@ -9843,20 +9289,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Precondition)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "capability_version_created",
-                    "model_capability",
-                    capability_id,
-                    model_revision,
-                    json!({"model_id":model_id,"capability_version":version,"content_hash":lower_hex(&content_hash),"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -9926,7 +9359,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: CapabilityActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(command.reason.as_deref())?;
+        required_action_reason(command.reason.as_deref())?;
         let expected_revision = request_revision(request)?;
         if command
             .expected_revision
@@ -9994,20 +9427,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?
         .ok_or(ManagementBackendError::Precondition)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "capability_version_activated",
-                    "model_capability",
-                    capability_id,
-                    new_revision,
-                    json!({"model_id":model_id,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -10027,7 +9447,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: ModelLifecycleCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let expected_revision = request_revision(request)?;
         if command
             .expected_revision
@@ -10071,7 +9491,7 @@ impl PgManagementBackend {
                 return Err(ManagementBackendError::Precondition);
             }
         }
-        let new_revision: i64 = sqlx::query_scalar(
+        let _new_revision: i64 = sqlx::query_scalar(
             "UPDATE catalog.model_definition SET lifecycle_code=$3,revision=revision+1 WHERE id=$1 AND revision=$2 RETURNING revision",
         )
         .bind(model_id)
@@ -10081,20 +9501,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?
         .ok_or(ManagementBackendError::Precondition)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    &format!("model_{action}"),
-                    "model",
-                    model_id,
-                    new_revision,
-                    json!({"from":current,"to":target,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -10195,7 +9602,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: PriceVersionCreateCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         if command.currency != "USD"
             || command.entries.is_empty()
             || command.entries.len() > 1_000
@@ -10306,21 +9713,7 @@ impl PgManagementBackend {
             .await
             .map_err(|_| ManagementBackendError::InvalidInput)?;
         }
-        let aggregate_id = Uuid::now_v7();
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "price_version_created",
-                    "price_version",
-                    aggregate_id,
-                    version,
-                    json!({"price_version":version,"currency":"USD","entry_count":model_ids.len(),"content_hash":lower_hex(&hash),"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -10390,7 +9783,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: RuleSetCreateCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let scope_id = parse_input_uuid(&command.scope_id)?;
         if command.name.trim().is_empty()
             || command.name.len() > 128
@@ -10487,23 +9880,7 @@ impl PgManagementBackend {
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "ruleset_created",
-                    "ruleset",
-                    artifact_id,
-                    version,
-                    json!({
-                        "scope_type":command.scope_type,"scope_id":scope_id,"rule_count":payload["rules"].as_array().map_or(0,Vec::len),
-                        "content_hash":lower_hex(&content_hash),"reason":reason
-                    }),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -10667,7 +10044,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: ArtifactActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let expected_artifact_version = request_revision(request)?;
         if command
             .expected_revision
@@ -10953,24 +10330,7 @@ impl PgManagementBackend {
             .map_err(|_| ManagementBackendError::Unavailable)?;
             (next_version, config_pointer_revision, resource_revision)
         };
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "ruleset_activated",
-                    "ruleset",
-                    artifact_id,
-                    artifact_pointer_revision,
-                    json!({
-                        "scope_type":scope_type,"scope_id":scope_id,"artifact_version":artifact_version,
-                        "configuration_version":configuration_version,"configuration_pointer_revision":configuration_pointer_revision,
-                        "resource_revision":resource_revision,"reason":reason
-                    }),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -11076,24 +10436,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         let revision: i64 = required(&row, "revision")?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    if target == "resolved" {
-                        "alert_resolved"
-                    } else {
-                        "alert_acknowledged"
-                    },
-                    "alert",
-                    alert_id,
-                    revision,
-                    json!({"from":current_state,"to":target,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -11167,20 +10510,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::InvalidInput)?
         .ok_or(ManagementBackendError::InvalidInput)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "alert_silence_created",
-                    "alert_silence",
-                    silence_id,
-                    1,
-                    json!({"fingerprint_pattern":pattern,"expires_at":command.expires_at,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -11227,7 +10557,7 @@ impl PgManagementBackend {
             return Err(ManagementBackendError::NotFound);
         }
         let command: ReasonActionCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let silence_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         if command
@@ -11266,20 +10596,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         let revision: i64 = required(&row, "revision")?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "alert_silence_ended",
-                    "alert_silence",
-                    silence_id,
-                    revision,
-                    json!({"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -11389,20 +10706,7 @@ impl PgManagementBackend {
         .fetch_one(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "notification_channel_created",
-                    "notification_destination",
-                    destination_id,
-                    1,
-                    json!({"kind":kind,"state":state,"name":name}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -11424,7 +10728,7 @@ impl PgManagementBackend {
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
         let command: NotificationChannelTestCommand = deserialize_body(request)?;
-        let reason = required_action_reason(Some(&command.reason))?;
+        required_action_reason(Some(&command.reason))?;
         let destination_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         if command.expected_revision != expected_revision {
@@ -11495,20 +10799,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         insert_job_created_history(&mut transaction, job_id, "notification_test_scheduled").await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "notification_channel_test_scheduled",
-                    "notification_destination",
-                    destination_id,
-                    expected_revision,
-                    json!({"delivery_id":delivery_id,"job_id":job_id,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -11730,20 +11021,7 @@ impl PgManagementBackend {
         .await
         .map_err(|_| ManagementBackendError::Unavailable)?;
         cancel_job_projection(&mut transaction, &kind, job_id, &payload).await?;
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &management_audit(
-                    principal,
-                    "durable_job_cancelled",
-                    "durable_job",
-                    job_id,
-                    generation.saturating_add(1),
-                    json!({"kind":kind,"from_state":state,"reason":reason}),
-                )?,
-            )
-            .await
-            .map_err(|_| ManagementBackendError::Unavailable)?;
+
         transaction
             .commit()
             .await
@@ -11752,31 +11030,6 @@ impl PgManagementBackend {
             &json!({"id":job_id,"kind":kind,"state":"cancelled","lease_generation":generation}),
             generation.saturating_add(1),
         ))
-    }
-
-    async fn list_audit_events(
-        &self,
-        principal: &ManagementPrincipal,
-    ) -> Result<ManagementBackendResponse, ManagementBackendError> {
-        let user_id = parse_uuid(&principal.user_id)?;
-        let rows = sqlx::query(
-            "SELECT event_id,event_day::text AS event_day,daily_sequence,actor_type_code,actor_id,action_code, \
-                    object_type_code,object_id,outcome_code,canonical_redacted_event,occurred_at::text AS occurred_at \
-             FROM security.audit_event event \
-             WHERE $1 OR event.actor_id=$2 OR (event.object_type_code='user' AND event.object_id=$2::text) \
-                OR EXISTS (SELECT 1 FROM iam.platform_key key \
-                           WHERE key.owner_user_id=$2 AND \
-                             ((event.object_type_code='platform_key' AND event.object_id=key.id::text) \
-                               OR (event.actor_type_code='platform_key' AND event.actor_id=key.id))) \
-             ORDER BY occurred_at DESC,event_id DESC LIMIT 100",
-        )
-        .bind(principal.role == ManagementRole::PlatformAdmin)
-        .bind(user_id)
-        .fetch_all(&self.storage.pool())
-        .await
-        .map_err(|_| ManagementBackendError::Unavailable)?;
-        let data = rows.iter().map(audit_projection).collect::<Result<Vec<_>, _>>()?;
-        Ok(list_response(&data))
     }
 
     async fn begin_idempotency(
@@ -11964,9 +11217,6 @@ impl ManagementBackend for PgManagementBackend {
         principal: Option<&ManagementPrincipal>,
         request: ManagementRequest,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
-        if !self.integrity_guard.healthy() && high_risk_management_operation(&request) {
-            return Err(ManagementBackendError::Unavailable);
-        }
         let idempotency = match self.begin_idempotency(principal, &request).await? {
             IdempotencyState::Replay(response) => return Ok(response),
             state => state,
@@ -12078,10 +11328,6 @@ impl ManagementBackend for PgManagementBackend {
             }
             "postPlatformKeysByIdRevoke" => {
                 self.platform_key_lifecycle(required_principal(principal)?, &request, "revoked")
-                    .await
-            }
-            "getPlatformKeysByIdAuditEvents" => {
-                self.list_platform_key_audit_events(required_principal(principal)?, &request)
                     .await
             }
             "getPlatformKeysByIdClientConfig" => {
@@ -12225,12 +11471,23 @@ impl ManagementBackend for PgManagementBackend {
             "getRequests" => self.list_requests(required_principal(principal)?).await,
             "getRequestsById" => self.get_request(required_principal(principal)?, &request).await,
             "getRequestsByIdBody" => self.get_request_body(required_principal(principal)?, &request).await,
+            "getRequestsByIdPreview" => self.get_request_preview(required_principal(principal)?, &request).await,
             "getRequestsByIdAttempts" => {
                 self.list_request_attempts(required_principal(principal)?, &request)
                     .await
             }
             "getUsageSummary" => self.usage_summary(required_principal(principal)?).await,
             "getUsageTimeseries" => self.usage_timeseries(required_principal(principal)?).await,
+            "getUsageTodayByCredential" => self.usage_today_by_credential(required_principal(principal)?).await,
+            "getCredentialsByIdUsage" => self.credential_usage(required_principal(principal)?, &request).await,
+            "getOpenaiAccountsByIdUsage" => {
+                self.openai_account_usage(required_principal(principal)?, &request)
+                    .await
+            }
+            "postCredentialsByIdProbeUsage" => {
+                self.probe_credential_usage(required_principal(principal)?, &request)
+                    .await
+            }
             "getExports" => self.list_usage_exports(required_principal(principal)?).await,
             "postExports" => self.create_usage_export(required_principal(principal)?, &request).await,
             "getExportsById" => self.get_usage_export(required_principal(principal)?, &request).await,
@@ -12385,13 +11642,38 @@ impl ManagementBackend for PgManagementBackend {
             "getOperationsJobs" => self.list_jobs(required_principal(principal)?).await,
             "getOperationsJobsById" => self.get_job(required_principal(principal)?, &request).await,
             "postOperationsJobsByIdCancel" => self.cancel_job(required_principal(principal)?, &request).await,
-            "getAuditEvents" => self.list_audit_events(required_principal(principal)?).await,
             "getSettingsBodyCapture" => self.get_body_capture_settings().await,
             "putSettingsBodyCapture" => {
                 self.update_body_capture_settings(required_principal(principal)?, &request)
                     .await
             }
             "getSettingsRuntime" => self.get_runtime_settings().await,
+            "getSettingsOpenai" => self.get_openai_settings().await,
+            "getGroupsByIdOpenaiPolicy" | "putGroupsByIdOpenaiPolicy" => {
+                self.openai_group_policy(required_principal(principal)?, &request).await
+            }
+            "getOpenaiAccounts" => self.list_openai_accounts(&request).await,
+            "postOpenaiOauthSessions" => self.begin_openai_oauth(required_principal(principal)?, &request).await,
+            "postOpenaiOauthSessionsByIdComplete" => {
+                self.finish_openai_oauth(required_principal(principal)?, &request).await
+            }
+            "postOpenaiAccountsByIdRefresh" => {
+                self.manual_refresh_openai_account(required_principal(principal)?, &request)
+                    .await
+            }
+            "postOpenaiAccountsByIdTest" => self.test_openai_account(required_principal(principal)?, &request).await,
+            "patchOpenaiAccountsById" => {
+                self.patch_openai_account(required_principal(principal)?, &request)
+                    .await
+            }
+            "postOpenaiAccounts" => {
+                self.create_openai_account(required_principal(principal)?, &request)
+                    .await
+            }
+            "putSettingsOpenai" => {
+                self.update_openai_settings(required_principal(principal)?, &request)
+                    .await
+            }
             "putSettingsRuntime" => {
                 self.update_runtime_settings(required_principal(principal)?, &request)
                     .await
@@ -12473,74 +11755,6 @@ struct ApprovalCreateCommand {
 struct ApprovalDecisionCommand {
     reason: String,
     step_up_grant_id: String,
-}
-
-fn high_risk_management_operation(request: &ManagementRequest) -> bool {
-    request.method != axum::http::Method::GET
-        && matches!(
-            request.operation_id.as_ref(),
-            "postApprovalCases"
-                | "postApprovalCasesByIdApprove"
-                | "postApprovalCasesByIdReject"
-                | "postApprovalCasesByIdCancel"
-                | "postPlatformKeys"
-                | "postPlatformKeysByIdReveal"
-                | "postPlatformKeysByIdDisable"
-                | "postPlatformKeysByIdReactivate"
-                | "postPlatformKeysByIdRevoke"
-                | "patchPlatformKeysById"
-                | "postUsersByIdSessionsRevokeAll"
-                | "postCredentialsByIdDisable"
-                | "postCredentialsByIdReactivate"
-                | "postCredentialsByIdRevoke"
-                | "postCredentialsByIdClearCooldown"
-                | "postCredentialsByIdArchive"
-                | "postCredentialsByIdRefreshToken"
-                | "postCredentialsByIdRefreshPlan"
-                | "patchCredentialsByIdSchedulingConfig"
-                | "postCredentialsByIdMigrateGroup"
-                | "postCredentialsByIdRebindEgress"
-                | "postCredentialsByIdMigrateProfileCohort"
-                | "postCredentialsByIdRebuildDeviceIdentity"
-                | "postCredentialsByIdBrowserOperationsByOperationIdCancel"
-                | "postCredentialsByIdReauthStrategyDisable"
-                | "postCredentialsByIdReauthStrategyInitialize"
-                | "postCredentialsByIdReauthStrategyReactivate"
-                | "postOperationsBackupJobs"
-                | "postOperationsRestoreValidations"
-                | "postOperationsDrills"
-                | "postPlanMappingVersionsByIdActivate"
-                | "postPlanMappingVersionsByIdRollback"
-                | "postOperationsKeyRotationJobs"
-                | "postOperationsKeyLifecycleJobs"
-                | "postProxies"
-                | "postProxiesByIdArchive"
-                | "postProxiesByIdReplaceSecret"
-                | "postAlertsByIdAcknowledge"
-                | "postAlertsByIdResolve"
-                | "postAlertSilences"
-                | "postAlertSilencesByIdEnd"
-                | "postNotificationChannels"
-                | "postNotificationChannelsByIdTest"
-                | "postModelsByIdApprove"
-                | "postModelsRefresh"
-                | "postModelsByIdDeprecate"
-                | "postModelsByIdDisable"
-                | "postCapabilityVersionsByIdActivate"
-                | "postPriceVersions"
-                | "postPriceSyncRun"
-                | "postGroupsByIdConfigVersionsByVersionActivate"
-                | "postGroupsByIdRollbackConfig"
-                | "postRulesetsByIdActivate"
-                | "postEnvironmentArchetypes"
-                | "postEnvironmentArchetypesByIdVerify"
-                | "postEnvironmentArchetypesByIdActivate"
-                | "postEnvironmentArchetypesByIdRetire"
-                | "postTransportBundles"
-                | "postTransportBundlesByIdVerify"
-                | "postTransportBundlesByIdActivate"
-                | "postTransportBundlesByIdRollback"
-        )
 }
 
 #[derive(Deserialize)]
@@ -12685,6 +11899,8 @@ struct UserPatchCommand {
 #[derive(Deserialize)]
 struct GroupCreateCommand {
     name: String,
+    #[serde(default)]
+    provider: gateway_domain::Provider,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -13403,11 +12619,11 @@ async fn validate_platform_key_allowlists(
     let allowed: i64 = sqlx::query_scalar(
         "SELECT CASE WHEN config.model_scope_code='all_published' THEN \
                     (SELECT count(*) FROM catalog.model_definition model \
-                     WHERE model.id=ANY($2) AND model.lifecycle_code='published') \
+                     WHERE model.id=ANY($2) AND model.lifecycle_code='published' AND model.provider_code=(SELECT provider_code FROM gateway.credential_group WHERE id=$1)) \
                 ELSE \
                     (SELECT count(*) FROM catalog.model_definition model \
                      JOIN gateway.group_model_allowlist group_model ON group_model.group_config_id=config.id AND group_model.model_id=model.id \
-                     WHERE model.id=ANY($2)) END \
+                     WHERE model.id=ANY($2) AND model.provider_code=(SELECT provider_code FROM gateway.credential_group WHERE id=$1)) END \
          FROM gateway.group_active_config active \
          JOIN gateway.group_config config ON config.id=active.config_id AND config.group_id=$1",
     )
@@ -13442,11 +12658,11 @@ async fn validate_platform_key_allowlists_in(
     let allowed: i64 = sqlx::query_scalar(
         "SELECT CASE WHEN config.model_scope_code='all_published' THEN \
                     (SELECT count(*) FROM catalog.model_definition model \
-                     WHERE model.id=ANY($2) AND model.lifecycle_code='published') \
+                     WHERE model.id=ANY($2) AND model.lifecycle_code='published' AND model.provider_code=(SELECT provider_code FROM gateway.credential_group WHERE id=$1)) \
                 ELSE \
                     (SELECT count(*) FROM catalog.model_definition model \
                      JOIN gateway.group_model_allowlist group_model ON group_model.group_config_id=config.id AND group_model.model_id=model.id \
-                     WHERE model.id=ANY($2)) END \
+                     WHERE model.id=ANY($2) AND model.provider_code=(SELECT provider_code FROM gateway.credential_group WHERE id=$1)) END \
          FROM gateway.group_active_config active \
          JOIN gateway.group_config config ON config.id=active.config_id AND config.group_id=$1",
     )
@@ -13534,29 +12750,6 @@ fn masked_account_uuid(value: Uuid) -> String {
     format!("{}…{}", &encoded[..8], &encoded[encoded.len() - 4..])
 }
 
-fn management_audit(
-    principal: &ManagementPrincipal,
-    action: &str,
-    object_type: &str,
-    aggregate_id: Uuid,
-    aggregate_revision: i64,
-    redacted_detail: Value,
-) -> Result<AuditOutboxRecord, ManagementBackendError> {
-    Ok(AuditOutboxRecord {
-        actor_type: role_code(principal.role).to_owned(),
-        actor_id: Some(parse_uuid(&principal.user_id)?),
-        action: action.to_owned(),
-        object_type: object_type.to_owned(),
-        object_id: Some(aggregate_id.to_string()),
-        outcome: "success".to_owned(),
-        redacted_detail,
-        topic: format!("{object_type}.{action}"),
-        aggregate_id,
-        aggregate_revision,
-        payload: json!({"object_id":aggregate_id,"revision":aggregate_revision}),
-    })
-}
-
 fn path_uuid(request: &ManagementRequest, name: &str) -> Result<Uuid, ManagementBackendError> {
     request
         .path_parameters
@@ -13573,6 +12766,20 @@ fn request_revision(request: &ManagementRequest) -> Result<i64, ManagementBacken
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value >= 1)
         .ok_or(ManagementBackendError::InvalidInput)
+}
+
+fn usage_window_days(request: &ManagementRequest) -> Result<i64, ManagementBackendError> {
+    let query: std::collections::BTreeMap<String, String> =
+        serde_urlencoded::from_str(request.query.as_deref().unwrap_or(""))
+            .map_err(|_| ManagementBackendError::InvalidInput)?;
+    let days = query
+        .get("days")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(30);
+    if !(1..=90).contains(&days) {
+        return Err(ManagementBackendError::InvalidInput);
+    }
+    Ok(days)
 }
 
 fn list_response(data: &[Value]) -> ManagementBackendResponse {
@@ -13660,12 +12867,14 @@ fn group_list_sql(single: bool) -> String {
         "ORDER BY g.created_at DESC,g.id DESC LIMIT 100"
     };
     format!(
-        "SELECT g.id,g.name,g.status_code,g.owner_executor_id,g.owner_generation,g.revision, \
+        "SELECT g.id,g.name,g.provider_code,g.status_code,g.owner_executor_id,g.owner_generation,g.revision, \
                 g.created_at::text AS created_at,g.updated_at::text AS updated_at, \
-                COUNT(c.id)::bigint AS credential_count, \
-                COUNT(c.id) FILTER (WHERE c.lifecycle_state_code='active' AND c.scheduling_state_code='eligible')::bigint AS credential_available, \
-                COUNT(c.id) FILTER (WHERE c.lifecycle_state_code='manual_recovery_required' OR c.auth_state_code='invalid' \
-                  OR c.transport_state_code IN ('drifted','unavailable') OR c.scheduling_state_code IN ('blocked','transport_unavailable'))::bigint AS credential_abnormal, \
+                CASE WHEN g.provider_code='openai' THEN (SELECT count(*) FROM gateway.openai_account o WHERE o.group_id=g.id) ELSE COUNT(c.id) END::bigint AS credential_count, \
+                CASE WHEN g.provider_code='openai' THEN (SELECT count(*) FROM gateway.openai_account o WHERE o.group_id=g.id AND o.enabled AND o.verified_at IS NOT NULL AND o.auth_state_code IN ('healthy','manual_update') AND (o.cooldown_until IS NULL OR o.cooldown_until<=clock_timestamp()) AND (o.expires_at IS NULL OR o.expires_at>clock_timestamp())) \
+                  ELSE COUNT(c.id) FILTER (WHERE c.lifecycle_state_code='active' AND c.scheduling_state_code='eligible') END::bigint AS credential_available, \
+                CASE WHEN g.provider_code='openai' THEN (SELECT count(*) FROM gateway.openai_account o WHERE o.group_id=g.id AND (o.auth_state_code='needs_reauth' OR o.expires_at<=clock_timestamp())) \
+                  ELSE COUNT(c.id) FILTER (WHERE c.lifecycle_state_code='manual_recovery_required' OR c.auth_state_code='invalid' \
+                  OR c.transport_state_code IN ('drifted','unavailable') OR c.scheduling_state_code IN ('blocked','transport_unavailable')) END::bigint AS credential_abnormal, \
                 gc.proxy_policy_code,gc.model_scope_code,gc.default_rpm,gc.max_concurrency, \
                 month_usage.month_tokens,month_usage.month_amount, \
                 (SELECT r.completed_at::text FROM telemetry.request_record r \
@@ -13697,6 +12906,7 @@ fn group_projection(row: &sqlx::postgres::PgRow) -> Result<Value, ManagementBack
     });
     Ok(json!({
         "id":required::<Uuid>(row,"id")?,
+        "provider":required::<String>(row,"provider_code")?,
         "name":required::<String>(row,"name")?,
         "status":required::<String>(row,"status_code")?,
         "owner_executor_id":required::<Option<String>>(row,"owner_executor_id")?,
@@ -13887,7 +13097,12 @@ const CREDENTIAL_PROJECTION_SQL: &str = "SELECT c.id,c.group_id,c.account_uuid,c
                       WHERE p.credential_id=c.id),'[]'::jsonb) AS profiles, \
             a.normalized_plan_code,a.freshness_code AS plan_freshness,sc.config_version AS scheduling_config_version, \
             active_sc.revision AS scheduling_pointer_revision,sc.max_concurrency,sc.rpm_limit,sc.rpm_burst, \
-            sc.priority_layer,ROUND(sc.weight)::bigint AS scheduling_weight \
+            sc.priority_layer,ROUND(sc.weight)::bigint AS scheduling_weight, \
+            c.last_error_code,c.last_error_message,c.last_error_at::text AS last_error_at, \
+            COALESCE((SELECT jsonb_object_agg(q.window_kind_code,jsonb_build_object( \
+                        'utilization',q.utilization,'resets_at',q.resets_at::text,'observed_at',q.observed_at::text)) \
+                      FROM telemetry.credential_quota_current q \
+                      WHERE q.credential_id=c.id AND q.model_id IS NULL),'{}'::jsonb) AS quota_windows \
      FROM gateway.anthropic_credential c \
      LEFT JOIN LATERAL (SELECT p.profile_epoch,d.device_epoch,p.lifecycle_code AS profile_state, \
                                e.mode_code AS egress_mode,e.stability_code AS egress_stability \
@@ -13923,6 +13138,10 @@ fn credential_projection(row: &sqlx::postgres::PgRow) -> Result<Value, Managemen
         "profiles":required::<Value>(row,"profiles")?,
         "subscription_plan":required::<Option<String>>(row,"normalized_plan_code")?,
         "plan_freshness":required::<Option<String>>(row,"plan_freshness")?,
+        "last_error_code":required::<Option<String>>(row,"last_error_code")?,
+        "last_error_message":required::<Option<String>>(row,"last_error_message")?,
+        "last_error_at":required::<Option<String>>(row,"last_error_at")?,
+        "quota_windows":required::<Value>(row,"quota_windows")?,
         "scheduling_config":{
             "config_version":required::<Option<i64>>(row,"scheduling_config_version")?,
             "pointer_revision":required::<Option<i64>>(row,"scheduling_pointer_revision")?,
@@ -13938,12 +13157,90 @@ fn credential_projection(row: &sqlx::postgres::PgRow) -> Result<Value, Managemen
     }))
 }
 
+fn request_preview_data(
+    request_id: Uuid,
+    provider: &str,
+    endpoint: &str,
+    original: Option<Value>,
+    policy: Option<Value>,
+) -> Value {
+    let (source, body) = match (policy, original) {
+        (Some(value), _) => (Some("policy_request"), Some(value)),
+        (None, Some(value)) => (Some("original_request"), Some(value)),
+        (None, None) => (None, None),
+    };
+    let target = if provider == "anthropic" {
+        match endpoint {
+            "messages" => Some(json!({"scheme":"https","authority":"api.anthropic.com","path":"/v1/messages"})),
+            "count_tokens" => {
+                Some(json!({"scheme":"https","authority":"api.anthropic.com","path":"/v1/messages/count_tokens"}))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let mut headers = json!({"authorization":"Bearer <SIMULATED_CREDENTIAL>","content-type":"application/json"});
+    if provider == "anthropic" {
+        headers["anthropic-version"] = json!("<FROM_REQUEST_OR_PROFILE>");
+    }
+    json!({
+        "request_id":request_id,"preview_status":if body.is_some() {"available"} else {"missing_capture"},
+        "mode":"credential_free","network_sent":false,"provider":provider,"endpoint":endpoint,
+        "source":source,"target_status":if target.is_some() {"known"} else {"requires_credential"},
+        "target":target,"headers":headers,"body":body,
+        "notice":"Credential and signed transport bundle stages were not executed; this preview never opens an upstream connection."
+    })
+}
+
+fn request_tps(
+    kind: Option<&str>,
+    tokens: Option<i64>,
+    first_ms: Option<i64>,
+    duration_ms: Option<i64>,
+    complete: bool,
+) -> Option<f64> {
+    if !complete {
+        return None;
+    }
+    let tokens = tokens.filter(|v| *v >= 0)? as f64;
+    let duration = duration_ms?;
+    let elapsed = match kind? {
+        "sync" => duration,
+        "streaming" | "websocket" => duration.checked_sub(first_ms?)?,
+        _ => return None,
+    };
+    (elapsed > 0).then(|| tokens * 1000.0 / elapsed as f64)
+}
+
 fn request_projection(row: &sqlx::postgres::PgRow) -> Result<Value, ManagementBackendError> {
+    let request_type = required::<Option<String>>(row, "request_type")?;
+    let duration_ms = required::<Option<i64>>(row, "duration_ms")?;
+    let first_content_ms = required::<Option<i64>>(row, "first_content_ms")?;
+    let tps = request_tps(
+        request_type.as_deref(),
+        required::<Option<i64>>(row, "output_tokens")?,
+        first_content_ms,
+        duration_ms,
+        required::<Option<String>>(row, "completed_at")?.is_some(),
+    );
     Ok(json!({
+        "client_name":required::<Option<String>>(row,"client_name")?,
+        "client_version":required::<Option<String>>(row,"client_version")?,
+        "request_type":request_type,"first_content_ms":first_content_ms,"duration_ms":duration_ms,"tps":tps,
+        "tps_estimated":tps.is_some() && required::<Option<String>>(row,"usage_completeness_code")?.as_deref()!=Some("complete"),
         "id":required::<Uuid>(row,"request_id")?,
         "request_month":required::<String>(row,"request_month")?,
         "platform_key_id":required::<Uuid>(row,"platform_key_id")?,
         "group_id":required::<Uuid>(row,"group_id")?,
+        "platform_key_name":required::<String>(row,"platform_key_name")?,
+        "group_name":required::<Option<String>>(row,"group_name")?,
+        "model":required::<Option<String>>(row,"model")?,
+        "reasoning_effort":required::<Option<String>>(row,"reasoning_effort")?,
+        "input_tokens":required::<Option<i64>>(row,"input_tokens")?,
+        "output_tokens":required::<Option<i64>>(row,"output_tokens")?,
+        "cache_read_input_tokens":required::<Option<i64>>(row,"cache_read_input_tokens")?,
+        "cache_creation_input_tokens":required::<Option<i64>>(row,"cache_creation_input_tokens")?,
         "endpoint":required::<String>(row,"endpoint_code")?,
         "client_class":required::<String>(row,"client_class_code")?,
         "phase":required::<String>(row,"phase_code")?,
@@ -13958,6 +13255,24 @@ fn request_projection(row: &sqlx::postgres::PgRow) -> Result<Value, ManagementBa
         "created_at":required::<String>(row,"created_at")?,
         "completed_at":required::<Option<String>>(row,"completed_at")?
     }))
+}
+
+// Only call after signature/trust and catalog-to-envelope checks have passed.
+// Bind the imported source to this exact signed release, not merely its cohort.
+fn signed_release_source_matches(
+    envelope: &SignedBundleEnvelope,
+    profile: &Value,
+    content_hash: &[u8],
+) -> Result<bool, ManagementBackendError> {
+    Ok(envelope.payload.lifecycle == BundleLifecycle::Verified
+        && envelope.payload.evidence_gate == BundleEvidenceGate::Passed
+        && envelope.payload.runtime_state == BundleRuntimeState::Loadable
+        && !envelope.payload.evidence_hashes.is_empty()
+        && profile.get("source").and_then(Value::as_str) == Some("signed_release_bundle")
+        && profile.get("bundle_id").and_then(Value::as_str) == Some(envelope.payload.bundle_id.as_ref())
+        && profile.get("canonical_hash").and_then(Value::as_str)
+            == Some(envelope.canonicalization.canonical_hash.as_ref())
+        && content_hash == decode_sha256_hex(&envelope.canonicalization.canonical_hash)?.as_slice())
 }
 
 async fn provision_signed_bundle_source(
@@ -14470,22 +13785,6 @@ fn job_projection(row: &sqlx::postgres::PgRow) -> Result<Value, ManagementBacken
     }))
 }
 
-fn audit_projection(row: &sqlx::postgres::PgRow) -> Result<Value, ManagementBackendError> {
-    Ok(json!({
-        "id":required::<Uuid>(row,"event_id")?,
-        "event_day":required::<String>(row,"event_day")?,
-        "sequence":required::<i64>(row,"daily_sequence")?,
-        "actor_type":required::<String>(row,"actor_type_code")?,
-        "actor_id":required::<Option<Uuid>>(row,"actor_id")?,
-        "action":required::<String>(row,"action_code")?,
-        "object_type":required::<String>(row,"object_type_code")?,
-        "object_id":required::<Option<String>>(row,"object_id")?,
-        "outcome":required::<String>(row,"outcome_code")?,
-        "event":required::<Value>(row,"canonical_redacted_event")?,
-        "occurred_at":required::<String>(row,"occurred_at")?
-    }))
-}
-
 fn approval_projection(row: &sqlx::postgres::PgRow) -> Result<Value, ManagementBackendError> {
     Ok(json!({
         "id":required::<Uuid>(row,"id")?,
@@ -14958,6 +14257,59 @@ fn row_envelope(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn captured_original_produces_preview_without_an_upstream_request() {
+        let id = uuid::Uuid::nil();
+        let original = serde_json::json!({"model":"fixture","messages":[]});
+        let preview = super::request_preview_data(id, "anthropic", "messages", Some(original.clone()), None);
+        assert_eq!(preview["preview_status"], "available");
+        assert_eq!(preview["source"], "original_request");
+        assert_eq!(preview["body"], original);
+        assert_eq!(preview["network_sent"], false);
+        assert_eq!(preview["target"]["path"], "/v1/messages");
+        let policy = serde_json::json!({"model":"fixture","max_tokens":12});
+        let preview = super::request_preview_data(id, "openai", "responses", Some(original), Some(policy.clone()));
+        assert_eq!(preview["source"], "policy_request");
+        assert_eq!(preview["body"], policy);
+        assert!(preview["target"].is_null());
+        assert!(preview["headers"].get("anthropic-version").is_none());
+        assert_eq!(preview["target_status"], "requires_credential");
+        let missing = super::request_preview_data(id, "anthropic", "messages", None, None);
+        assert_eq!(missing["preview_status"], "missing_capture");
+    }
+
+    #[test]
+    fn request_tps_uses_generation_time_and_preserves_missing_values() {
+        assert_eq!(
+            super::request_tps(Some("streaming"), Some(100), Some(1000), Some(3000), true),
+            Some(50.0)
+        );
+        assert_eq!(
+            super::request_tps(Some("websocket"), Some(100), Some(1000), Some(3000), true),
+            Some(50.0)
+        );
+        assert_eq!(
+            super::request_tps(Some("sync"), Some(100), None, Some(4000), true),
+            Some(25.0)
+        );
+        assert_eq!(
+            super::request_tps(Some("sync"), Some(0), None, Some(4000), true),
+            Some(0.0)
+        );
+        for (tokens, first, duration, done) in [
+            (None, Some(1), Some(2), true),
+            (Some(1), None, Some(2), true),
+            (Some(1), Some(2), Some(2), true),
+            (Some(1), Some(3), Some(2), true),
+            (Some(1), Some(1), Some(2), false),
+        ] {
+            assert_eq!(
+                super::request_tps(Some("streaming"), tokens, first, duration, done),
+                None
+            );
+        }
+    }
+
     use std::{collections::BTreeMap, sync::Arc, time::SystemTime};
 
     use gateway_api::{ManagementBackend as _, ManagementPrincipal, ManagementRole, RateLimit};
@@ -14988,6 +14340,39 @@ mod tests {
         business_key_rotation_snapshot_digest, decode_sha256_hex, group_proxy_policy, parse_platform_key_patch,
         system_prompt_content_value, valid_nonnegative_decimal, validate_group_config_candidate,
     };
+
+    #[test]
+    fn signed_release_attestation_requires_exact_source_and_passed_gates() -> Result<(), Box<dyn std::error::Error>> {
+        let mut envelope: super::SignedBundleEnvelope =
+            serde_json::from_slice(include_bytes!("../assets/windows-claude-code-2.1.241-h1.signed.json"))?;
+        // This tests source binding only; production rechecks the signature first.
+        envelope.payload.lifecycle = super::BundleLifecycle::Verified;
+        let profile = json!({
+            "source":"signed_release_bundle",
+            "bundle_id":envelope.payload.bundle_id,
+            "canonical_hash":envelope.canonicalization.canonical_hash
+        });
+        let hash = decode_sha256_hex(&envelope.canonicalization.canonical_hash)?;
+        assert!(super::signed_release_source_matches(&envelope, &profile, &hash)?);
+        for field in ["source", "bundle_id", "canonical_hash"] {
+            let mut mismatched = profile.clone();
+            mismatched[field] = json!("different-release");
+            assert!(!super::signed_release_source_matches(&envelope, &mismatched, &hash)?);
+        }
+        assert!(!super::signed_release_source_matches(&envelope, &profile, &[0; 32])?);
+        envelope.payload.evidence_gate = super::BundleEvidenceGate::Pending;
+        assert!(!super::signed_release_source_matches(&envelope, &profile, &hash)?);
+        envelope.payload.evidence_gate = super::BundleEvidenceGate::Passed;
+        envelope.payload.runtime_state = super::BundleRuntimeState::Quarantined;
+        assert!(!super::signed_release_source_matches(&envelope, &profile, &hash)?);
+        envelope.payload.runtime_state = super::BundleRuntimeState::Loadable;
+        envelope.payload.lifecycle = super::BundleLifecycle::Draft;
+        assert!(!super::signed_release_source_matches(&envelope, &profile, &hash)?);
+        envelope.payload.lifecycle = super::BundleLifecycle::Verified;
+        envelope.payload.evidence_hashes.clear();
+        assert!(!super::signed_release_source_matches(&envelope, &profile, &hash)?);
+        Ok(())
+    }
 
     #[test]
     fn local_password_only_auth_skips_mfa_after_required_password_change() {
@@ -15304,7 +14689,6 @@ mod tests {
             SecretBytes::new(digest_key.expose().to_vec()),
             ReadinessCoordinator::new(InternalReadiness::default()),
             DataPlaneObservability::default(),
-            crate::operations::IntegrityGuard::new(true),
             export_store.clone(),
             gateway_api::ManagementRuntimeBridge::new(
                 Arc::new(gateway_api::DenyAllAccessResolver),
@@ -15465,14 +14849,6 @@ mod tests {
         assert_eq!(reset.body["data"]["concurrency"], 5);
         assert_eq!(reset.body["data"]["messages_rpm"], 60);
         assert_eq!(reset.body["data"]["pointer_revision"], 3);
-        let scheduling_audits: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM security.audit_event WHERE action_code='credential_scheduling_config_updated' \
-             AND object_id=$1",
-        )
-        .bind(credential_id.to_string())
-        .fetch_one(&storage.pool())
-        .await?;
-        assert_eq!(scheduling_audits, 2);
         let model_definition_id = Uuid::now_v7();
         sqlx::query(
             "INSERT INTO catalog.model_definition \
@@ -15567,13 +14943,6 @@ mod tests {
                 .await,
             Err(gateway_api::ManagementBackendError::Authorization)
         ));
-        let reveal_audits: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM security.audit_event WHERE action_code='platform_key_secret_revealed' \
-             AND object_type_code='platform_key_secret_reveal'",
-        )
-        .fetch_one(&storage.pool())
-        .await?;
-        assert_eq!(reveal_audits, 1);
         let next_group = backend
             .create_group(
                 &confirmed_principal,
@@ -15844,16 +15213,6 @@ mod tests {
             .await?;
         assert_eq!(ended.etag.as_deref(), Some("\"rev-2\""));
         assert_eq!(ended.body["data"]["active"], false);
-        let alert_audits: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM security.audit_event WHERE action_code IN \
-             ('alert_acknowledged','alert_resolved','alert_silence_created','alert_silence_ended') \
-             AND object_id IN ($1,$2)",
-        )
-        .bind(alert_id.to_string())
-        .bind(silence_id.to_string())
-        .fetch_one(&storage.pool())
-        .await?;
-        assert_eq!(alert_audits, 4);
 
         // An owner requesting `all` is forcibly narrowed to `own`.  The
         // requester boundary remains in force even for another administrator,
@@ -15989,13 +15348,6 @@ mod tests {
         .fetch_one(&storage.pool())
         .await?;
         assert_eq!(consumed, ("expired".to_owned(), 1, true, true, true));
-        let download_audits: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM security.audit_event WHERE action_code='usage_export_downloaded' AND object_id=$1",
-        )
-        .bind(export_id.to_string())
-        .fetch_one(&storage.pool())
-        .await?;
-        assert_eq!(download_audits, 1);
 
         let backup_grant_id = Uuid::now_v7();
         sqlx::query(

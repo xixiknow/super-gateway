@@ -108,7 +108,20 @@ async fn postgres_r2_schema_bootstrap_and_role_contract() -> Result<(), Box<dyn 
         storage.claim_group_owner(group_id, "executor-b").await,
         Err(StorageError::RevisionConflict)
     ));
+    let updated_before: String =
+        sqlx::query_scalar("SELECT updated_at::text FROM gateway.credential_group WHERE id=$1")
+            .bind(group_id)
+            .fetch_one(&storage.pool())
+            .await?;
     storage.heartbeat_group_owner(group_id, "executor-a", 2).await?;
+    let updated_after: String = sqlx::query_scalar("SELECT updated_at::text FROM gateway.credential_group WHERE id=$1")
+        .bind(group_id)
+        .fetch_one(&storage.pool())
+        .await?;
+    assert_eq!(
+        updated_before, updated_after,
+        "lease renewal must not rewrite group updated_at"
+    );
     assert!(
         matches!(
             storage.heartbeat_group_owner(group_id, "executor-a", 1).await,
@@ -143,12 +156,6 @@ async fn postgres_r2_schema_bootstrap_and_role_contract() -> Result<(), Box<dyn 
     .fetch_one(&storage.pool())
     .await?;
     assert_eq!(scheduler_columns, 7);
-    let integrity = storage
-        .verify_audit_integrity(&SecretValue::new("fixture-audit-integrity-key".to_owned()))
-        .await?;
-    assert_eq!(integrity.audit_event_count, 1);
-    assert_eq!(integrity.deletion_ledger_count, 0);
-
     assert_eq!(storage.rotate_database_business_key().await?, 2);
     let first_key = storage.load_database_business_key(1).await?;
     let second_key = storage.load_database_business_key(2).await?;
@@ -239,6 +246,17 @@ async fn postgres_r2_schema_bootstrap_and_role_contract() -> Result<(), Box<dyn 
         .await?;
     assert_eq!(expired_state, "dead_letter");
 
+    sqlx::query(
+        "INSERT INTO ops.outbox_message \
+         (id,event_id,topic_code,aggregate_type,aggregate_id,aggregate_revision,payload_schema_version,payload,state_code, \
+          lease_generation,attempt_count,available_at,created_at) \
+         VALUES ($1,$2,'fixture.topic','fixture',$3,1,1,'{}','pending',0,0,clock_timestamp(),clock_timestamp())",
+    )
+    .bind(Uuid::now_v7())
+    .bind(Uuid::now_v7())
+    .bind(Uuid::now_v7())
+    .execute(&storage.pool())
+    .await?;
     let outbox = storage.claim_outbox("r2-worker", 1, 30).await?;
     assert_eq!(outbox.len(), 1);
     assert!(matches!(
@@ -311,15 +329,14 @@ async fn postgres_r2_schema_bootstrap_and_role_contract() -> Result<(), Box<dyn 
     assert_eq!(successes, 5);
     assert_eq!(capacity_rejections, 1);
 
-    let atomic_counts: (i64, i64, i64, i64) = sqlx::query_as(
+    let atomic_counts: (i64, i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM iam.user_account), \
                 (SELECT count(*) FROM iam.password_credential), \
-                (SELECT count(*) FROM security.audit_event), \
                 (SELECT count(*) FROM ops.outbox_message)",
     )
     .fetch_one(&storage.pool())
     .await?;
-    assert_eq!(atomic_counts, (1, 1, 6, 6));
+    assert_eq!(atomic_counts, (1, 1, 1));
 
     let runtime_has_no_schema_create: bool = sqlx::query_scalar(
         "SELECT NOT has_schema_privilege('gateway_runtime','iam','CREATE') \

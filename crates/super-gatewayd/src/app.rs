@@ -127,15 +127,7 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         .await
         .context("database bootstrap failed")?;
     readiness.update(|state| state.bootstrap_ready = true);
-    let audit_integrity_key =
-        read_secret_file(&config.audit_integrity_key_file).context("audit integrity key is unavailable")?;
     let digest_key = read_secret_file(&config.digest_key_file).context("lookup digest key is unavailable")?;
-    let audit_integrity_ready = if storage.seal_completed_audit_days(&audit_integrity_key).await.is_ok() {
-        storage.verify_audit_integrity(&audit_integrity_key).await.is_ok()
-    } else {
-        false
-    };
-    readiness.update(|state| state.audit_integrity_ready = audit_integrity_ready);
     let export_store = Arc::new(gateway_services::export::ExportArtifactStore::new(
         config.response_tmp_dir.join("exports"),
     ));
@@ -317,7 +309,6 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         .await
         .context("admin listener bind failed")?;
     readiness.begin_serving();
-    let integrity_guard = crate::operations::IntegrityGuard::new(audit_integrity_ready);
     let backup_executor: Arc<dyn gateway_services::operations::BackupOperationsExecutor> =
         config.backup.as_ref().map_or_else(
             || Arc::new(crate::operations::EvidenceGatedBackupExecutor) as Arc<_>,
@@ -331,8 +322,6 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         );
     let mut operation_tasks = crate::operations::spawn_operations_runtime(
         storage.clone(),
-        gateway_domain::SecretValue::new(audit_integrity_key.expose().to_owned()),
-        integrity_guard.clone(),
         export_store.clone(),
         enrollment_executor,
         plan_collector,
@@ -366,7 +355,6 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         SecretBytes::new(digest_key.expose().as_bytes().to_vec()),
         readiness.clone(),
         data_metrics,
-        integrity_guard,
         export_store,
         management_runtime.clone(),
         Some(production_dispatcher.clone()),
@@ -375,8 +363,10 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         cfg!(target_os = "linux") && config.managed_browser.is_some(),
     )
     .context("management backend startup failed")?;
-    let management_state =
-        ManagementState::new(Arc::new(management_backend)).context("embedded management contract failed")?;
+    let management_backend = Arc::new(management_backend);
+    operation_tasks.push(management_backend.clone().spawn_openai_maintenance(&cancellation));
+    operation_tasks.push(management_backend.clone().spawn_credential_usage_probe(&cancellation));
+    let management_state = ManagementState::new(management_backend).context("embedded management contract failed")?;
     let mut admin_task = tokio::spawn(async move {
         axum::serve(admin_listener, management_router(management_state))
             .with_graceful_shutdown(admin_cancel.cancelled_owned())
@@ -514,7 +504,7 @@ pub(crate) async fn load_access_snapshot(
     digest_key: SecretBytes,
 ) -> anyhow::Result<(Arc<dyn AccessResolver>, Arc<dyn ModelCatalog>)> {
     let model_rows = sqlx::query(
-        "SELECT m.upstream_model_id,m.display_name,extract(epoch FROM m.first_seen_at)::bigint AS created_at, \
+        "SELECT m.upstream_model_id,m.provider_code,m.openai_metadata,m.display_name,extract(epoch FROM m.first_seen_at)::bigint AS created_at, \
                 c.id AS capability_id,c.capability_version,c.schema_payload,c.content_hash \
          FROM catalog.model_definition m \
          LEFT JOIN catalog.model_capability c ON c.model_id=m.id AND c.lifecycle_code='active' \
@@ -528,6 +518,16 @@ pub(crate) async fn load_access_snapshot(
     let mut capability_identity = Vec::new();
     for row in &model_rows {
         let model_id = row.try_get::<String, _>("upstream_model_id")?;
+        if row.try_get::<String, _>("provider_code")? == "openai" {
+            models.push(ModelRecord {
+                provider: gateway_domain::Provider::Openai,
+                openai_metadata: row.try_get("openai_metadata")?,
+                id: model_id.into(),
+                display_name: row.try_get::<String, _>("display_name")?.into(),
+                created_at: row.try_get::<i64, _>("created_at")?.to_string().into(),
+            });
+            continue;
+        }
         let capability_id = row
             .try_get::<Option<uuid::Uuid>, _>("capability_id")?
             .ok_or_else(|| anyhow::anyhow!("published model {model_id} has no active capability"))?;
@@ -550,6 +550,8 @@ pub(crate) async fn load_access_snapshot(
         capability_identity.extend_from_slice(&capability_version.to_be_bytes());
         capability_identity.extend_from_slice(&row.try_get::<Vec<u8>, _>("content_hash")?);
         models.push(ModelRecord {
+            provider: gateway_domain::Provider::Anthropic,
+            openai_metadata: None,
             id: model_id.into_boxed_str(),
             display_name: row.try_get::<String, _>("display_name")?.into_boxed_str(),
             created_at: row.try_get::<i64, _>("created_at")?.to_string().into_boxed_str(),
@@ -568,7 +570,7 @@ pub(crate) async fn load_access_snapshot(
     }
 
     let rows = sqlx::query(
-        "SELECT k.id,k.owner_user_id,k.group_id,s.lookup_digest,c.config_version,c.messages_enabled,c.models_enabled, \
+        "SELECT k.id,k.owner_user_id,k.group_id,g.provider_code,s.lookup_digest,c.config_version,c.messages_enabled,c.models_enabled, \
                 c.max_body_bytes,LEAST(c.messages_rpm,u.key_max_rpm) AS messages_rpm, \
                 LEAST(c.messages_burst,u.key_max_rpm) AS messages_burst,c.models_rpm,c.models_burst, \
                 LEAST(c.max_concurrency,u.key_max_concurrency) AS max_concurrency, \
@@ -683,6 +685,11 @@ pub(crate) async fn load_access_snapshot(
             permissions.insert(EndpointPermission::Models);
         }
         let grant = AccessGrant {
+            provider: if row.try_get::<String, _>("provider_code")? == "openai" {
+                gateway_domain::Provider::Openai
+            } else {
+                gateway_domain::Provider::Anthropic
+            },
             owner_user_id: UserId::new(row.try_get::<uuid::Uuid, _>("owner_user_id")?.to_string())?,
             platform_key_id: PlatformKeyId::new(key_id.to_string())?,
             group_id: GroupId::new(group_id.to_string())?,

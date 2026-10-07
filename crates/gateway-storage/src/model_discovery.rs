@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use sqlx::Row as _;
 use uuid::Uuid;
 
-use crate::{AuditOutboxRecord, PgStorage, StorageError};
+use crate::{PgStorage, StorageError};
 
 #[derive(Clone, Debug)]
 pub struct DiscoveredModel {
@@ -180,7 +180,7 @@ impl PgStorage {
         for model in &commit.models {
             let existing = sqlx::query(
                 "SELECT id,display_name,lifecycle_code,disabled_by_system FROM catalog.model_definition \
-                 WHERE upstream_model_id=$1 FOR UPDATE",
+                 WHERE upstream_model_id=$1 AND provider_code='anthropic' FOR UPDATE",
             )
             .bind(&model.upstream_model_id)
             .fetch_optional(&mut *transaction)
@@ -285,7 +285,7 @@ impl PgStorage {
                    disabled_by_system=CASE WHEN model.missing_streak+1>=3 AND model.last_seen_at<clock_timestamp()-interval '24 hours' \
                                             THEN true ELSE model.disabled_by_system END, \
                    last_discovery_run_id=$1,revision=revision+1 \
-                 WHERE model.lifecycle_code IN ('discovered','reviewing','published') \
+                 WHERE model.provider_code='anthropic' AND model.lifecycle_code IN ('discovered','reviewing','published') \
                    AND NOT EXISTS(SELECT 1 FROM catalog.model_discovery_observation observation \
                                   WHERE observation.run_id=$1 AND observation.model_definition_id=model.id)",
             )
@@ -322,23 +322,7 @@ impl PgStorage {
         .execute(&mut *transaction)
         .await
         .map_err(map_sqlx)?;
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &AuditOutboxRecord {
-                actor_type: "system".to_owned(),
-                actor_id: None,
-                action: "model_catalog_discovered".to_owned(),
-                object_type: "model_discovery_run".to_owned(),
-                object_id: Some(commit.run_id.to_string()),
-                outcome: "success".to_owned(),
-                redacted_detail: json!({"item_count":commit.models.len(),"capability_candidate_count":candidate_count,"complete":true,"source":source_code}),
-                topic: "catalog.models.discovered".to_owned(),
-                aggregate_id: commit.run_id,
-                aggregate_revision: 1,
-                payload: json!({"run_id":commit.run_id,"item_count":commit.models.len(),"capability_candidate_count":candidate_count,"source":source_code}),
-            },
-        )
-        .await?;
+
         transaction.commit().await.map_err(map_sqlx)
     }
 }

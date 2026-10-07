@@ -98,6 +98,7 @@ impl ProviderHttpPort for PgProviderHttpPort {
                 .retry_after
                 .into_iter()
                 .map(|value| ("retry-after".into(), value))
+                .chain(response.location.into_iter().map(|value| ("location".into(), value)))
                 .collect(),
             body: response.body,
         })
@@ -131,7 +132,7 @@ impl PublicModelDirectoryHttpPort for PgProviderHttpPort {
                 headers: Vec::new(),
                 body: SecretBytes::new(Vec::new()),
                 response_limit,
-                egress: EgressRouteSnapshot::Direct,
+                egress: public_document_egress()?,
                 cancellation: CancellationToken::new(),
             })
             .await
@@ -142,9 +143,70 @@ impl PublicModelDirectoryHttpPort for PgProviderHttpPort {
                 .retry_after
                 .into_iter()
                 .map(|value| ("retry-after".into(), value))
+                .chain(response.location.into_iter().map(|value| ("location".into(), value)))
                 .collect(),
             body: response.body,
         })
+    }
+}
+
+fn public_document_egress() -> Result<EgressRouteSnapshot, CredentialServiceError> {
+    for name in ["GATEWAY_PUBLIC_HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "HTTP_PROXY"] {
+        match std::env::var(name) {
+            Ok(value) if !value.trim().is_empty() => {
+                return parse_public_proxy(value.trim()).inspect_err(|error| {
+                    tracing::warn!(
+                        event = "model_public_proxy_invalid",
+                        variable = name,
+                        error = %error,
+                        "invalid public document proxy configuration"
+                    );
+                });
+            }
+            Err(std::env::VarError::NotUnicode(_)) => return Err(CredentialServiceError::EvidencePending),
+            _ => {}
+        }
+    }
+    Ok(EgressRouteSnapshot::Direct)
+}
+
+fn parse_public_proxy(value: &str) -> Result<EgressRouteSnapshot, CredentialServiceError> {
+    let invalid = || CredentialServiceError::EvidencePending;
+    let uri: http::Uri = value.parse().map_err(|_| invalid())?;
+    let host = uri.host().filter(|host| !host.is_empty()).ok_or_else(invalid)?;
+    if uri
+        .authority()
+        .is_some_and(|authority| authority.as_str().contains('@'))
+        || uri.query().is_some()
+        || value.contains('#')
+        || !matches!(uri.path(), "" | "/")
+    {
+        return Err(invalid());
+    }
+    let host = host.trim_start_matches('[').trim_end_matches(']').into();
+    let port = uri
+        .port_u16()
+        .unwrap_or(if uri.scheme_str() == Some("http") { 80 } else { 1080 });
+    if port == 0 {
+        return Err(invalid());
+    }
+    match uri.scheme_str() {
+        Some("http") => Ok(EgressRouteSnapshot::HttpConnect {
+            host,
+            port,
+            credentials: None,
+        }),
+        Some("socks5" | "socks5h") => Ok(EgressRouteSnapshot::Socks5 {
+            host,
+            port,
+            dns: if uri.scheme_str() == Some("socks5h") {
+                Socks5DnsMode::Remote
+            } else {
+                Socks5DnsMode::Local
+            },
+            credentials: None,
+        }),
+        _ => Err(invalid()),
     }
 }
 
@@ -422,7 +484,37 @@ fn parse_proxy_credentials(secret: &SecretBytes) -> Result<ProxyCredentials, Cre
 
 #[cfg(test)]
 mod tests {
-    use super::is_allowed_public_model_document;
+    use super::{is_allowed_public_model_document, parse_public_proxy};
+    use gateway_domain::{EgressRouteSnapshot, Socks5DnsMode};
+
+    #[test]
+    fn public_documents_use_the_configured_proxy_route() -> Result<(), Box<dyn std::error::Error>> {
+        let http_route = parse_public_proxy("http://127.0.0.1:7890")?;
+        assert!(matches!(
+            http_route,
+            EgressRouteSnapshot::HttpConnect { host, port: 7890, credentials: None }
+                if host.as_ref() == "127.0.0.1"
+        ));
+        let socks_route = parse_public_proxy("socks5h://localhost:1080")?;
+        assert!(matches!(
+            socks_route,
+            EgressRouteSnapshot::Socks5 {
+                dns: Socks5DnsMode::Remote,
+                port: 1080,
+                ..
+            }
+        ));
+        for invalid in [
+            "https://localhost:7890",
+            "http://user:password@localhost:7890",
+            "http://localhost:7890/path",
+            "http://localhost:0",
+            "http://localhost:7890?secret=value",
+        ] {
+            assert!(parse_public_proxy(invalid).is_err());
+        }
+        Ok(())
+    }
 
     #[test]
     fn public_model_document_allowlist_accepts_overview_and_bounded_model_details() {

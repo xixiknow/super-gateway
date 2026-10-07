@@ -6,6 +6,7 @@ afterEach(cleanup);
 
 describe("galaxy loading transition", () => {
   it("is decorative and canvas-based", () => {
+    document.documentElement.dataset.theme = "dark";
     const { container } = render(<GalaxyTransition />);
     const element = container.querySelector(".galaxy-transition");
 
@@ -15,10 +16,18 @@ describe("galaxy loading transition", () => {
   });
 
   it("keeps breathing during the boot/loading phase instead of playing once", () => {
+    document.documentElement.dataset.theme = "dark";
     const { container } = render(<GalaxyTransition hold />);
     const element = container.querySelector(".galaxy-transition");
 
     expect(element).toHaveClass("hold");
     expect(element).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("is skipped in the light theme", () => {
+    document.documentElement.dataset.theme = "light";
+    const { container } = render(<GalaxyTransition />);
+
+    expect(container.querySelector(".galaxy-transition")).not.toBeInTheDocument();
   });
 });

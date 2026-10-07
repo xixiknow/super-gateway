@@ -857,54 +857,6 @@
         }
       }
     },
-    "/admin/v1/audit-events": {
-      "get": {
-        "operationId": "getAuditEvents",
-        "tags": [
-          "告警、通知与运维"
-        ],
-        "summary": "全局管理审计；Key Owner 自动限定本人范围",
-        "x-roles": [
-          "platform_admin",
-          "key_owner"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/PageSize"
-          },
-          {
-            "$ref": "#/components/parameters/PageAfter"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      }
-    },
     "/admin/v1/auth/login": {
       "post": {
         "operationId": "postAuthLogin",
@@ -2733,6 +2685,61 @@
         }
       }
     },
+    "/admin/v1/credentials/{id}/usage": {
+      "get": {
+        "operationId": "getCredentialsByIdUsage",
+        "tags": [
+          "Credential Enrollment 与生命周期"
+        ],
+        "summary": "按凭证聚合的用量概览、按日历史与按模型分解",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/admin/v1/credentials/{id}:archive": {
       "post": {
         "operationId": "postCredentialsByIdArchive",
@@ -2881,7 +2888,7 @@
         "tags": [
           "Credential Enrollment 与生命周期"
         ],
-        "summary": "明确清除 cooldown",
+        "summary": "明确清除 cooldown，含账号级拒绝 blocked 恢复与 last_error 清除",
         "x-roles": [
           "platform_admin"
         ],
@@ -3153,6 +3160,77 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ProfileCohortCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/credentials/{id}:probe-usage": {
+      "post": {
+        "operationId": "postCredentialsByIdProbeUsage",
+        "tags": [
+          "Credential Enrollment 与生命周期"
+        ],
+        "summary": "主动探测 OAuth 账号官方 5h/7d 用量窗口并按观测落库",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/JobEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../schemas/common.schema.json#/$defs/ActionCommand"
               }
             }
           }
@@ -5086,6 +5164,127 @@
         }
       }
     },
+    "/admin/v1/groups/{id}/openai-policy": {
+      "get": {
+        "operationId": "getGroupsByIdOpenaiPolicy",
+        "tags": [
+          "查询"
+        ],
+        "summary": "OpenAI 分组推理强度上限与超限行为，使用分组修订号",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putGroupsByIdOpenaiPolicy",
+        "tags": [
+          "查询"
+        ],
+        "summary": "OpenAI 分组推理强度上限与超限行为，使用分组修订号",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiGroupPolicy"
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/v1/groups/{id}:archive": {
       "post": {
         "operationId": "postGroupsByIdArchive",
@@ -6087,6 +6286,501 @@
             "application/json": {
               "schema": {
                 "$ref": "../schemas/common.schema.json#/$defs/ActionCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/openai/accounts": {
+      "get": {
+        "operationId": "getOpenaiAccounts",
+        "tags": [
+          "查询"
+        ],
+        "summary": "OpenAI 账号列表和加密导入，导入后默认停用",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postOpenaiAccounts",
+        "tags": [
+          "查询"
+        ],
+        "summary": "OpenAI 账号列表和加密导入，导入后默认停用",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiAccountCreateCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/openai/accounts/{id}": {
+      "patch": {
+        "operationId": "patchOpenaiAccountsById",
+        "tags": [
+          "查询"
+        ],
+        "summary": "更新账号名称、启停、并发、优先级、模型和 WebSocket 设置；启用需连接验证",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiAccountSettingsCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/openai/accounts/{id}/usage": {
+      "get": {
+        "operationId": "getOpenaiAccountsByIdUsage",
+        "tags": [
+          "查询"
+        ],
+        "summary": "按账号聚合的用量概览、按日历史与按模型分解",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/admin/v1/openai/accounts/{id}:refresh": {
+      "post": {
+        "operationId": "postOpenaiAccountsByIdRefresh",
+        "tags": [
+          "查询"
+        ],
+        "summary": "立即刷新 OAuth 令牌，单账号互斥",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/openai/accounts/{id}:test": {
+      "post": {
+        "operationId": "postOpenaiAccountsByIdTest",
+        "tags": [
+          "查询"
+        ],
+        "summary": "固定出口连接验证，订阅账号身份和额度快照核验，结果按修订号提交",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/openai/oauth-sessions": {
+      "post": {
+        "operationId": "postOpenaiOauthSessions",
+        "tags": [
+          "查询"
+        ],
+        "summary": "开始 OpenAI PKCE 浏览器授权",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiOAuthStart"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/openai/oauth-sessions/{id}:complete": {
+      "post": {
+        "operationId": "postOpenaiOauthSessionsByIdComplete",
+        "tags": [
+          "查询"
+        ],
+        "summary": "提交授权回调 code 与 state，单次兑换并加密导入",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiOAuthComplete"
               }
             }
           }
@@ -7620,62 +8314,6 @@
         }
       }
     },
-    "/admin/v1/platform-keys/{id}/audit-events": {
-      "get": {
-        "operationId": "getPlatformKeysByIdAuditEvents",
-        "tags": [
-          "路径"
-        ],
-        "summary": "Key 范围审计",
-        "x-roles": [
-          "platform_admin",
-          "key_owner"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/PageSize"
-          },
-          {
-            "$ref": "#/components/parameters/PageAfter"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      }
-    },
     "/admin/v1/platform-keys/{id}/client-config": {
       "get": {
         "operationId": "getPlatformKeysByIdClientConfig",
@@ -8940,7 +9578,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
+                  "$ref": "#/components/schemas/RequestListEnvelope"
                 }
               }
             }
@@ -8996,7 +9634,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                  "$ref": "#/components/schemas/RequestEnvelope"
                 }
               }
             }
@@ -9081,7 +9719,7 @@
         "tags": [
           "查询"
         ],
-        "summary": "请求三阶段正文与上游响应正文",
+        "summary": "请求三阶段正文、上游响应正文，以及原始入站/最终上行/上游响应三组脱敏 Header",
         "x-roles": [
           "platform_admin",
           "key_owner"
@@ -9109,6 +9747,62 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RequestBodyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/admin/v1/requests/{id}/preview": {
+      "get": {
+        "operationId": "getRequestsByIdPreview",
+        "tags": [
+          "查询"
+        ],
+        "summary": "基于已采集正文的无凭据重组预览，返回单对象，不发送上游请求",
+        "x-roles": [
+          "platform_admin",
+          "key_owner"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestPreviewEnvelope"
                 }
               }
             }
@@ -9533,6 +10227,111 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BodyCaptureSettingsCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/settings/openai": {
+      "get": {
+        "operationId": "getSettingsOpenai",
+        "tags": [
+          "查询"
+        ],
+        "summary": "OpenAI 全局设置，更新需 If-Match",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putSettingsOpenai",
+        "tags": [
+          "查询"
+        ],
+        "summary": "OpenAI 全局设置，更新需 If-Match",
+        "x-roles": [
+          "platform_admin"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/SingleEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiSettingsCommand"
               }
             }
           }
@@ -10055,6 +10854,54 @@
           "查询"
         ],
         "summary": "使用量与估算成本时序",
+        "x-roles": [
+          "platform_admin",
+          "key_owner"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/PageAfter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/common.schema.json#/$defs/ListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/admin/v1/usage/today-by-credential": {
+      "get": {
+        "operationId": "getUsageTodayByCredential",
+        "tags": [
+          "查询"
+        ],
+        "summary": "当日按 Credential 聚合的请求、token 与估算成本",
         "x-roles": [
           "platform_admin",
           "key_owner"
@@ -10931,6 +11778,258 @@
           "meta"
         ]
       },
+      "RequestRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "client_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_type": {
+            "enum": [
+              "streaming",
+              "sync",
+              "websocket",
+              null
+            ]
+          },
+          "first_content_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "Ingress to first nonempty text, reasoning or tool argument output; excludes metadata and heartbeat events."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "Ingress to downstream delivery completion. Historical records fall back to persisted lifecycle timestamps."
+          },
+          "tps": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "Output tokens (including reasoning) per second after first output for streaming/WebSocket, per total second for sync. Null until complete or when required measurements are missing."
+          },
+          "tps_estimated": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "client_name",
+          "client_version",
+          "request_type",
+          "first_content_ms",
+          "duration_ms",
+          "tps",
+          "tps_estimated"
+        ]
+      },
+      "RequestEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RequestRecord"
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "RequestListEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestRecord"
+            }
+          },
+          "page": {
+            "$ref": "../schemas/common.schema.json#/$defs/Page"
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "page",
+          "meta"
+        ]
+      },
+      "HeaderSnapshot": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "redacted": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "value",
+                "redacted"
+              ]
+            }
+          },
+          "captured_at_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "transport": {
+            "enum": [
+              "http",
+              "websocket_handshake"
+            ]
+          },
+          "reused": {
+            "type": "boolean"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "attempt_ordinal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "entries",
+          "captured_at_ms",
+          "transport",
+          "reused",
+          "truncated",
+          "attempt_ordinal"
+        ]
+      },
+      "RequestPreviewEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "preview_status": {
+                "enum": [
+                  "available",
+                  "missing_capture"
+                ]
+              },
+              "mode": {
+                "const": "credential_free"
+              },
+              "network_sent": {
+                "const": false
+              },
+              "provider": {
+                "type": "string"
+              },
+              "endpoint": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "policy_request",
+                  "original_request",
+                  null
+                ]
+              },
+              "target_status": {
+                "enum": [
+                  "known",
+                  "requires_credential"
+                ]
+              },
+              "target": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "body": {},
+              "notice": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "request_id",
+              "preview_status",
+              "mode",
+              "network_sent",
+              "provider",
+              "endpoint",
+              "source",
+              "target_status",
+              "target",
+              "headers",
+              "body",
+              "notice"
+            ]
+          },
+          "meta": {
+            "$ref": "../schemas/common.schema.json#/$defs/Meta"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
       "RequestBodyEnvelope": {
         "type": "object",
         "properties": {
@@ -10940,6 +12039,51 @@
               "request_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "capture_status": {
+                "enum": [
+                  "captured",
+                  "unavailable"
+                ]
+              },
+              "capture_enabled": {
+                "type": "boolean"
+              },
+              "retention_days": {
+                "type": "integer"
+              },
+              "max_bytes": {
+                "type": "integer"
+              },
+              "original_headers": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/HeaderSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "final_upstream_headers": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/HeaderSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "upstream_response_headers": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/HeaderSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "original_request": {
                 "type": [
@@ -10981,7 +12125,7 @@
               },
               "captured_at": {
                 "type": "string",
-                "format": "date-time"
+                "description": "PostgreSQL timestamp with explicit UTC offset"
               },
               "body_digest_mismatch": {
                 "type": "boolean"
@@ -10990,13 +12134,7 @@
             "additionalProperties": false,
             "required": [
               "request_id",
-              "original_request",
-              "policy_request",
-              "final_upstream_request",
-              "upstream_response",
-              "upstream_response_final",
-              "captured_at",
-              "body_digest_mismatch"
+              "capture_status"
             ]
           },
           "meta": {
@@ -11398,6 +12536,14 @@
       "GroupCreateCommand": {
         "type": "object",
         "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "anthropic",
+              "openai"
+            ],
+            "default": "anthropic"
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -11407,6 +12553,241 @@
         "additionalProperties": false,
         "required": [
           "name"
+        ]
+      },
+      "OpenAiAccountCreateCommand": {
+        "type": "object",
+        "properties": {
+          "replace_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "proxy_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "group_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "auth_kind": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "oauth"
+            ]
+          },
+          "api_key": {
+            "type": "string",
+            "writeOnly": true,
+            "maxLength": 65536
+          },
+          "credentials": {
+            "type": "object",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "group_id",
+          "auth_kind"
+        ]
+      },
+      "OpenAiOAuthStart": {
+        "type": "object",
+        "properties": {
+          "replace_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "group_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "proxy_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "group_id"
+        ]
+      },
+      "OpenAiOAuthComplete": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384,
+            "writeOnly": true
+          },
+          "state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "state"
+        ]
+      },
+      "OpenAiGroupPolicy": {
+        "type": "object",
+        "properties": {
+          "max_reasoning_effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          "reasoning_over_limit": {
+            "type": "string",
+            "enum": [
+              "reject",
+              "downgrade"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "max_reasoning_effort",
+          "reasoning_over_limit"
+        ]
+      },
+      "OpenAiSettingsCommand": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "websocket_enabled": {
+            "type": "boolean"
+          },
+          "connect_timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120
+          },
+          "response_timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "websocket_idle_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "refresh_interval_seconds": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 3600
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "websocket_enabled",
+          "connect_timeout_seconds",
+          "response_timeout_seconds",
+          "websocket_idle_seconds",
+          "refresh_interval_seconds"
+        ]
+      },
+      "OpenAiAccountSettingsCommand": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "proxy_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "websocket_enabled": {
+            "type": "boolean"
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "models": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "enabled",
+          "websocket_enabled",
+          "max_concurrency",
+          "priority",
+          "models"
         ]
       },
       "RateLimit": {
@@ -13582,5 +14963,5 @@
     }
   },
   "x-generated-from": "planning/api-contract.md",
-  "x-route-count": 178
+  "x-route-count": 192
 }

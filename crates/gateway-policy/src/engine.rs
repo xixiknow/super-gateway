@@ -828,6 +828,22 @@ mod tests {
     }
 
     #[test]
+    fn cli_mid_conversation_system_and_cache_blocks_are_preserved() -> Result<(), Box<dyn std::error::Error>> {
+        let body = serde_json::to_vec(&json!({
+            "model":"claude-opus-5","max_tokens":64000,"stream":true,
+            "system":[{"type":"text","text":"fixture system","cache_control":{"type":"ephemeral"}}],
+            "messages":[{"role":"user","content":"fixture input"},
+                {"role":"system","content":"fixture reminder"}],
+            "thinking":{"type":"disabled"},"output_config":{"effort":"high"}
+        }))?;
+        let policy = RequestPolicy::base_for_models(["claude-opus-5"], snapshots())?;
+        let generic = policy.process(Arc::from(body.clone()), &context())?;
+        assert!(generic.replay_body.reused_original());
+        assert_eq!(generic.replay_body.bytes(), body.as_slice());
+        Ok(())
+    }
+
+    #[test]
     fn all_system_modes_have_frozen_semantics() -> Result<(), Box<dyn std::error::Error>> {
         let cases = [
             (SystemPolicy::Preserve, Some(json!("client")), false),

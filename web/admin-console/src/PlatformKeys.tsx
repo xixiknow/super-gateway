@@ -2,10 +2,12 @@ import { FormEvent, ReactNode, useEffect, useId, useMemo, useState } from "react
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, setCsrfToken } from "./api";
+import { useToast } from "./feedback";
 import { Locale, MessageKey, useI18n } from "./i18n";
 import { RowActionDef, RowActionsCell } from "./row-actions";
 import { TablePager, usePagination } from "./pagination";
 import { SelectField } from "./select-field";
+import { useCompactLayout } from "./use-compact-layout";
 
 interface PlatformKeyRecord {
   id: string;
@@ -37,7 +39,7 @@ interface ModelOption { id?: unknown; display_name?: unknown; upstream_model_id?
 
 interface GroupOption { id?: unknown; name?: unknown; status?: unknown }
 
-type KeyAction = "edit" | "reveal" | "disable" | "reactivate" | "revoke" | "client-config" | "config-history" | "audit";
+type KeyAction = "edit" | "reveal" | "disable" | "reactivate" | "revoke" | "client-config" | "config-history";
 
 function isPlatformKeyRecord(value: unknown): value is PlatformKeyRecord {
   if (!value || typeof value !== "object") return false;
@@ -84,12 +86,54 @@ function viewEndpoint(action: KeyAction, keyId: string): string | null {
   const base = `/admin/v1/platform-keys/${encodeURIComponent(keyId)}`;
   if (action === "client-config") return `${base}/client-config`;
   if (action === "config-history") return `${base}/config-versions`;
-  if (action === "audit") return `${base}/audit-events`;
   return null;
 }
 
 function baseForKey(keyId: string): string {
   return `/admin/v1/platform-keys/${encodeURIComponent(keyId)}`;
+}
+
+interface RevealedSecret {
+  secret: string;
+  secondsLeft: number;
+}
+
+function splitSecretMask(value: string): { head: string; middle: string; tail: string } {
+  const trimmed = value.trim();
+  if (trimmed.length <= 2) return { head: "", middle: trimmed, tail: "" };
+  const tailLen = Math.min(4, Math.max(1, Math.floor(trimmed.length / 5)));
+  const headLen = Math.min(7, Math.max(1, trimmed.length - tailLen - 1));
+  if (headLen + tailLen >= trimmed.length) return { head: trimmed.slice(0, 1), middle: trimmed.slice(1, -1), tail: trimmed.slice(-1) };
+  return { head: trimmed.slice(0, headLen), middle: trimmed.slice(headLen, trimmed.length - tailLen), tail: trimmed.slice(trimmed.length - tailLen) };
+}
+
+function KeySecretCell({ item, revealed, copied, onReveal, onHide, onCopy }: { item: PlatformKeyRecord; revealed?: RevealedSecret; copied: boolean; onReveal(intent: "show" | "copy"): void; onHide(): void; onCopy(secret: string): void }) {
+  const { t } = useI18n();
+  const revoked = item.status === "revoked";
+  const shown = revealed?.secret;
+  const masked = !shown && item.display_prefix ? splitSecretMask(item.display_prefix) : null;
+  return (
+    <div className="key-secret-cell">
+      <div className="key-secret-main">
+        <span className={`key-secret-text${shown ? " revealed" : ""}`}>
+          {shown ? shown : masked ? <>
+            <span className="key-secret-edge">{masked.head}</span>
+            {masked.middle ? <span className="key-secret-blur">{masked.middle}</span> : null}
+            <span className="key-secret-edge">{masked.tail}</span>
+          </> : "—"}
+        </span>
+        {shown ? <small className="key-secret-countdown">{t("key.secret.countdown", { seconds: revealed.secondsLeft })}</small> : null}
+      </div>
+      <span className="key-secret-actions">
+        <button type="button" className={`ibtn outline sm${shown ? " on" : ""}`} data-tip={shown ? t("key.secret.hide") : t("key.action.reveal")} aria-label={shown ? t("key.secret.hide") : t("key.action.reveal")} aria-pressed={Boolean(shown)} disabled={revoked} onClick={() => { if (shown) onHide(); else onReveal("show"); }}>
+          <svg className="icon" aria-hidden="true"><use href={shown ? "#i-eye-off" : "#i-eye"} /></svg>
+        </button>
+        <button type="button" className="ibtn outline sm" data-tip={copied ? t("key.reveal.copied") : t("key.reveal.copy")} aria-label={copied ? t("key.reveal.copied") : t("key.reveal.copy")} disabled={revoked} onClick={() => { if (shown) onCopy(shown); else onReveal("copy"); }}>
+          <svg className="icon" aria-hidden="true"><use href={copied ? "#i-check" : "#i-copy"} /></svg>
+        </button>
+      </span>
+    </div>
+  );
 }
 
 function actionError(error: unknown, locale: Locale): string {
@@ -108,17 +152,45 @@ function actionError(error: unknown, locale: Locale): string {
 
 export function PlatformKeysTable({ loading, items, title, principalRole = "platform_admin", onRefresh, refreshing = false, toolbar }: { loading: boolean; items?: unknown[]; title: string; principalRole?: string; onRefresh(): void; refreshing?: boolean; toolbar?: ReactNode }) {
   const { locale, t } = useI18n();
-  const [dialog, setDialog] = useState<{ action: KeyAction; key: PlatformKeyRecord } | null>(null);
+  const toast = useToast();
+  const compact = useCompactLayout();
+  const [dialog, setDialog] = useState<{ action: KeyAction; key: PlatformKeyRecord; revealIntent?: "show" | "copy" } | null>(null);
+  const [revealed, setRevealed] = useState<Record<string, RevealedSecret>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const records = (items ?? []).filter(isPlatformKeyRecord);
   const pager = usePagination(records);
+  const revealedCount = Object.keys(revealed).length;
+  useEffect(() => {
+    if (revealedCount === 0) return;
+    const timer = window.setInterval(() => {
+      setRevealed((current) => {
+        const next: Record<string, RevealedSecret> = {};
+        for (const [id, entry] of Object.entries(current)) {
+          if (entry.secondsLeft > 1) next[id] = { secret: entry.secret, secondsLeft: entry.secondsLeft - 1 };
+        }
+        return next;
+      });
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [revealedCount]);
+  async function copySecret(id: string, secret: string) {
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopiedId(id);
+      window.setTimeout(() => setCopiedId((current) => current === id ? null : current), 2_000);
+    } catch {
+      toast.error(t("key.secret.copyFailed"));
+    }
+  }
   return <>
     <section className="card table-card key-table-card" aria-busy={loading}>
       <div className="cardbar"><div className="cbl"><h2>{title}</h2><span className="tag t-gray">{t("table.stableSort")}</span></div><div className="cbr">{toolbar}<button className={`ibtn outline${refreshing ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={refreshing} onClick={onRefresh}><svg className="icon" aria-hidden="true"><use href="#i-refresh" /></svg></button></div></div>
       {loading ? <div className="loading-lines"><span className="skel title" /><span className="skel line" /><span className="skel line" /></div>
         : records.length === 0 ? <div className="empty"><div className="empty-orbit"><svg className="icon" aria-hidden="true"><use href="#i-inbox" /></svg></div><h3>{t("table.emptyTitle")}</h3><p>{t("table.emptyBody")}</p></div>
-          : <><div className="tbl-wrap"><table className="tbl key-table"><caption className="sr-only">{t("table.caption", { title, count: records.length })}</caption><thead><tr><th scope="col">{t("key.column.name")}</th><th scope="col">{t("key.column.group")}</th><th scope="col">{t("key.column.status")}</th><th scope="col">{t("key.column.expires")}</th><th scope="col">{t("key.column.concurrency")}</th><th scope="col">{t("key.column.rpm")}</th><th scope="col">{t("key.column.spendLimit")}</th><th scope="col">{t("key.column.todaySpend")}</th><th scope="col">{t("key.column.thirtyDaySpend")}</th><th scope="col">{t("key.column.lifetimeSpend")}</th><th scope="col" className="row-actions-heading">{t("key.column.actions")}</th></tr></thead><tbody>{pager.pageRows.map((key) => <tr key={key.id}><td><strong>{key.name}</strong><small>{t("key.lastUsed", { value: formatDate(key.last_used_at, locale, t("key.neverUsed")) })}</small></td><td>{key.group_name}</td><td><span className={`key-status ${key.status}`}>{t(`key.status.${key.status}`)}</span></td><td>{formatDate(key.expires_at, locale, t("key.expires.never"))}</td><td>{key.max_concurrency?.toLocaleString(locale) ?? "—"}</td><td>{key.messages_rpm?.toLocaleString(locale) ?? "—"}</td><td>{formatMoney(key.spend_limit_amount, locale, t("key.spend.unlimited"))}</td><td>{formatMoney(key.today_spend_amount, locale, "—")}</td><td>{formatMoney(key.thirty_day_spend_amount, locale, "—")}</td><td>{formatMoney(key.lifetime_spend_amount, locale, "—")}</td><td><KeyRowActions item={key} onAction={(action) => setDialog({ action, key })} /></td></tr>)}</tbody></table></div><TablePager page={pager.page} pageCount={pager.pageCount} total={pager.total} onPage={pager.setPage} /></>}
+          : <>{compact ? <div className="tbl-cards">{pager.pageRows.map((key) => <article className="tbl-card" key={key.id}><header className="tbl-card-head"><div><strong>{key.name}</strong><small>{t("key.lastUsed", { value: formatDate(key.last_used_at, locale, t("key.neverUsed")) })}</small></div><span className={`key-status ${key.status}`}>{t(`key.status.${key.status}`)}</span></header><div className="tbl-card-secret"><KeySecretCell item={key} revealed={revealed[key.id]} copied={copiedId === key.id} onReveal={(intent) => setDialog({ action: "reveal", key, revealIntent: intent })} onHide={() => setRevealed((current) => { const next = { ...current }; delete next[key.id]; return next; })} onCopy={(secret) => void copySecret(key.id, secret)} /></div><dl className="tbl-card-grid"><div><dt>{t("key.column.group")}</dt><dd>{key.group_name}</dd></div><div><dt>{t("key.column.expires")}</dt><dd>{formatDate(key.expires_at, locale, t("key.expires.never"))}</dd></div><div><dt>{t("key.column.concurrency")}</dt><dd>{key.max_concurrency?.toLocaleString(locale) ?? "—"}</dd></div><div><dt>{t("key.column.rpm")}</dt><dd>{key.messages_rpm?.toLocaleString(locale) ?? "—"}</dd></div><div><dt>{t("key.column.spendLimit")}</dt><dd>{formatMoney(key.spend_limit_amount, locale, t("key.spend.unlimited"))}</dd></div><div><dt>{t("key.column.todaySpend")}</dt><dd>{formatMoney(key.today_spend_amount, locale, "—")}</dd></div><div><dt>{t("key.column.thirtyDaySpend")}</dt><dd>{formatMoney(key.thirty_day_spend_amount, locale, "—")}</dd></div><div><dt>{t("key.column.lifetimeSpend")}</dt><dd>{formatMoney(key.lifetime_spend_amount, locale, "—")}</dd></div></dl><footer className="tbl-card-foot"><KeyRowActions item={key} onAction={(action) => setDialog({ action, key })} /></footer></article>)}</div>
+          : <div className="tbl-wrap"><table className="tbl key-table"><caption className="sr-only">{t("table.caption", { title, count: records.length })}</caption><thead><tr><th scope="col">{t("key.column.name")}</th><th scope="col">{t("key.column.secret")}</th><th scope="col">{t("key.column.group")}</th><th scope="col">{t("key.column.status")}</th><th scope="col">{t("key.column.expires")}</th><th scope="col">{t("key.column.concurrency")}</th><th scope="col">{t("key.column.rpm")}</th><th scope="col">{t("key.column.spendLimit")}</th><th scope="col">{t("key.column.todaySpend")}</th><th scope="col">{t("key.column.thirtyDaySpend")}</th><th scope="col">{t("key.column.lifetimeSpend")}</th><th scope="col" className="row-actions-heading">{t("key.column.actions")}</th></tr></thead><tbody>{pager.pageRows.map((key) => <tr key={key.id}><td><strong>{key.name}</strong><small>{t("key.lastUsed", { value: formatDate(key.last_used_at, locale, t("key.neverUsed")) })}</small></td><td><KeySecretCell item={key} revealed={revealed[key.id]} copied={copiedId === key.id} onReveal={(intent) => setDialog({ action: "reveal", key, revealIntent: intent })} onHide={() => setRevealed((current) => { const next = { ...current }; delete next[key.id]; return next; })} onCopy={(secret) => void copySecret(key.id, secret)} /></td><td>{key.group_name}</td><td><span className={`key-status ${key.status}`}>{t(`key.status.${key.status}`)}</span></td><td>{formatDate(key.expires_at, locale, t("key.expires.never"))}</td><td>{key.max_concurrency?.toLocaleString(locale) ?? "—"}</td><td>{key.messages_rpm?.toLocaleString(locale) ?? "—"}</td><td>{formatMoney(key.spend_limit_amount, locale, t("key.spend.unlimited"))}</td><td>{formatMoney(key.today_spend_amount, locale, "—")}</td><td>{formatMoney(key.thirty_day_spend_amount, locale, "—")}</td><td>{formatMoney(key.lifetime_spend_amount, locale, "—")}</td><td><KeyRowActions item={key} onAction={(action) => setDialog({ action, key })} /></td></tr>)}</tbody></table></div>}<TablePager page={pager.page} pageCount={pager.pageCount} total={pager.total} onPage={pager.setPage} /></>}
     </section>
-    {dialog && <KeyActionDialog action={dialog.action} item={dialog.key} canChangeGroup={principalRole === "platform_admin"} onClose={() => setDialog(null)} />}
+    {dialog && <KeyActionDialog action={dialog.action} item={dialog.key} canChangeGroup={principalRole === "platform_admin"} onClose={() => setDialog(null)} onRevealed={(secret, seconds) => { const id = dialog.key.id; const intent = dialog.revealIntent; setRevealed((current) => ({ ...current, [id]: { secret, secondsLeft: seconds } })); if (intent === "copy") void copySecret(id, secret); }} />}
   </>;
 }
 
@@ -130,17 +202,15 @@ function KeyRowActions({ item, onAction }: { item: PlatformKeyRecord; onAction(a
       { key: "edit", labelKey: "key.action.edit", icon: "edit", primary: true, when: notRevoked, ...open("edit") },
       { key: "disable", labelKey: "key.action.disable", icon: "pause", danger: true, primary: true, when: (key) => key.status === "active", ...open("disable") },
       { key: "reactivate", labelKey: "key.action.reactivate", icon: "play", primary: true, when: (key) => key.status === "disabled" || key.status === "expired", ...open("reactivate") },
-      { key: "reveal", labelKey: "key.action.reveal", icon: "eye", when: notRevoked, ...open("reveal") },
       { key: "client-config", labelKey: "key.action.clientConfig", icon: "file-text", ...open("client-config") },
       { key: "config-history", labelKey: "key.action.configHistory", icon: "clock", ...open("config-history") },
-      { key: "audit", labelKey: "key.action.audit", icon: "list", ...open("audit") },
       { key: "revoke", labelKey: "key.action.revoke", icon: "lock", danger: true, when: notRevoked, ...open("revoke") },
     ];
   }, [onAction]);
   return <RowActionsCell row={item as unknown as Record<string, unknown>} actions={actions as unknown as RowActionDef<Record<string, unknown>>[]} />;
 }
 
-function KeyActionDialog({ action, item, canChangeGroup, onClose }: { action: KeyAction; item: PlatformKeyRecord; canChangeGroup: boolean; onClose(): void }) {
+function KeyActionDialog({ action, item, canChangeGroup, onClose, onRevealed }: { action: KeyAction; item: PlatformKeyRecord; canChangeGroup: boolean; onClose(): void; onRevealed(secret: string, seconds: number): void }) {
   const { locale, t } = useI18n();
   const queryClient = useQueryClient();
   const titleId = useId();
@@ -196,8 +266,17 @@ function KeyActionDialog({ action, item, canChangeGroup, onClose }: { action: Ke
       return api(`/admin/v1/platform-keys/${encodeURIComponent(item.id)}:${suffix}`, { method: "POST", headers, body: JSON.stringify({ reason, expected_revision: item.revision, ...(stepUpGrantId ? { step_up_grant_id: stepUpGrantId } : {}) }) });
     },
     onSuccess: (result) => {
-      if (action === "reveal") setSecondsLeft((result as { expires_in_seconds?: number }).expires_in_seconds ?? 60);
-      else void queryClient.invalidateQueries({ queryKey: ["/admin/v1/platform-keys"] });
+      if (action === "reveal") {
+        const payload = result as { secret?: string; expires_in_seconds?: number };
+        if (payload.secret) {
+          onRevealed(payload.secret, payload.expires_in_seconds ?? 60);
+          onClose();
+          return;
+        }
+        setSecondsLeft(payload.expires_in_seconds ?? 60);
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: ["/admin/v1/platform-keys"] });
     },
   });
   useEffect(() => {

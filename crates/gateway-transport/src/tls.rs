@@ -154,6 +154,68 @@ impl BoringTlsConnector {
                 )
             })?
             .name();
+
+        // Verify the negotiated cipher is in the Bundle's allowed list
+        let cipher_suite_id = ssl
+            .current_cipher()
+            .ok_or_else(|| {
+                tls_error(
+                    TransportErrorCode::TlsHandshake,
+                    "tls_cipher_missing",
+                    proxied,
+                    HealthEffect::TransientFailure,
+                )
+            })?
+            .protocol_id();
+        if !profile.cipher_suite_ids.contains(&cipher_suite_id) {
+            return Err(tls_error(
+                TransportErrorCode::CipherMismatch,
+                "cipher_mismatch",
+                proxied,
+                if proxied {
+                    HealthEffect::QuarantineEgress
+                } else {
+                    HealthEffect::QuarantineBundle
+                },
+            ));
+        }
+
+        // Verify TLS version is within allowed range
+        let negotiated_version = ssl.version_str();
+
+        if let Some(min_ver) = &profile.min_tls_version {
+            if !version_satisfies(negotiated_version, min_ver.as_ref()) {
+                return Err(tls_error(
+                    TransportErrorCode::TlsHandshake,
+                    "tls_version_below_minimum",
+                    proxied,
+                    if proxied {
+                        HealthEffect::QuarantineEgress
+                    } else {
+                        HealthEffect::QuarantineBundle
+                    },
+                ));
+            }
+        }
+
+        if let Some(max_ver) = &profile.max_tls_version {
+            let negotiated_code = version_to_num(negotiated_version);
+            let max_code = version_to_num(max_ver.as_ref());
+            // If either is unknown, conservatively pass
+            if negotiated_code != 0 && max_code != 0 && negotiated_code > max_code {
+                return Err(tls_error(
+                    TransportErrorCode::TlsHandshake,
+                    "tls_version_above_maximum",
+                    proxied,
+                    if proxied {
+                        HealthEffect::QuarantineEgress
+                    } else {
+                        HealthEffect::QuarantineBundle
+                    },
+                ));
+            }
+        }
+
         let observation = TlsObservation {
             negotiated_alpn: selected_alpn.map_or_else(
                 || "none".into(),
@@ -455,6 +517,31 @@ fn hex_bytes(bytes: &[u8]) -> String {
     output
 }
 
+/// Map TLS version string to numeric value for comparison
+fn version_to_num(version: &str) -> u16 {
+    match version {
+        "TLSv1.0" | "TLSv1" => 0x0301,
+        "TLSv1.1" => 0x0302,
+        "TLSv1.2" => 0x0303,
+        "TLSv1.3" => 0x0304,
+        _ => 0, // Unknown versions treated as lowest
+    }
+}
+
+/// Check if `negotiated` version satisfies (is >= than) the `required` minimum version.
+/// Unknown versions are conservatively treated as satisfying the requirement.
+fn version_satisfies(negotiated: &str, required: &str) -> bool {
+    let negotiated_code = version_to_num(negotiated);
+    let required_code = version_to_num(required);
+
+    // If either version is unknown (code 0), conservatively pass
+    if negotiated_code == 0 || required_code == 0 {
+        return true;
+    }
+
+    negotiated_code >= required_code
+}
+
 fn tls_error(
     code: TransportErrorCode,
     diagnostic: &'static str,
@@ -495,5 +582,25 @@ fn cancelled() -> TransportError {
         connection_disposition: ConnectionDisposition::CloseConnection,
         health_effect: HealthEffect::None,
         diagnostic: "cancelled_tls_handshake".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_satisfies() {
+        assert!(version_satisfies("TLSv1.3", "TLSv1.2"));
+        assert!(version_satisfies("TLSv1.3", "TLSv1.3"));
+        assert!(!version_satisfies("TLSv1.2", "TLSv1.3"));
+        assert!(version_satisfies("TLSv1.2", "TLSv1.2"));
+        assert!(!version_satisfies("TLSv1.1", "TLSv1.2"));
+    }
+
+    #[test]
+    fn test_version_satisfies_edge_cases() {
+        assert!(version_satisfies("unknown", "TLSv1.2"));
+        assert!(version_satisfies("TLSv1.3", "unknown"));
     }
 }

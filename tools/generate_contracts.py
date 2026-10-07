@@ -326,6 +326,28 @@ def generate_credential_schema() -> None:
     write_json(SCHEMAS / "credential.schema.json", base_schema("credential.schema.json", "Credential and Enrollment Contracts", defs))
 
 
+def generate_openai_schema() -> None:
+    """Provider-specific types; route activation remains gated by runtime integration."""
+    defs = {
+        "Provider": {"type": "string", "enum": ["anthropic", "openai"], "default": "anthropic"},
+        "AuthKind": {"type": "string", "enum": ["oauth", "api_key"]},
+        "ReasoningPolicy": object_schema({
+            "maximum": {"type": ["string", "null"]},
+            "downgrade": {"type": "boolean", "default": False},
+        }, []),
+        "Account": object_schema({
+            "id": {"type": "string", "format": "uuid"},
+            "group_id": {"type": "string", "format": "uuid"},
+            "provider": {"type": "string", "const": "openai"},
+            "auth_kind": {"$ref": "#/$defs/AuthKind"},
+            "enabled": {"type": "boolean", "default": False},
+            "auth_state": {"type": "string", "enum": ["pending_verify", "healthy", "refreshing", "manual_update", "needs_reauth"]},
+            "revision": {"type": "integer", "minimum": 1},
+        }, ["id", "group_id", "provider", "auth_kind", "enabled", "auth_state", "revision"]),
+    }
+    write_json(SCHEMAS / "openai.schema.json", base_schema("openai.schema.json", "OpenAI Provider Foundation", defs))
+
+
 def generate_maintenance_schema() -> None:
     defs = {
         "MaintenanceKind": enum_schema("maintenance_kind"),
@@ -855,7 +877,7 @@ def generate_r2_foundation_schemas() -> None:
             "schema_version": {"type": "string", "const": "1.0.0"},
             "postgres_minimum_major": {"type": "integer", "const": 16},
             "logical_schemas": {"type": "array", "items": {"type": "string"}, "minItems": 6, "uniqueItems": True},
-            "required_tables": {"type": "array", "items": {"type": "string", "pattern": "^[a-z_]+\\.[a-z0-9_]+$"}, "minItems": 112, "maxItems": 112, "uniqueItems": True},
+            "required_tables": {"type": "array", "items": {"type": "string", "pattern": "^[a-z_]+\\.[a-z0-9_]+$"}, "minItems": 118, "maxItems": 118, "uniqueItems": True},
             "database_roles": {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 4, "uniqueItems": True},
             "uuid_generation": {"type": "string", "const": "application_uuid_v7"},
             "enum_storage": {"type": "string", "const": "text_check_fail_closed"},
@@ -880,23 +902,6 @@ def generate_r2_foundation_schemas() -> None:
     root = base_schema("secret-envelope.schema.json", "R2 Secret Envelope Contract", envelope_defs)
     root["$ref"] = "#/$defs/SecretEnvelope"
     write_json(SCHEMAS / "secret-envelope.schema.json", root)
-
-    audit_defs = {
-        "AuditIntegrityVector": object_schema({
-            "schema_version": {"type": "string", "const": "1.0.0"},
-            "event_domain": {"type": "string", "const": "gateway-audit-event-v1"},
-            "seal_domain": {"type": "string", "const": "gateway-audit-day-v1"},
-            "hash_algorithm": {"type": "string", "const": "sha256"},
-            "seal_algorithm": {"type": "string", "const": "hmac_sha256"},
-            "event_day": {"type": "string"},
-            "daily_sequence": {"type": "integer", "minimum": 1},
-            "canonical_event": {"type": "string"},
-            "event_hash": sha256,
-        }, ["schema_version", "event_domain", "seal_domain", "hash_algorithm", "seal_algorithm", "event_day", "daily_sequence", "canonical_event", "event_hash"]),
-    }
-    root = base_schema("audit-integrity.schema.json", "R2 Audit Chain and Daily Seal Contract", audit_defs)
-    root["$ref"] = "#/$defs/AuditIntegrityVector"
-    write_json(SCHEMAS / "audit-integrity.schema.json", root)
 
     backup_defs = {
         "BackupRestoreManifest": object_schema({
@@ -934,7 +939,7 @@ def generate_r2_foundation_schemas() -> None:
             "postgres_major": {"type": "integer", "minimum": 16},
             "schema_version_value": {"type": "integer", "minimum": 1},
             "migration_manifest_sha256": sha256,
-            "required_table_count": {"type": "integer", "const": 112},
+            "required_table_count": {"type": "integer", "const": 118},
             "partition_count": {"type": "integer", "minimum": 1},
             "fixture_id": {"type": "string", "minLength": 1},
             "automation": {"type": "string", "minLength": 1},
@@ -1024,7 +1029,7 @@ def roles_for(path: str, method: str, explicit: str) -> list[str]:
         return ["platform_admin", "key_owner"]
     if any(path.startswith(prefix) for prefix in [
         "/admin/v1/platform-keys", "/admin/v1/requests", "/admin/v1/usage/", "/admin/v1/exports",
-        "/admin/v1/notifications", "/admin/v1/dashboard/summary", "/admin/v1/audit-events",
+        "/admin/v1/notifications", "/admin/v1/dashboard/summary",
     ]):
         return ["platform_admin", "key_owner"]
     if "本人" in explicit:
@@ -1053,6 +1058,22 @@ def request_ref(path: str, method: str) -> str:
         return "#/components/schemas/BodyCaptureSettingsCommand"
     if path == "/admin/v1/settings/runtime" and method == "put":
         return "#/components/schemas/RuntimeSettingsCommand"
+    if path == "/admin/v1/groups/{id}/openai-policy" and method == "put":
+        return "#/components/schemas/OpenAiGroupPolicy"
+    if path == "/admin/v1/settings/openai" and method == "put":
+        return "#/components/schemas/OpenAiSettingsCommand"
+    if path == "/admin/v1/openai/accounts" and method == "post":
+        return "#/components/schemas/OpenAiAccountCreateCommand"
+    if path == "/admin/v1/openai/accounts/{id}" and method == "patch":
+        return "#/components/schemas/OpenAiAccountSettingsCommand"
+    if path == "/admin/v1/openai/accounts/{id}:test" and method == "post":
+        return "#/components/schemas/EmptyCommand"
+    if path == "/admin/v1/openai/oauth-sessions" and method == "post":
+        return "#/components/schemas/OpenAiOAuthStart"
+    if path == "/admin/v1/openai/oauth-sessions/{id}:complete" and method == "post":
+        return "#/components/schemas/OpenAiOAuthComplete"
+    if path == "/admin/v1/openai/accounts/{id}:refresh" and method == "post":
+        return "#/components/schemas/EmptyCommand"
     if path == "/admin/v1/platform-keys/{id}:reveal" and method == "post":
         return "#/components/schemas/PlatformKeyRevealCommand"
     if path == "/admin/v1/platform-keys/{id}:revoke" and method == "post":
@@ -1180,12 +1201,22 @@ def response_ref(path: str, method: str) -> str:
         return "#/components/schemas/ModelEnvelope"
     if path == "/admin/v1/platform-keys/{id}/client-config" and method == "get":
         return "../schemas/common.schema.json#/$defs/SingleEnvelope"
+    if path == "/admin/v1/requests" and method == "get":
+        return "#/components/schemas/RequestListEnvelope"
+    if path == "/admin/v1/requests/{id}" and method == "get":
+        return "#/components/schemas/RequestEnvelope"
+    if path == "/admin/v1/requests/{id}/preview" and method == "get":
+        return "#/components/schemas/RequestPreviewEnvelope"
     if path == "/admin/v1/requests/{id}/body" and method == "get":
         return "#/components/schemas/RequestBodyEnvelope"
+    if path.endswith("/usage") and method == "get":
+        return "../schemas/common.schema.json#/$defs/SingleEnvelope"
     if path == "/admin/v1/settings/body-capture":
         return "#/components/schemas/BodyCaptureSettingsEnvelope"
     if path == "/admin/v1/settings/runtime":
         return "#/components/schemas/RuntimeSettingsEnvelope"
+    if path == "/admin/v1/settings/openai":
+        return "../schemas/common.schema.json#/$defs/SingleEnvelope"
     if method == "get" and not (path.endswith("/{id}") or re.search(r"\{[^}]+\}$", path)):
         return "../schemas/common.schema.json#/$defs/ListEnvelope"
     return "../schemas/common.schema.json#/$defs/SingleEnvelope"
@@ -1194,7 +1225,7 @@ def response_ref(path: str, method: str) -> str:
 def is_async(path: str, method: str) -> bool:
     if method != "post":
         return False
-    if path == "/admin/v1/credentials/{id}:migrate-profile-cohort":
+    if path in {"/admin/v1/credentials/{id}:migrate-profile-cohort", "/admin/v1/openai/accounts/{id}:refresh"}:
         return False
     if path in {
         "/admin/v1/plan-mapping-versions/{id}:activate",
@@ -1220,6 +1251,10 @@ def needs_idempotency(path: str, method: str) -> bool:
 
 
 def needs_if_match(path: str, method: str) -> bool:
+    if path == "/admin/v1/groups/{id}/openai-policy" and method == "put":
+        return "#/components/schemas/OpenAiGroupPolicy"
+    if path == "/admin/v1/settings/openai" and method == "put":
+        return True
     return "{" in path and (method in {"patch", "delete"} or (method == "post" and ":" in path))
 
 
@@ -1263,17 +1298,64 @@ def admin_components() -> dict[str, Any]:
                 }, ["price_sync_interval_hours", "third_party_window_minutes", "third_party_min_rejections", "third_party_ratio_percent"]),
                 "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
             }, ["data", "meta"]),
+            "RequestRecord": object_schema({
+                "id": {"type": "string", "format": "uuid"},
+                "client_name": {"type": ["string", "null"]},
+                "client_version": {"type": ["string", "null"]},
+                "request_type": {"enum": ["streaming", "sync", "websocket", None]},
+                "first_content_ms": {"type": ["integer", "null"], "minimum": 0, "description": "Ingress to first nonempty text, reasoning or tool argument output; excludes metadata and heartbeat events."},
+                "duration_ms": {"type": ["integer", "null"], "minimum": 0, "description": "Ingress to downstream delivery completion. Historical records fall back to persisted lifecycle timestamps."},
+                "tps": {"type": ["number", "null"], "minimum": 0, "description": "Output tokens (including reasoning) per second after first output for streaming/WebSocket, per total second for sync. Null until complete or when required measurements are missing."},
+                "tps_estimated": {"type": "boolean"},
+            }, ["id", "client_name", "client_version", "request_type", "first_content_ms", "duration_ms", "tps", "tps_estimated"], additional=True),
+            "RequestEnvelope": object_schema({
+                "data": {"$ref": "#/components/schemas/RequestRecord"},
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "meta"]),
+            "RequestListEnvelope": object_schema({
+                "data": {"type": "array", "items": {"$ref": "#/components/schemas/RequestRecord"}},
+                "page": {"$ref": "../schemas/common.schema.json#/$defs/Page"},
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "page", "meta"]),
+            "HeaderSnapshot": object_schema({
+                "entries": {"type": "array", "maxItems": 128, "items": object_schema({
+                    "name": {"type": "string"}, "value": {"type": "string"}, "redacted": {"type": "boolean"},
+                }, ["name", "value", "redacted"])},
+                "captured_at_ms": {"type": "integer", "minimum": 0},
+                "transport": {"enum": ["http", "websocket_handshake"]},
+                "reused": {"type": "boolean"}, "truncated": {"type": "boolean"},
+                "attempt_ordinal": {"type": ["integer", "null"], "minimum": 1},
+            }, ["entries", "captured_at_ms", "transport", "reused", "truncated", "attempt_ordinal"]),
+            "RequestPreviewEnvelope": object_schema({
+                "data": object_schema({
+                    "request_id": {"type": "string", "format": "uuid"},
+                    "preview_status": {"enum": ["available", "missing_capture"]},
+                    "mode": {"const": "credential_free"}, "network_sent": {"const": False},
+                    "provider": {"type": "string"}, "endpoint": {"type": "string"},
+                    "source": {"enum": ["policy_request", "original_request", None]},
+                    "target_status": {"enum": ["known", "requires_credential"]},
+                    "target": {"type": ["object", "null"], "additionalProperties": True},
+                    "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "body": {}, "notice": {"type": "string"},
+                }, ["request_id", "preview_status", "mode", "network_sent", "provider", "endpoint", "source", "target_status", "target", "headers", "body", "notice"]),
+                "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
+            }, ["data", "meta"]),
             "RequestBodyEnvelope": object_schema({
                 "data": object_schema({
                     "request_id": {"type": "string", "format": "uuid"},
+                    "capture_status": {"enum": ["captured", "unavailable"]},
+                    "capture_enabled": {"type": "boolean"},
+                    "retention_days": {"type": "integer"}, "max_bytes": {"type": "integer"},
+                    **{key: {"anyOf": [{"$ref": "#/components/schemas/HeaderSnapshot"}, {"type": "null"}]}
+                       for key in ["original_headers", "final_upstream_headers", "upstream_response_headers"]},
                     "original_request": {"type": ["object", "array", "string", "null"]},
                     "policy_request": {"type": ["object", "array", "string", "null"]},
                     "final_upstream_request": {"type": ["object", "array", "string", "null"]},
                     "upstream_response": {"type": ["string", "null"]},
                     "upstream_response_final": {"type": ["object", "array", "string", "null"]},
-                    "captured_at": {"type": "string", "format": "date-time"},
+                    "captured_at": {"type": "string", "description": "PostgreSQL timestamp with explicit UTC offset"},
                     "body_digest_mismatch": {"type": "boolean"},
-                }, ["request_id", "original_request", "policy_request", "final_upstream_request", "upstream_response", "upstream_response_final", "captured_at", "body_digest_mismatch"]),
+                }, ["request_id", "capture_status"]),
                 "meta": {"$ref": "../schemas/common.schema.json#/$defs/Meta"},
             }, ["data", "meta"]),
             "ModelResource": object_schema({
@@ -1344,8 +1426,48 @@ def admin_components() -> dict[str, Any]:
                 "expected_revision": {"type": "integer", "minimum": 1},
             }, ["step_up_grant_id", "reason"]),
             "GroupCreateCommand": object_schema({
+                "provider": {"type": "string", "enum": ["anthropic", "openai"], "default": "anthropic"},
                 "name": {"type": "string", "minLength": 1, "maxLength": 128},
             }, ["name"]),
+            "OpenAiAccountCreateCommand": object_schema({
+                "replace_account_id": {"type": ["string", "null"], "format": "uuid"},
+                "proxy_id": {"type": ["string", "null"], "format": "uuid"},
+                "name": {"type": "string", "minLength": 1, "maxLength": 128},
+                "group_id": {"type": "string", "format": "uuid"},
+                "auth_kind": {"type": "string", "enum": ["api_key", "oauth"]},
+                "api_key": {"type": "string", "writeOnly": True, "maxLength": 65536},
+                "credentials": {"type": "object", "writeOnly": True},
+            }, ["name", "group_id", "auth_kind"]),
+            "OpenAiOAuthStart": object_schema({
+                "replace_account_id": {"type": ["string", "null"], "format": "uuid"},
+                "name": {"type": "string", "minLength": 1, "maxLength": 128},
+                "group_id": {"type": "string", "format": "uuid"},
+                "proxy_id": {"type": ["string", "null"], "format": "uuid"},
+            }, ["name", "group_id"]),
+            "OpenAiOAuthComplete": object_schema({
+                "code": {"type": "string", "minLength": 1, "maxLength": 16384, "writeOnly": True},
+                "state": {"type": "string", "minLength": 1, "maxLength": 256, "writeOnly": True},
+            }, ["code", "state"]),
+            "OpenAiGroupPolicy": object_schema({
+                "max_reasoning_effort": {"type": ["string", "null"], "enum": [None,"none","minimal","low","medium","high","xhigh"]},
+                "reasoning_over_limit": {"type": "string", "enum": ["reject","downgrade"]},
+            }, ["max_reasoning_effort", "reasoning_over_limit"]),
+            "OpenAiSettingsCommand": object_schema({
+                "enabled": {"type": "boolean"}, "websocket_enabled": {"type": "boolean"},
+                "connect_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 120},
+                "response_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+                "websocket_idle_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+                "refresh_interval_seconds": {"type": "integer", "minimum": 10, "maximum": 3600},
+            }, ["enabled", "websocket_enabled", "connect_timeout_seconds", "response_timeout_seconds", "websocket_idle_seconds", "refresh_interval_seconds"]),
+            "OpenAiAccountSettingsCommand": object_schema({
+                "group_id": {"type": ["string", "null"], "format": "uuid"},
+                "proxy_id": {"type": ["string", "null"], "format": "uuid"},
+                "name": {"type": "string", "minLength": 1, "maxLength": 128},
+                "enabled": {"type": "boolean"}, "websocket_enabled": {"type": "boolean"},
+                "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 1000},
+                "priority": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+                "models": {"type": "array", "maxItems": 256, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+            }, ["name", "enabled", "websocket_enabled", "max_concurrency", "priority", "models"]),
             "RateLimit": object_schema({"rpm": {"type": "integer", "minimum": 1}, "burst": {"type": "integer", "minimum": 1}}, ["rpm", "burst"]),
             "GroupConfigCandidate": object_schema({
                 "accepted_client_classes": {"type": "array", "items": enum_schema("client_class"), "minItems": 1, "uniqueItems": True},
@@ -1792,7 +1914,7 @@ def generate_data_openapi() -> None:
     }, ["type", "error", "request_id"])
     message_request = object_schema({
         "model": {"type": "string", "minLength": 1}, "max_tokens": {"type": "integer", "minimum": 1},
-        "messages": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["role", "content"], "properties": {"role": {"type": "string", "enum": ["user", "assistant"]}, "content": {}}, "additionalProperties": True}},
+        "messages": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["role", "content"], "properties": {"role": {"type": "string", "enum": ["user", "assistant", "system"], "description": "Mid-conversation system messages are supported by compatible models; preserve their original position."}, "content": {}}, "additionalProperties": True}},
         "system": {}, "stream": {"type": "boolean", "default": False},
         "temperature": {"type": "number"}, "top_p": {"type": "number"}, "top_k": {"type": "integer"},
         "stop_sequences": {"type": "array", "items": {"type": "string"}}, "tools": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
@@ -1935,6 +2057,19 @@ def generate_data_openapi() -> None:
         },
         "x-public-route-policy": {"unknown_v1_requires_auth": True, "count_tokens_public": True, "websocket": False, "providers": ["anthropic_official"]},
     }
+    document["x-public-route-policy"].update({"websocket": True, "providers": ["anthropic_official", "openai_official"]})
+    for path, operation in [("/v1/responses","createResponse"),("/v1/chat/completions","createChatCompletion"),("/v1/responses/compact","compactResponse")]:
+        document["paths"][path] = {"post": {
+            "operationId": operation, "summary": "OpenAI official API or Codex subscription request",
+            "requestBody": {"required": True,"content": {"application/json": {"schema": object_schema({"model":{"type":"string","minLength":1},"stream":{"type":"boolean"},"previous_response_id":{"type":"string"}},["model"],additional=True)}}},
+            "responses": {"200":{"description":"Native JSON/SSE, or explicit Chat/Responses conversion for subscriptions","content":{"application/json":{"schema":{}},"text/event-stream":{"schema":{"type":"string"}}}}, **{str(code):{"$ref":"#/components/responses/DataError"} for code in [400,401,403,404,409,429,500,503,504]}}
+        }}
+    document["paths"]["/v1/responses"]["get"] = {"operationId":"responsesWebSocket","summary":"One account-bound serial Responses WebSocket","responses":{"101":{"description":"Switching protocols; response.create frames are admitted per turn"},"401":{"$ref":"#/components/responses/DataError"},"503":{"$ref":"#/components/responses/DataError"}}}
+    document["paths"]["/v1/models/{model}"] = {"get":{"operationId":"getModel","parameters":[{"name":"model","in":"path","required":True,"schema":{"type":"string"}}],"responses":{"200":{"description":"OpenAI model metadata","content":{"application/json":{"schema":{}}}},"404":{"$ref":"#/components/responses/DataError"}}}}
+    for alias, target in [("/responses","/v1/responses"),("/responses/compact","/v1/responses/compact"),("/chat/completions","/v1/chat/completions"),("/models","/v1/models"),("/models/{model}","/v1/models/{model}"),("/backend-api/codex/models","/v1/models")]:
+        document["paths"][alias] = json.loads(json.dumps(document["paths"][target]))
+        for method, value in document["paths"][alias].items(): value["operationId"] += "Alias" + re.sub(r"[^a-zA-Z]", "", alias)
+    document["paths"]["/v1/models"]["get"]["parameters"].append({"name":"client_version","in":"query","schema":{"type":"string"},"description":"Requests the published Codex model directory"})
     write_json(OPENAPI / "data-plane.openapi.json", document)
 
 
@@ -2308,7 +2443,6 @@ def generate_fixtures() -> None:
         ("GATEWAY_KEY_PROVIDER_URI", "provider_uri", False, True, True, "conditional", "GATEWAY_BUSINESS_KEY_PROVIDER=uri", None),
         ("GATEWAY_APP_KEY_FILE", "secret_file", False, True, True, "conditional", "GATEWAY_BUSINESS_KEY_PROVIDER=file", None),
         ("GATEWAY_DIGEST_KEY_FILE", "secret_file", True, True, True, "independent", None, None),
-        ("GATEWAY_AUDIT_INTEGRITY_KEY_FILE", "secret_file", True, True, True, "independent", None, None),
         ("GATEWAY_BUNDLE_TRUST_STORE", "path", True, False, True, "independent", None, None),
         ("GATEWAY_BUNDLE_DIR", "path", True, False, True, "independent", None, None),
         ("GATEWAY_RESPONSE_TMP_DIR", "path", True, False, True, "independent", None, None),
@@ -2608,16 +2742,6 @@ def generate_fixtures() -> None:
         "wrapped_dek_base64": "Zml4dHVyZS13cmFwcGVkLWRlaw==",
         "aad_fields": ["schema_version", "secret_id", "secret_kind", "provider_role", "owner_type", "owner_id", "purpose", "key_version"],
     })
-    audit_day = "2026-08-24"
-    canonical_event = '{"action":"fixture"}'
-    audit_hash = hashlib.sha256(
-        b"gateway-audit-event-v1" + audit_day.encode("utf-8") + (1).to_bytes(8, "big") + canonical_event.encode("utf-8")
-    ).hexdigest()
-    write_json(FIXTURES / "audit-integrity.valid.json", {
-        "schema_version": "1.0.0", "event_domain": "gateway-audit-event-v1", "seal_domain": "gateway-audit-day-v1",
-        "hash_algorithm": "sha256", "seal_algorithm": "hmac_sha256", "event_day": audit_day,
-        "daily_sequence": 1, "canonical_event": canonical_event, "event_hash": audit_hash,
-    })
     write_json(FIXTURES / "backup-restore-manifest.valid.json", {
         "schema_version": "2.0.0", "backup_id": "0198d5d0-0000-7000-8000-000000000001",
         "created_at_utc": "2026-08-24T00:00:00Z", "scope": "local_fixture", "backup_key_version": 1,
@@ -2646,6 +2770,7 @@ def main() -> None:
     generate_registries()
     generate_common_schema()
     generate_credential_schema()
+    generate_openai_schema()
     generate_maintenance_schema()
     generate_session_schema()
     generate_egress_profile_schema()

@@ -7,7 +7,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function Fixture() {
   const { t } = useI18n();
-  return <><LanguageSwitch /><p>{t("auth.loginTitle")}</p><ul><li>{t("nav.groups")}</li><li>{t("nav.credentials")}</li><li>{t("nav.platformKeys")}</li><li>{t("nav.egress")}</li><li>{t("nav.bundles")}</li></ul></>;
+  return <><LanguageSwitch /><p>{t("auth.loginTitle")}</p><ul><li>{t("nav.credentials")}</li><li>{t("nav.platformKeys")}</li><li>{t("nav.egress")}</li><li>{t("nav.bundles")}</li></ul></>;
 }
 
 describe("admin console i18n", () => {
@@ -23,10 +23,10 @@ describe("admin console i18n", () => {
     const user = userEvent.setup();
     render(<I18nProvider initialLocale="zh-CN"><Fixture /></I18nProvider>);
     expect(screen.getByText("登录控制塔")).toBeInTheDocument();
-    for (const label of ["凭据分组", "凭据", "平台密钥", "代理 / 出口", "环境原型 / 传输包"]) expect(screen.getByText(label)).toBeInTheDocument();
+    for (const label of ["凭据", "平台密钥", "代理 / 出口", "环境原型 / 传输包"]) expect(screen.getByText(label)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "EN" }));
     expect(screen.getByText("Sign in to Control Tower")).toBeInTheDocument();
-    for (const label of ["Credential Groups", "Credentials", "Platform Keys", "Proxy / Egress", "Archetype / Bundle"]) expect(screen.getByText(label)).toBeInTheDocument();
+    for (const label of ["Credentials", "Platform Keys", "Proxy / Egress", "Archetype / Bundle"]) expect(screen.getByText(label)).toBeInTheDocument();
     expect(document.documentElement.lang).toBe("en-US");
     expect(document.title).toBe("Super Gateway · Control Tower");
     expect(storage.setItem).toHaveBeenLastCalledWith("super-gateway.admin.locale", "en-US");

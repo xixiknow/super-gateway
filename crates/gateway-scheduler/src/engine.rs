@@ -112,6 +112,9 @@ impl SchedulerEngine {
                 || credential.rate_limit.requests_per_minute == 0
                 || credential.rate_limit.burst == 0
                 || credential.weight == 0
+                || credential.openai_transport.as_ref().is_some_and(|transport| {
+                    transport.revision == 0 || transport.egress_epoch == 0 || !credential.profiles.is_empty()
+                })
             {
                 return Err(SchedulerError::InvalidConfiguration);
             }
@@ -329,6 +332,9 @@ impl SchedulerEngine {
             || config.rate_limit.burst == 0
             || config.weight == 0
             || config.scheduling_projection_revision == 0
+            || config.openai_transport.as_ref().is_some_and(|transport| {
+                transport.revision == 0 || transport.egress_epoch == 0 || !config.profiles.is_empty()
+            })
         {
             return Err(SchedulerError::InvalidConfiguration);
         }
@@ -340,13 +346,14 @@ impl SchedulerEngine {
                 return Ok(false);
             }
             runtime.bucket.reconfigure(config.rate_limit, now);
-            let device_changed = config.profiles.iter().any(|(os, profile)| {
-                runtime
-                    .config
-                    .profiles
-                    .get(os)
-                    .is_none_or(|current| current.device_epoch != profile.device_epoch)
-            });
+            let device_changed = config.openai_transport != runtime.config.openai_transport
+                || config.profiles.iter().any(|(os, profile)| {
+                    runtime
+                        .config
+                        .profiles
+                        .get(os)
+                        .is_none_or(|current| current.device_epoch != profile.device_epoch)
+                });
             if config.credential_projection_revision > runtime.config.credential_projection_revision {
                 runtime.quota_observation_version = config.quota_observation_version;
                 runtime.config = config;
@@ -943,12 +950,21 @@ impl SchedulerEngine {
             .credentials
             .get_mut(credential_id)
             .ok_or(SchedulerError::InvalidConfiguration)?;
-        let profile = runtime
-            .config
-            .profiles
-            .get(&entry.client_os)
-            .cloned()
-            .ok_or(SchedulerError::InvalidConfiguration)?;
+        let execution = if let Some(transport) = &runtime.config.openai_transport {
+            if !runtime.config.profiles.is_empty() {
+                return Err(SchedulerError::InvalidConfiguration);
+            }
+            crate::CredentialExecution::OpenAi(transport.clone())
+        } else {
+            crate::CredentialExecution::Anthropic(
+                runtime
+                    .config
+                    .profiles
+                    .get(&entry.client_os)
+                    .cloned()
+                    .ok_or(SchedulerError::InvalidConfiguration)?,
+            )
+        };
         if !runtime.bucket.try_consume(now) || runtime.inflight >= runtime.config.concurrency_limit {
             return Err(SchedulerError::InvalidConfiguration);
         }
@@ -973,17 +989,7 @@ impl SchedulerEngine {
             client_os: entry.client_os,
             owner_generation: self.identity.generation,
             token_version: runtime.config.token_version,
-            profile_id: profile.profile_id,
-            profile_epoch: profile.profile_epoch,
-            device_identity_id: profile.device_identity_id,
-            device_epoch: profile.device_epoch,
-            archetype_version_id: profile.archetype_version_id,
-            bundle_id: profile.bundle_id,
-            bundle_version: profile.bundle_version,
-            bundle_hash: profile.bundle_hash,
-            egress_binding_id: profile.egress_binding_id,
-            egress_epoch: profile.egress_epoch,
-            bundle_epoch: profile.bundle_epoch,
+            execution,
             half_open,
         };
         let (session_claim_key, new_session_claim) = self.acquire_session_claim(&entry, credential_id);
@@ -1367,10 +1373,11 @@ fn eligibility(
     let credential = &runtime.config;
     if runtime.admin_fenced
         || !credential.state.lifecycle_active
-        || !credential.state.profile_ready
+        || (credential.openai_transport.is_none() && !credential.state.profile_ready)
         || !credential.state.egress_ready
         || !credential.state.transport_ready
-        || !credential.profiles.contains_key(&entry.client_os)
+        || (credential.openai_transport.is_none() && !credential.profiles.contains_key(&entry.client_os))
+        || (credential.openai_transport.is_some() && !credential.profiles.is_empty())
         || (!credential.model_scope.is_empty() && !credential.model_scope.contains(entry.generic.model_id.as_ref()))
         || (entry.generic.attribution_suppressed && !credential.attribution_optional)
     {
@@ -1549,6 +1556,7 @@ mod tests {
             attribution_optional: true,
             session_capacity: SessionCapacityConfig::default(),
             token_version: 1,
+            openai_transport: None,
             profiles: BTreeMap::from([(
                 ClientOs::Windows,
                 CredentialProfileConfig {
@@ -1615,6 +1623,42 @@ mod tests {
         assert!(matches!(decision, Ok(AdmissionDecision::Rejected(_))));
         assert_eq!(engine.snapshot().active_leases, 0);
         assert_eq!(engine.snapshot().total_credential_capacity, 0);
+    }
+
+    #[test]
+    fn openai_lease_uses_standard_transport_without_claude_bundle() {
+        let mut account = credential(1, 1);
+        account.profiles.clear();
+        account.state.profile_ready = false;
+        account.openai_transport = Some(crate::OpenAiTransportConfig {
+            revision: 7,
+            egress_epoch: 3,
+        });
+        let mut engine = engine(vec![account]);
+        let decision = engine.admit(generation(), entry(900, 1, 1, 1, Portability::Portable), Duration::ZERO);
+        let lease = match decision {
+            Ok(AdmissionDecision::Granted(lease)) => lease,
+            other => std::panic::panic_any(format!("unexpected decision: {other:?}")),
+        };
+        assert!(lease.anthropic_profile().is_none());
+        assert!(matches!(
+            lease.execution,
+            crate::CredentialExecution::OpenAi(crate::OpenAiTransportConfig {
+                revision: 7,
+                egress_epoch: 3
+            })
+        ));
+        assert!(
+            engine
+                .release_lease(generation(), &lease.id, Duration::from_secs(1))
+                .is_ok()
+        );
+        assert!(
+            engine
+                .complete_request(generation(), &lease.request_id, Duration::from_secs(1))
+                .is_ok()
+        );
+        assert_eq!(engine.snapshot().active_leases, 0);
     }
 
     #[test]
@@ -2239,7 +2283,7 @@ mod tests {
             Ok(AdmissionDecision::Granted(lease)) => lease,
             other => std::panic::panic_any(format!("unexpected decision: {other:?}")),
         };
-        assert_eq!(first.profile_epoch, 2);
+        assert_eq!(first.anthropic_profile().expect("Anthropic profile").profile_epoch, 2);
         let mut updated = credential(1, 1);
         updated.credential_projection_revision = 2;
         let profile = updated.profiles.get_mut(&ClientOs::Windows).expect("Windows profile");
@@ -2249,7 +2293,7 @@ mod tests {
             engine.reconfigure_credential(generation(), updated, Duration::from_secs(1)),
             Ok(true)
         );
-        assert_eq!(first.profile_epoch, 2);
+        assert_eq!(first.anthropic_profile().expect("Anthropic profile").profile_epoch, 2);
         assert!(
             engine
                 .release_lease(generation(), &first.id, Duration::from_secs(2))
@@ -2268,7 +2312,7 @@ mod tests {
             Ok(AdmissionDecision::Granted(lease)) => lease,
             other => std::panic::panic_any(format!("unexpected decision: {other:?}")),
         };
-        assert_eq!(second.profile_epoch, 3);
+        assert_eq!(second.anthropic_profile().expect("Anthropic profile").profile_epoch, 3);
         let mut stale = credential(1, 1);
         stale.credential_projection_revision = 1;
         stale.scheduling_projection_revision = 99;

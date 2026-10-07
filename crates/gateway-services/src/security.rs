@@ -1,4 +1,4 @@
-//! Secret-envelope, password hashing and audit-integrity services.
+//! Secret-envelope and password hashing services.
 
 #![allow(
     clippy::missing_errors_doc,

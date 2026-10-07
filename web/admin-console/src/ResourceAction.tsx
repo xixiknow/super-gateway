@@ -6,6 +6,7 @@ import { useToast } from "./feedback";
 import { Locale, MessageKey, useI18n } from "./i18n";
 import { rowActionError } from "./row-actions";
 import { SelectField } from "./select-field";
+import { ModelSyncButton } from "./ModelSyncButton";
 
 type FieldType = "text" | "email" | "password" | "number" | "select" | "checkbox-group" | "radio-cards" | "datetime-local" | "json" | "resource" | "textarea" | "model-checkboxes";
 type ResourceSource = "groups";
@@ -43,21 +44,6 @@ interface ResourceActionConfig {
   direct?: boolean;
 }
 
-interface SubmittedJob {
-  id: string;
-  type: string;
-  status: string;
-}
-
-interface DurableJob {
-  id: string;
-  kind: string;
-  state: string;
-  last_error: string | null;
-}
-
-const terminalJobStates = new Set(["succeeded", "dead_letter", "cancelled", "failed", "partially_succeeded"]);
-
 export type ResourceActionKey =
   | "group" | "credential" | "user" | "platform-key" | "proxy" | "model-refresh"
   | "approval" | "alert-silence" | "upgrade-check" | "export";
@@ -92,8 +78,9 @@ const actionConfigs: Record<ResourceActionKey, ResourceActionConfig> = {
   group: {
     buttonKey: "action.group.button", titleKey: "action.group.title", descriptionKey: "action.group.description",
     endpoint: "/admin/v1/groups", invalidate: ["/admin/v1/groups"], policyNoteKey: "action.group.policyNote",
-    fields: [{ name: "name", labelKey: "action.group.name", type: "text", required: true, maxLength: 128, placeholderKey: "action.group.placeholder" }],
-    buildPayload: (data) => ({ name: text(data, "name") }),
+    fields: [{ name: "name", labelKey: "action.group.name", type: "text", required: true, maxLength: 128, placeholderKey: "action.group.placeholder" },
+      { name: "provider", labelKey: "openai.provider", type: "select", required: true, defaultValue: "anthropic", options: [{ value: "anthropic", label: "Anthropic" }, { value: "openai", label: "OpenAI" }] }],
+    buildPayload: (data) => ({ name: text(data, "name"), provider: text(data, "provider") || "anthropic" }),
   },
   credential: {
     buttonKey: "action.credential.button", titleKey: "action.credential.title", descriptionKey: "action.credential.description",
@@ -303,6 +290,35 @@ function ResultSummary({ result, hideId = false }: { result: unknown; hideId?: b
   );
 }
 
+type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
+function describeActionError(config: ResourceActionConfig, error: unknown, t: Translate): string {
+  if (error instanceof ApiError && error.code === "platform_key_name_conflict") return t("action.key.nameConflict");
+  const invalidField = error instanceof InvalidJsonFieldError ? config.fields.find((field) => field.name === error.field) : undefined;
+  const apiMessage = error instanceof ApiError && error.message === "request_failed" ? t("common.requestFailed") : error instanceof Error ? error.message : undefined;
+  if (invalidField) return t("common.jsonInvalid", { field: t(invalidField.labelKey) });
+  if (error instanceof ApiError) return error.status ? t("common.http", { status: error.status, message: apiMessage ?? t("common.requestFailed") }) : apiMessage ?? t("common.requestFailed");
+  return error instanceof Error ? error.message : t("common.operationFailed");
+}
+
+function ActionFormBody({ config, titleId, error, errorMessage, working, onClose, submit }: {
+  config: ResourceActionConfig; titleId: string; error: boolean; errorMessage: string; working: boolean;
+  onClose(): void; submit(event: FormEvent<HTMLFormElement>): void;
+}) {
+  const { t } = useI18n();
+  const basicFields = config.fields.filter((field) => !field.advanced);
+  const advancedFields = config.fields.filter((field) => field.advanced);
+  return <form onSubmit={submit}>
+    <div className="modal-body resource-action-grid">
+      {error && <div className="alert alert-err action-error" role="alert"><div><div className="at">{t("action.submitFailed")}</div><div className="ad">{errorMessage}</div></div></div>}
+      {config.policyNoteKey && <div className="policy-note field-wide"><svg className="icon sm" aria-hidden="true"><use href="#i-lock" /></svg><span>{t(config.policyNoteKey)}</span></div>}
+      {basicFields.map((field, index) => <FieldControl key={field.name} field={field} titleId={titleId} index={index} />)}
+      {advancedFields.length > 0 && <details className="advanced-settings field-wide"><summary>{t("common.advanced")}</summary><p>{t("common.advancedHint")}</p><div className="resource-action-grid">{advancedFields.map((field, index) => <FieldControl key={field.name} field={field} titleId={titleId} index={basicFields.length + index} />)}</div></details>}
+    </div>
+    <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={working}>{t("common.cancel")}</button><button type="submit" className="btn btn-primary" disabled={working}>{working ? t("common.submitting") : t(config.buttonKey)}</button></div>
+  </form>;
+}
+
 /* ============================================================
    凭据注册续办:创建后按服务端返回的 next_action 指引完成后续步骤
    oauth_pkce:打开授权页 → 提交回调(授权码 + state + 一次性随机数)
@@ -456,76 +472,70 @@ function CredentialEnrollmentFlow({ initial, onClose }: { initial: EnrollmentRec
   return <><div className="modal-body">{statusChips}{errorAlert}<div className="enroll-wait"><span className="spin sm" aria-hidden="true" /><span>{record.next_action === "complete_browser_login" ? t("enroll.browserLogin") : t("enroll.waiting")}</span></div></div><div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>{t("common.close")}</button><button type="button" className="btn btn-outline" disabled={enrollment.isFetching} onClick={() => void enrollment.refetch()}>{t("enroll.refreshState")}</button></div></>;
 }
 
+/**
+ * Credential enrollment modal content (head + create form + next-action flow),
+ * embeddable in any modal shell. The create mutation lives here so hosts only
+ * need to render this body and forward `onClose`.
+ */
+export function CredentialEnrollmentBody({ onClose, titleId, onWorkingChange }: {
+  onClose(): void; titleId: string; onWorkingChange?(working: boolean): void;
+}) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const config = actionConfigs.credential;
+  const [created, setCreated] = useState<EnrollmentRecord | null>(null);
+  const mutation = useMutation({
+    mutationFn: (values: FormData) => api<unknown>(config.endpoint, { method: "POST", body: JSON.stringify(config.buildPayload(values)) }),
+    onSuccess: (data) => {
+      for (const queryKey of config.invalidate) void queryClient.invalidateQueries({ queryKey: [queryKey] });
+      toast.success(t("action.success"));
+      setCreated(data as EnrollmentRecord);
+    },
+    onError: (error) => toast.error(describeActionError(config, error, t)),
+  });
+  useEffect(() => { onWorkingChange?.(mutation.isPending); }, [mutation.isPending, onWorkingChange]);
+  function close() { if (!mutation.isPending) { mutation.reset(); setCreated(null); onClose(); } }
+  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); mutation.mutate(new FormData(event.currentTarget)); }
+  const errorMessage = mutation.isError ? describeActionError(config, mutation.error, t) : "";
+  return <>
+    <div className="modal-head"><div><p className="eyebrow mono">{t("action.eyebrow")}</p><h3 id={titleId}>{t(config.titleKey)}</h3><p className="muted resource-action-description">{t(config.descriptionKey)}</p></div><button type="button" className="ibtn outline" aria-label={t("common.close")} onClick={close} disabled={mutation.isPending}>×</button></div>
+    {mutation.isSuccess && created
+      ? <CredentialEnrollmentFlow initial={created} onClose={close} />
+      : <ActionFormBody config={config} titleId={titleId} error={mutation.isError} errorMessage={errorMessage} working={mutation.isPending} onClose={close} submit={submit} />}
+  </>;
+}
+
 export function ResourceActionButton({ action, className = "btn btn-primary", iconOnly = false }: { action: ResourceActionKey; className?: string; iconOnly?: boolean }) {
+  if (action === "model-refresh") return <ModelSyncButton className={className} />;
+  return <GenericResourceActionButton action={action} className={className} iconOnly={iconOnly} />;
+}
+
+function GenericResourceActionButton({ action, className, iconOnly }: { action: ResourceActionKey; className: string; iconOnly: boolean }) {
   const { t } = useI18n();
   const toast = useToast();
   const config = actionConfigs[action];
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [modelSyncJobId, setModelSyncJobId] = useState<string | null>(null);
+  const [credentialWorking, setCredentialWorking] = useState(false);
   const titleId = useId();
   function describeError(error: unknown): string {
-    const invalidField = error instanceof InvalidJsonFieldError ? config.fields.find((field) => field.name === error.field) : undefined;
-    const apiMessage = error instanceof ApiError && error.message === "request_failed" ? t("common.requestFailed") : error instanceof Error ? error.message : undefined;
-    if (invalidField) return t("common.jsonInvalid", { field: t(invalidField.labelKey) });
-    if (error instanceof ApiError) return error.status ? t("common.http", { status: error.status, message: apiMessage ?? t("common.requestFailed") }) : apiMessage ?? t("common.requestFailed");
-    return error instanceof Error ? error.message : t("common.operationFailed");
+    return describeActionError(config, error, t);
   }
   const mutation = useMutation({
     mutationFn: (values: FormData) => api<unknown>(config.endpoint, { method: "POST", body: JSON.stringify(config.buildPayload(values)) }),
-    onSuccess: (result) => {
-      if (action === "model-refresh") {
-        const submitted = result as Partial<SubmittedJob>;
-        if (!submitted.id || typeof submitted.id !== "string") {
-          toast.error(t("action.model.syncFailed", { error: t("common.requestFailed") }));
-          return;
-        }
-        setModelSyncJobId(submitted.id);
-        return;
-      }
+    onSuccess: () => {
       for (const queryKey of config.invalidate) void queryClient.invalidateQueries({ queryKey: [queryKey] });
       toast.success(t("action.success"));
     },
     onError: (error) => toast.error(describeError(error)),
   });
-  const modelSyncJob = useQuery({
-    queryKey: ["/admin/v1/operations/jobs", modelSyncJobId],
-    queryFn: () => api<DurableJob>(`/admin/v1/operations/jobs/${encodeURIComponent(modelSyncJobId ?? "")}`),
-    enabled: modelSyncJobId !== null,
-    retry: false,
-    refetchInterval: (query) => {
-      const state = (query.state.data as DurableJob | undefined)?.state;
-      return state && terminalJobStates.has(state) ? false : 1_000;
-    },
-  });
-  useEffect(() => {
-    if (!modelSyncJobId || !modelSyncJob.data) return;
-    const job = modelSyncJob.data;
-    if (job.state === "succeeded") {
-      setModelSyncJobId(null);
-      void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["/admin/v1/models"] }),
-        queryClient.invalidateQueries({ queryKey: ["/admin/v1/capability-versions"] }),
-      ]).then(() => {
-        toast.success(t("action.model.completed"));
-      });
-      return;
-    }
-    if (terminalJobStates.has(job.state)) {
-      setModelSyncJobId(null);
-      toast.error(t("action.model.syncFailed", { error: job.last_error || job.state }));
-    }
-  }, [modelSyncJob.data, modelSyncJobId, queryClient, t, toast]);
-  useEffect(() => {
-    if (!modelSyncJobId || !modelSyncJob.isError) return;
-    setModelSyncJobId(null);
-    toast.error(t("action.model.syncFailed", { error: describeError(modelSyncJob.error) }));
-  }, [modelSyncJob.error, modelSyncJob.isError, modelSyncJobId, t, toast]);
   useEffect(() => {
     if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !mutation.isPending) setOpen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !mutation.isPending) closeDialog(); };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mutation.isPending]);
   function triggerAction() {
     mutation.reset();
@@ -535,24 +545,31 @@ export function ResourceActionButton({ action, className = "btn btn-primary", ic
   function closeDialog() { if (!mutation.isPending) { setOpen(false); mutation.reset(); } }
   function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); mutation.mutate(new FormData(event.currentTarget)); }
 
-  const mutationError = mutation.error;
-  const errorMessage = mutation.isError ? describeError(mutationError) : "";
-  const basicFields = config.fields.filter((field) => !field.advanced);
-  const advancedFields = config.fields.filter((field) => field.advanced);
-  const working = mutation.isPending || modelSyncJobId !== null;
-  const buttonLabel = action === "model-refresh" && working ? t("action.model.syncing") : t(config.buttonKey);
+  const errorMessage = mutation.isError ? describeError(mutation.error) : "";
+  const working = action === "credential" ? credentialWorking : mutation.isPending;
+  const buttonLabel = t(config.buttonKey);
+  const trigger = iconOnly
+    ? <button type="button" className={`ibtn outline${working ? " loading" : ""}`} data-tip={buttonLabel} aria-label={buttonLabel} aria-busy={working} disabled={working} onClick={triggerAction}><ActionIcon intent={config.intent} icon={config.icon} /></button>
+    : <button type="button" className={`${className}${working ? " loading" : ""}`} aria-busy={working} disabled={working} onClick={triggerAction}><ActionIcon intent={config.intent} icon={config.icon} />{buttonLabel}</button>;
 
+  if (action === "credential") {
+    return <>
+      {trigger}
+      {open && createPortal(<div className="overlay show" onMouseDown={(event) => { if (event.target === event.currentTarget && !credentialWorking) closeDialog(); }}>
+        <section className="modal resource-action-modal" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+          <CredentialEnrollmentBody onClose={closeDialog} titleId={titleId} onWorkingChange={setCredentialWorking} />
+        </section>
+      </div>, document.body)}
+    </>;
+  }
   return <>
-    {iconOnly
-      ? <button type="button" className={`ibtn outline${working ? " loading" : ""}`} data-tip={buttonLabel} aria-label={buttonLabel} aria-busy={working} disabled={working} onClick={triggerAction}><ActionIcon intent={config.intent} icon={config.icon} /></button>
-      : <button type="button" className={`${className}${working ? " loading" : ""}`} aria-busy={working} disabled={working} onClick={triggerAction}><ActionIcon intent={config.intent} icon={config.icon} />{buttonLabel}</button>}
+    {trigger}
     {open && createPortal(<div className="overlay show" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
       <section className="modal resource-action-modal" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="modal-head"><div><p className="eyebrow mono">{t("action.eyebrow")}</p><h3 id={titleId}>{t(config.titleKey)}</h3><p className="muted resource-action-description">{t(config.descriptionKey)}</p></div><button type="button" className="ibtn outline" aria-label={t("common.close")} onClick={closeDialog} disabled={mutation.isPending}>×</button></div>
-        {mutation.isSuccess ? (action === "credential"
-          ? <CredentialEnrollmentFlow initial={mutation.data as EnrollmentRecord} onClose={closeDialog} />
-          : <><div className="modal-body"><div className="alert alert-ok" role="status"><div><div className="at">{t("action.success")}</div><div className="ad">{t("action.successBody")}</div></div></div><ResultSummary result={mutation.data} hideId={config.hideResultId} /></div><div className="modal-foot"><button type="button" className="btn btn-primary" onClick={closeDialog}>{t("common.done")}</button></div></>)
-          : <form onSubmit={submit}><div className="modal-body resource-action-grid">{mutation.isError && <div className="alert alert-err action-error" role="alert"><div><div className="at">{t("action.submitFailed")}</div><div className="ad">{errorMessage}</div></div></div>}{config.policyNoteKey && <div className="policy-note field-wide"><svg className="icon sm" aria-hidden="true"><use href="#i-lock" /></svg><span>{t(config.policyNoteKey)}</span></div>}{basicFields.map((field, index) => <FieldControl key={field.name} field={field} titleId={titleId} index={index} />)}{advancedFields.length > 0 && <details className="advanced-settings field-wide"><summary>{t("common.advanced")}</summary><p>{t("common.advancedHint")}</p><div className="resource-action-grid">{advancedFields.map((field, index) => <FieldControl key={field.name} field={field} titleId={titleId} index={basicFields.length + index} />)}</div></details>}</div><div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={closeDialog} disabled={mutation.isPending}>{t("common.cancel")}</button><button type="submit" className="btn btn-primary" disabled={mutation.isPending}>{mutation.isPending ? t("common.submitting") : t(config.buttonKey)}</button></div></form>}
+        {mutation.isSuccess
+          ? <><div className="modal-body"><div className="alert alert-ok" role="status"><div><div className="at">{t("action.success")}</div><div className="ad">{t("action.successBody")}</div></div></div><ResultSummary result={mutation.data} hideId={config.hideResultId} /></div><div className="modal-foot"><button type="button" className="btn btn-primary" onClick={closeDialog}>{t("common.done")}</button></div></>
+          : <ActionFormBody config={config} titleId={titleId} error={mutation.isError} errorMessage={errorMessage} working={mutation.isPending} onClose={closeDialog} submit={submit} />}
       </section>
     </div>, document.body)}
   </>;

@@ -18,8 +18,13 @@ boring = { workspace = true, optional = true }
 bytes.workspace = true
 ed25519-dalek.workspace = true
 futures-core.workspace = true
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
 gateway-domain = { path = "../gateway-domain" }
 http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 httparse.workspace = true
 rustls-native-certs = { workspace = true, optional = true }
 semver.workspace = true

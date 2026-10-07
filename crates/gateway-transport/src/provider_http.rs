@@ -80,6 +80,8 @@ pub struct ProviderHttpsResponse {
     pub status: u16,
     /// Optional raw single Retry-After value.
     pub retry_after: Option<Box<[u8]>>,
+    /// Optional raw single Location value for controlled public-document redirects.
+    pub location: Option<Box<[u8]>>,
     /// Zeroizing response body.
     pub body: SecretBytes,
 }
@@ -153,6 +155,17 @@ impl ProviderHttpsClient {
         } else {
             None
         };
+        let locations = head
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("location"))
+            .map(|(_, value)| Box::<[u8]>::from(value.as_ref()))
+            .collect::<Vec<_>>();
+        let location = if locations.len() == 1 {
+            locations.into_iter().next()
+        } else {
+            None
+        };
         let body = read_body(
             &mut stream,
             head.framing,
@@ -165,6 +178,7 @@ impl ProviderHttpsClient {
         Ok(ProviderHttpsResponse {
             status: head.status,
             retry_after,
+            location,
             body: SecretBytes::new(body),
         })
     }
@@ -194,6 +208,7 @@ fn validate_request(request: &ProviderHttpsRequest) -> Result<(), TransportError
                     | "anthropic-version"
                     | "user-agent"
                     | "x-api-key"
+                    | "chatgpt-account-id"
             ) || header.value.expose().is_empty()
                 || header.value.expose().contains(&b'\r')
                 || header.value.expose().contains(&b'\n')

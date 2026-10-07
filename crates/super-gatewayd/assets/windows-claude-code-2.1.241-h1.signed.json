@@ -1,7 +1,7 @@
 {
   "envelope_version": "1.0.0",
   "payload": {
-    "schema_version": "1.0.0",
+    "schema_version": "1.1.0",
     "engine_abi_version": "1.0",
     "bundle_id": "claude_code_windows_x64_2_1_241_h1",
     "artifact_version": 2001241,
@@ -68,7 +68,9 @@
         ],
         "grease_enabled": false,
         "permute_extensions": false,
-        "session_resumption": false
+        "session_resumption": false,
+        "min_tls_version": null,
+        "max_tls_version": null
       },
       "http1": {
         "request_line_form": "origin",
@@ -120,7 +122,7 @@
           },
           {
             "name": "X-Stainless-Retry-Count",
-            "value_template": "0",
+            "value_template": "{retry_count}",
             "sensitive": false
           },
           {
@@ -156,6 +158,16 @@
           {
             "name": "x-app",
             "value_template": "cli",
+            "sensitive": false
+          },
+          {
+            "name": "x-client-request-id",
+            "value_template": "{client_request_id}",
+            "sensitive": false
+          },
+          {
+            "name": "x-stainless-helper-method",
+            "value_template": "stream",
             "sensitive": false
           },
           {
@@ -224,12 +236,12 @@
   "canonicalization": {
     "algorithm": "jcs_rfc8785",
     "hash_algorithm": "sha256",
-    "canonical_hash": "a335d1982717468ae55f26503d84c637e8070db9ce056b9cb19cd3515c05aa33"
+    "canonical_hash": "be5bf589076006017fc41548f95dfa4c7c674ef5f9ced9a73d2350fa16d3fa26"
   },
   "signature": {
     "domain": "transport_bundle_v1",
     "algorithm": "ed25519",
     "key_id": "builtin-windows-claude-code-2.1.241-v1",
-    "detached_signature_base64": "mnK72RYvPpxmNfmHaUxyhNA9aKcOnAeCdQpk4/RVXKFB9R7sKCLduwyAHIEdmOc2H+GnCVgoW0Y/hTaqaT42AA=="
+    "detached_signature_base64": "3gNnX86xMXqpSycVEWv7oYAP4AvUIlIV60GHoSiN5gg+z19+a3sAyoFuGJtQbG+ORb1knOuvtcNXr/VOW4gZBg=="
   }
 }

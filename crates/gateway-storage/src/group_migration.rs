@@ -5,7 +5,7 @@ use serde_json::json;
 use sqlx::Row as _;
 use uuid::Uuid;
 
-use crate::{AuditOutboxRecord, CredentialGroupMigrationBegin, PgStorage, StorageError};
+use crate::{CredentialGroupMigrationBegin, PgStorage, StorageError};
 
 #[derive(Clone, Debug)]
 pub struct CredentialGroupMigrationWork {
@@ -31,7 +31,6 @@ impl PgStorage {
         &self,
         command: &CredentialGroupMigrationBegin,
         job_id: Uuid,
-        audit: &AuditOutboxRecord,
     ) -> Result<(i64, String), StorageError> {
         if command.drain_seconds < 1
             || command.drain_seconds > 300
@@ -118,7 +117,7 @@ impl PgStorage {
         .execute(&mut *transaction)
         .await
         .map_err(map_sqlx)?;
-        self.append_audit_outbox_in(&mut transaction, audit).await?;
+
         transaction.commit().await.map_err(map_sqlx)?;
         Ok((revision, created_at))
     }
@@ -218,8 +217,7 @@ impl PgStorage {
         .execute(&mut *transaction)
         .await
         .map_err(map_sqlx)?;
-        self.append_audit_outbox_in(&mut transaction, &system_audit(work, next_revision, state))
-            .await?;
+
         transaction.commit().await.map_err(map_sqlx)?;
         Ok(CredentialGroupMigrationCommit {
             credential_revision: next_revision,
@@ -256,23 +254,6 @@ impl PgStorage {
         };
         complete_job_in(&mut transaction, job_id, generation, outcome).await?;
         transaction.commit().await.map_err(map_sqlx)
-    }
-}
-
-fn system_audit(work: &CredentialGroupMigrationWork, revision: i64, state: &str) -> AuditOutboxRecord {
-    AuditOutboxRecord {
-        actor_type: "system".to_owned(),
-        actor_id: None,
-        action: format!("credential_group_migration_{state}"),
-        object_type: "credential".to_owned(),
-        object_id: Some(work.credential_id.to_string()),
-        outcome: "success".to_owned(),
-        redacted_detail: json!({"migration_id":work.migration_id,"source_group_id":work.source_group_id,
-          "target_group_id":work.target_group_id,"state":state}),
-        topic: "credential.group.migration.completed".to_owned(),
-        aggregate_id: work.credential_id,
-        aggregate_revision: revision,
-        payload: json!({"credential_id":work.credential_id,"migration_id":work.migration_id,"state":state}),
     }
 }
 

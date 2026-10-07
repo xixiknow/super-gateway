@@ -926,6 +926,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn client_hello_capture_returns_while_both_peers_remain_open() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = upstream.local_addr().unwrap();
+        let tap = ConnectTlsTapListener::bind(ConnectTlsTapConfig {
+            listen: "127.0.0.1:0".parse().unwrap(), allowed_host: "127.0.0.1".into(),
+            allowed_port: address.port(), max_connect_header_bytes:4096, max_capture_bytes:4096,
+            session_timeout:Duration::from_secs(5), upstream_http_proxy:None,
+        }).await.unwrap();
+        let address = tap.local_addr().unwrap();
+        let task = tokio::spawn(tap.capture_allowed_client_hello(0));
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client.write_all(format!("CONNECT 127.0.0.1:{} HTTP/1.1\r\n\r\n", upstream.local_addr().unwrap().port()).as_bytes()).await.unwrap();
+        let (mut peer, _) = upstream.accept().await.unwrap();
+        read_connect_head(&mut client, 4096).await.unwrap();
+        let hello = client_hello();
+        client.write_all(&hello).await.unwrap();
+        let captured = tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap().unwrap();
+        assert_eq!(captured, hello);
+        // Evidence completion must not interrupt the ongoing handshake tunnel.
+        let mut forwarded = vec![0; hello.len()];
+        peer.read_exact(&mut forwarded).await.unwrap();
+        assert_eq!(forwarded, hello);
+        peer.write_all(b"response").await.unwrap();
+        let mut response = [0; 8];
+        client.read_exact(&mut response).await.unwrap();
+        assert_eq!(&response, b"response");
+    }
+
+    #[tokio::test]
     async fn connect_tap_forwards_only_after_allowed_connect() {
         let upstream = TcpListener::bind("127.0.0.1:0").await.expect("bind upstream");
         let upstream_addr = upstream.local_addr().expect("upstream address");

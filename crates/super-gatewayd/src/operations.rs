@@ -10,16 +10,7 @@
     clippy::too_many_lines
 )]
 
-use std::{
-    collections::BTreeSet,
-    path::PathBuf,
-    process::Stdio,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{collections::BTreeSet, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
 #[cfg(target_os = "linux")]
 use axum::http::Method;
@@ -204,27 +195,8 @@ pub struct ProxyProbeTarget {
     pub observer_path: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct IntegrityGuard(Arc<AtomicBool>);
-
-impl IntegrityGuard {
-    pub fn new(healthy: bool) -> Self {
-        Self(Arc::new(AtomicBool::new(healthy)))
-    }
-
-    pub fn healthy(&self) -> bool {
-        self.0.load(Ordering::Acquire)
-    }
-
-    fn set(&self, healthy: bool) {
-        self.0.store(healthy, Ordering::Release);
-    }
-}
-
 pub fn spawn_operations_runtime(
     storage: Arc<PgStorage>,
-    audit_integrity_key: SecretValue,
-    integrity_guard: IntegrityGuard,
     export_store: Arc<ExportArtifactStore>,
     enrollment_executor: Arc<dyn CredentialEnrollmentJobExecutor>,
     plan_collector: Option<Arc<PgPlanCollector>>,
@@ -240,13 +212,7 @@ pub fn spawn_operations_runtime(
     let integrity_storage = storage.clone();
     let integrity_cancel = cancellation.child_token();
     let integrity = tokio::spawn(async move {
-        run_integrity_loop(
-            integrity_storage,
-            audit_integrity_key,
-            integrity_guard,
-            integrity_cancel,
-        )
-        .await;
+        run_lifecycle_reconciliation_loop(integrity_storage, integrity_cancel).await;
     });
     let job_storage = storage.clone();
     let backup_health_storage = storage.clone();
@@ -276,12 +242,7 @@ pub fn spawn_operations_runtime(
     vec![integrity, jobs, outbox, backup_health]
 }
 
-async fn run_integrity_loop(
-    storage: Arc<PgStorage>,
-    integrity_key: SecretValue,
-    integrity_guard: IntegrityGuard,
-    cancellation: CancellationToken,
-) {
+async fn run_lifecycle_reconciliation_loop(storage: Arc<PgStorage>, cancellation: CancellationToken) {
     let mut interval = tokio::time::interval(Duration::from_hours(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -290,37 +251,6 @@ async fn run_integrity_loop(
             _ = interval.tick() => {
                 if let Err(error) = storage.reconcile_stale_request_lifecycles().await {
                     tracing::warn!(event="stale_request_reconciliation_failed", error=%error);
-                }
-                let run_id = Uuid::now_v7();
-                let _ = sqlx::query(
-                    "INSERT INTO ops.integrity_check_run (id,state_code,started_at) VALUES ($1,'running',clock_timestamp())",
-                )
-                .bind(run_id)
-                .execute(&storage.pool())
-                .await;
-                if storage.seal_completed_audit_days(&integrity_key).await.is_ok()
-                    && let Ok(report) = storage.verify_audit_integrity(&integrity_key).await {
-                        integrity_guard.set(true);
-                        let _ = sqlx::query(
-                            "UPDATE ops.integrity_check_run SET state_code='succeeded',audit_event_count=$2, \
-                             daily_seal_count=$3,deletion_ledger_count=$4,completed_at=clock_timestamp() WHERE id=$1",
-                        )
-                        .bind(run_id)
-                        .bind(i64::try_from(report.audit_event_count).unwrap_or(i64::MAX))
-                        .bind(i64::try_from(report.daily_seal_count).unwrap_or(i64::MAX))
-                        .bind(i64::try_from(report.deletion_ledger_count).unwrap_or(i64::MAX))
-                        .execute(&storage.pool())
-                        .await;
-                } else {
-                        integrity_guard.set(false);
-                        let _ = sqlx::query(
-                            "UPDATE ops.integrity_check_run SET state_code='failed',error_code='integrity_mismatch', \
-                             completed_at=clock_timestamp() WHERE id=$1",
-                        )
-                        .bind(run_id)
-                        .execute(&storage.pool())
-                        .await;
-                        upsert_critical_alert(&storage, "audit_integrity_mismatch", "Audit integrity verification failed").await;
                 }
             }
         }
@@ -650,11 +580,6 @@ async fn process_job(
     match job.kind.as_str() {
         "price_sync" => {
             process_price_sync(storage, price_http, &job).await;
-        }
-        "audit_integrity_verify" | "audit_daily_seal" => {
-            let _ = storage
-                .complete_job(job.job_id, job.generation, "maintenance_loop_owns_execution")
-                .await;
         }
         "credential_enrollment_exchange" => {
             let ids = job
@@ -1022,43 +947,55 @@ async fn schedule_due_price_sync(storage: &PgStorage) -> Result<(), sqlx::Error>
     Ok(())
 }
 
+async fn price_sync_failure(storage: &PgStorage, job: &JobLease, code: &str, retry: bool) {
+    let saved = sqlx::query("UPDATE ops.price_sync_state SET state_code='failed',result_code='failed',error_code=$1,updated_at=clock_timestamp() WHERE id=true")
+        .bind(code).execute(&storage.pool()).await;
+    if !saved.is_ok_and(|result| result.rows_affected() == 1) {
+        tracing::error!(event="price_sync_state_persist_failed", job_id=%job.job_id);
+    }
+    upsert_critical_alert(storage, "price_sync_failed", "Price synchronization failed").await;
+    let result = if retry && job.attempt < job.max_attempts {
+        storage.retry_job(job.job_id, job.generation, 300, code, None).await
+    } else {
+        storage.dead_letter_job(job.job_id, job.generation, code, None).await
+    };
+    if result.is_err() {
+        tracing::error!(event="price_sync_job_failure_persist_failed", job_id=%job.job_id);
+    }
+}
+
 async fn process_price_sync(storage: &PgStorage, http: Option<&PriceHttp>, job: &JobLease) {
     let Some(http) = http else {
-        let _ = storage
-            .dead_letter_job(job.job_id, job.generation, "price_sync_transport_unavailable", None)
-            .await;
+        price_sync_failure(storage, job, "price_sync_transport_unavailable", false).await;
         return;
     };
-    let _ = sqlx::query("UPDATE ops.price_sync_state SET last_started_at=clock_timestamp(),state_code='running',result_code=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE id=true")
+    let started = sqlx::query("UPDATE ops.price_sync_state SET last_started_at=clock_timestamp(),state_code='running',result_code=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE id=true")
         .execute(&storage.pool()).await;
+    if !started.is_ok_and(|result| result.rows_affected() == 1) {
+        price_sync_failure(storage, job, "price_sync_state_persist_failed", true).await;
+        return;
+    }
     match price_sync::fetch_and_commit(storage, http.as_ref()).await {
         Ok((version, mapped, missing, hash)) => {
-            let _ = sqlx::query("UPDATE ops.price_sync_state SET last_completed_at=clock_timestamp(),state_code='succeeded',result_code=CASE WHEN $1=0 THEN 'unchanged' ELSE 'updated' END,source_hash=decode($2,'hex'),created_price_version=CASE WHEN $1=0 THEN created_price_version ELSE $3 END,mapped_count=CASE WHEN $1=0 THEN mapped_count ELSE $1 END,missing_models=$4,updated_at=clock_timestamp() WHERE id=true")
+            let saved = sqlx::query("UPDATE ops.price_sync_state SET last_completed_at=clock_timestamp(),state_code='succeeded',result_code=CASE WHEN $1=0 THEN 'unchanged' ELSE 'updated' END,source_hash=decode($2,'hex'),created_price_version=CASE WHEN $1=0 THEN created_price_version ELSE $3 END,mapped_count=CASE WHEN $1=0 THEN mapped_count ELSE $1 END,missing_models=$4,error_code=NULL,updated_at=clock_timestamp() WHERE id=true")
                 .bind(i32::try_from(mapped).unwrap_or(i32::MAX)).bind(&hash).bind(version).bind(json!(missing)).execute(&storage.pool()).await;
-            let _ = storage
+            if !saved.is_ok_and(|result| result.rows_affected() == 1) {
+                price_sync_failure(storage, job, "price_sync_state_persist_failed", true).await;
+                return;
+            }
+            if storage
                 .complete_job(
                     job.job_id,
                     job.generation,
                     &format!("price_sync_succeeded:version={version}:mapped={mapped}"),
                 )
-                .await;
+                .await
+                .is_err()
+            {
+                tracing::error!(event="price_sync_job_completion_persist_failed", job_id=%job.job_id);
+            }
         }
-        Err(error) if job.attempt < job.max_attempts => {
-            let code = format!("price_sync_{error}");
-            let _ = sqlx::query("UPDATE ops.price_sync_state SET state_code='failed',result_code='failed',error_code=$1,updated_at=clock_timestamp() WHERE id=true").bind(&code).execute(&storage.pool()).await;
-            upsert_critical_alert(storage, "price_sync_failed", "LiteLLM price synchronization failed").await;
-            let _ = storage
-                .retry_job(job.job_id, job.generation, 300, "price_sync_failed", None)
-                .await;
-        }
-        Err(error) => {
-            let code = format!("price_sync_{error}");
-            let _ = sqlx::query("UPDATE ops.price_sync_state SET state_code='failed',result_code='failed',error_code=$1,updated_at=clock_timestamp() WHERE id=true").bind(&code).execute(&storage.pool()).await;
-            upsert_critical_alert(storage, "price_sync_failed", "LiteLLM price synchronization failed").await;
-            let _ = storage
-                .dead_letter_job(job.job_id, job.generation, "price_sync_exhausted", None)
-                .await;
-        }
+        Err(error) => price_sync_failure(storage, job, &format!("price_sync_{error}"), true).await,
     }
 }
 
@@ -2190,16 +2127,6 @@ async fn collect_upgrade_preflight_gates(
         if blockers.is_empty() { "passed" } else { "failed" },
         json!({"blockers":blockers}),
     ));
-    gates.push(upgrade_gate(
-        "audit_deletion_integrity",
-        if snapshot.audit_integrity_ready {
-            "passed"
-        } else {
-            "failed"
-        },
-        json!({"ready":snapshot.audit_integrity_ready}),
-    ));
-
     let unavailable_bundles: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM gateway.anthropic_credential credential \
          JOIN gateway.credential_profile profile ON profile.credential_id=credential.id \
@@ -3014,9 +2941,8 @@ async fn publish_internal_event(storage: &PgStorage, message: OutboxLease) {
         }
         return;
     }
-    // Non-alert management and lifecycle topics are internal durable events.
-    // Their externally observable copy is the immutable audit event that was
-    // written in the same transaction; no connector delivery is required.
+    // Non-alert management and lifecycle topics are internal durable events
+    // with no external connector delivery; publishing simply closes them out.
     // Leaving these leased would manufacture dead letters for every successful
     // management mutation (including export creation and consumption).
     let _ = storage.publish_outbox(message.message_id, message.generation).await;

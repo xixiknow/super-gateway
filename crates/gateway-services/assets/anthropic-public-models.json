@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_url": "https://platform.claude.com/docs/en/models/overview",
-  "snapshot_date": "2026-08-28",
+  "snapshot_date": "2026-09-29",
   "models": [
     {
       "id": "claude-fable-5",
@@ -14,6 +14,17 @@
         "catalog_status": "current",
         "thinking": "Adaptive (always on)",
         "default_effort": "high"
+      }
+    },
+    {
+      "id": "claude-opus-5-5",
+      "type": "model",
+      "display_name": "Claude Opus 5.5",
+      "created_at": null,
+      "max_input_tokens": null,
+      "max_tokens": null,
+      "capabilities": {
+        "catalog_status": "current"
       }
     },
     {

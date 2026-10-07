@@ -6,6 +6,9 @@ import { Locale } from "./i18n";
    ============================================================ */
 
 export const zhColumns: Record<string, string> = {
+  request_type: "请求类型", request_timing: "耗时", first_content_ms: "首字", duration_ms: "总耗时", tps: "TPS",
+  platform_key_name: "平台 Key", group_name: "分组", model: "模型", reasoning_effort: "思考强度", client_class: "客户端", token_usage: "TOKEN",
+  cache_read_input_tokens: "读缓存 Token", cache_creation_input_tokens: "写缓存 Token", endpoint: "端点", phase: "阶段", outcome: "结果",
   id: "ID", name: "名称", username: "用户名", display_name: "显示名称", email: "邮箱", role: "角色", status: "状态", revision: "版本",
   created_at: "创建时间", updated_at: "更新时间", owner_user_id: "所有者用户", group_id: "分组", owner_executor_id: "归属执行器",
   owner_generation: "归属代次", credential_count: "凭据数量", expires_at: "过期时间", session_id: "会话 ID", model_id: "模型 ID",
@@ -50,6 +53,7 @@ export function columnLabel(column: string, locale: Locale): string {
 }
 
 export const zhValues: Record<string, string> = {
+  claude_code_cli: "Claude Code", non_claude_code_cli: "其他客户端", adaptive: "自适应", enabled: "已启用", xhigh: "超高", minimal: "最低", none: "无", max: "最高",
   active: "活跃", disabled: "已禁用", archived: "已归档", revoked: "已吊销", pending: "待处理", mfa_pending: "待完成安全设置",
   platform_admin: "平台管理员", key_owner: "密钥所有者", complete: "完整", partial: "部分", unknown: "未知",
   claude_subscription: "Claude 订阅", count_tokens: "令牌计数", oauth_subscription: "OAuth 订阅", setup_token_subscription: "Setup Token 订阅",
@@ -63,6 +67,7 @@ export const zhValues: Record<string, string> = {
 };
 
 export const enValues: Record<string, string> = {
+  claude_code_cli: "Claude Code", non_claude_code_cli: "Other client",
   anthropic_public_docs: "Anthropic public catalog",
   anthropic_models_api: "Credential verified",
   builtin_snapshot: "Built-in catalog snapshot",

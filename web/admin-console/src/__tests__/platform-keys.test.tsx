@@ -45,17 +45,23 @@ describe("platform key management", () => {
 
     expect(screen.getByText("研发分组")).toBeInTheDocument();
     expect(screen.queryByText(key.id)).not.toBeInTheDocument();
-    expect(screen.queryByText(key.display_prefix)).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "ID" })).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "密钥" })).toBeInTheDocument();
+    expect(screen.getByText("sgw_v1_")).toBeInTheDocument();
+    expect(screen.getByText("q3…")).toBeInTheDocument();
+    expect(document.querySelector(".key-secret-blur")).toHaveTextContent("hFPk0V");
+    expect(screen.getByRole("button", { name: "显示密钥" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制密钥" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "今日消费" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "近 30 天消费" })).toBeInTheDocument();
     // 外露的图标按钮(文字经 aria-label / 悬浮提示展示)
     for (const action of ["编辑", "禁用"]) {
       expect(screen.getByRole("button", { name: action })).toBeInTheDocument();
     }
-    // 其余操作收进 ⋯ 菜单
+    // 其余操作收进 ⋯ 菜单；显示密钥在列表列里
     await openMenu(user);
-    for (const action of ["显示密钥", "客户端配置", "配置历史", "审计记录", "吊销"]) {
+    expect(screen.queryByRole("menuitem", { name: "显示密钥" })).not.toBeInTheDocument();
+    for (const action of ["客户端配置", "配置历史", "吊销"]) {
       expect(screen.getByRole("menuitem", { name: action })).toBeInTheDocument();
     }
   });
@@ -77,7 +83,7 @@ describe("platform key management", () => {
     expect(JSON.parse(String(init?.body))).toEqual({ reason: "临时停止开发访问", expected_revision: 3 });
   });
 
-  it("uses password-only step-up before revealing a key", async () => {
+  it("uses password-only step-up before revealing a key in the list", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);
       if (path.endsWith("/auth/step-up")) return new Response(JSON.stringify({ data: { id: "grant-1", csrf_token: "rotated-csrf" }, meta: {} }), { status: 201, headers: { "content-type": "application/json" } });
@@ -85,16 +91,20 @@ describe("platform key management", () => {
       return new Response(JSON.stringify({ error: { message: "unexpected" } }), { status: 500, headers: { "content-type": "application/json" } });
     });
     const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     renderTable();
 
-    await openMenu(user);
-    await user.click(screen.getByRole("menuitem", { name: "显示密钥" }));
+    await user.click(screen.getByRole("button", { name: "显示密钥" }));
     const dialog = screen.getByRole("dialog", { name: "显示完整密钥" });
     await user.type(within(dialog).getByLabelText("当前密码"), "password-value");
     await user.type(within(dialog).getByLabelText("操作原因"), "配置本地客户端");
     await user.click(within(dialog).getByRole("button", { name: "验证并显示" }));
 
     expect(await screen.findByText("sgw_v1_secret")).toBeInTheDocument();
+    expect(screen.getByText(/秒后自动隐藏/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "复制密钥" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("sgw_v1_secret"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const stepUp = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(stepUp).toEqual({ purpose: "key_secret_reveal", current_password: "password-value" });

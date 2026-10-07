@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+mod capture_platform;
 
 #[cfg(feature = "boring-backend")]
 mod release_bundle;
@@ -267,6 +268,21 @@ enum Command {
     /// Capture, replay, audit and sign a complete privacy-safe Claude Code release Bundle.
     #[cfg(feature = "boring-backend")]
     ReleaseBundle {
+        /// Capture the real interactive CLI through a pseudoterminal.
+        #[arg(long)]
+        interactive: bool,
+        /// Expected installed client version, checked before any capture begins.
+        #[arg(long)]
+        expected_version: String,
+        /// Native capture/replay target; cross-compilation is not a capture.
+        #[arg(long)]
+        target: Option<String>,
+        /// Stop after paired evidence and static templates (all supported host OSes).
+        #[arg(long)]
+        evidence_only: bool,
+        /// Inspect local files and parameters only; do not launch Claude or access the network.
+        #[arg(long)]
+        preflight: bool,
         #[arg(long)]
         claude_bin: PathBuf,
         #[arg(long, default_value_t = 20)]
@@ -436,11 +452,9 @@ async fn main() -> Result<()> {
             let controlled = read_json::<NormalizedCapture>(&controlled_http2)?;
             let archetype_id = archetype_id.unwrap_or_else(|| default_archetype_id(&manifest.environment));
             let mut options = BundleCompilerOptions::production_defaults(archetype_id, bundle_version);
-            if manifest.environment.os_name.eq_ignore_ascii_case("windows")
-                && manifest.environment.arch.eq_ignore_ascii_case("x86_64")
-            {
-                options.rust_targets = vec!["x86_64-pc-windows-msvc".to_owned()];
-            }
+            options.rust_targets = vec![
+                capture_platform::target_for(&manifest.environment.os_name, &manifest.environment.arch)?.to_owned(),
+            ];
             let bundle = compile_bundle(&manifest, &passive, &controlled, &options)
                 .context("compile Archetype Bundle candidate")?;
             write_json(&output, &bundle)?;
@@ -827,6 +841,11 @@ async fn main() -> Result<()> {
         }
         #[cfg(feature = "boring-backend")]
         Command::ReleaseBundle {
+            interactive,
+            expected_version,
+            target,
+            evidence_only,
+            preflight,
             claude_bin,
             iterations,
             output_dir,
@@ -834,6 +853,11 @@ async fn main() -> Result<()> {
             engine_artifact,
         } => {
             release_orchestrator::release(release_orchestrator::ReleaseRequest {
+                interactive,
+                expected_version,
+                target,
+                evidence_only,
+                preflight,
                 claude_bin,
                 iterations,
                 output_dir,
@@ -1302,7 +1326,9 @@ async fn capture_tls_candidate(
     .await
     .context("bind one-shot TLS CONNECT pass-through tap")?;
     let tap_addr = tap.local_addr().context("read TLS tap address")?;
-    let tap_task = tokio::spawn(tap.capture_one());
+    // A completed handshake is sufficient evidence; peers may keep the tunnel
+    // half-open after the probe drops, so do not wait for bidirectional EOF.
+    let tap_task = tokio::spawn(tap.capture_allowed_client_hello(0));
     let connection = connect_direct(
         plan,
         &DirectTlsPolicy {

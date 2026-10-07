@@ -253,14 +253,18 @@ class ContractValidator:
         admin = self.documents[admin_path]
         expected_data_paths = {"/v1/messages", "/v1/messages/count_tokens", "/v1/models", "/healthz", "/readyz"}
         self.check(data.get("openapi", "").startswith("3.1."), "data-plane.openapi", "OpenAPI must be 3.1")
+        expected_data_paths.update({"/v1/responses","/v1/chat/completions","/v1/responses/compact","/responses","/responses/compact","/chat/completions","/v1/models/{model}","/models","/models/{model}","/backend-api/codex/models"})
         self.check(set(data.get("paths", {})) == expected_data_paths, "data-plane.openapi/paths", "public path set drifted")
         self.check(set(data["paths"]["/v1/messages"]) == {"post"}, "data-plane.openapi/v1/messages", "Messages method set drifted")
         self.check(set(data["paths"]["/v1/messages/count_tokens"]) == {"post"}, "data-plane.openapi/v1/messages/count_tokens", "Count Tokens method set drifted")
         self.check(set(data["paths"]["/v1/models"]) == {"get"}, "data-plane.openapi/v1/models", "Models method set drifted")
+        cli_request = {"model": "claude-opus-5", "max_tokens": 64000, "thinking": {"type": "disabled"}, "output_config": {"effort": "high"}, "messages": [{"role": "user", "content": "fixture"}, {"role": "system", "content": "fixture reminder"}]}
+        cli_errors = self.validate_instance(cli_request, data["components"]["schemas"]["MessageRequest"], data_path, "cli-mid-conversation-system")
+        self.check(not cli_errors, "data-plane.openapi/MessageRequest", "current CLI mid-conversation system request must satisfy the public contract")
         policy = data.get("x-public-route-policy", {})
         self.check(policy.get("count_tokens_public") is True, "data-plane.openapi/x-public-route-policy", "Count Tokens must be public")
-        self.check(policy.get("websocket") is False, "data-plane.openapi/x-public-route-policy", "WebSocket is outside the public contract")
-        self.check(policy.get("providers") == ["anthropic_official"], "data-plane.openapi/x-public-route-policy", "upstream provider set drifted")
+        self.check(policy.get("websocket") is True, "data-plane.openapi/x-public-route-policy", "WebSocket contract must be enabled")
+        self.check(policy.get("providers") == ["anthropic_official", "openai_official"], "data-plane.openapi/x-public-route-policy", "upstream provider set drifted")
         response_200 = data["paths"]["/v1/messages"]["post"]["responses"]["200"]["content"]
         self.check(response_200["application/json"].get("x-opaque-passthrough") is True, "data-plane.openapi/v1/messages", "JSON passthrough marker missing")
         self.check(response_200["text/event-stream"].get("x-opaque-passthrough") is True, "data-plane.openapi/v1/messages", "SSE passthrough marker missing")
@@ -305,7 +309,7 @@ class ContractValidator:
         route_registry = self.documents[(CONTRACTS / "registries" / "admin-routes.json").resolve()]["routes"]
         expected_routes = {(item["path"], item["method"]) for item in route_registry}
         self.check(actual_routes == expected_routes, "admin.openapi/paths", "OpenAPI routes differ from the extracted route registry")
-        self.check(admin.get("x-route-count") == len(expected_routes) == 178, "admin.openapi/x-route-count", "admin operation count drifted")
+        self.check(admin.get("x-route-count") == len(expected_routes) == 192, "admin.openapi/x-route-count", "admin operation count drifted")
 
     def validate_source_traceability(self) -> None:
         ledger = self.documents[(CONTRACTS / "traceability" / "requirements.json").resolve()]
@@ -420,7 +424,7 @@ class ContractValidator:
         expected = {
             "GATEWAY_DATA_BIND", "GATEWAY_ADMIN_BIND", "GATEWAY_DATABASE_URL_FILE", "GATEWAY_MIGRATOR_DATABASE_URL_FILE",
             "GATEWAY_BUSINESS_KEY_PROVIDER", "GATEWAY_KEY_PROVIDER_URI",
-            "GATEWAY_APP_KEY_FILE", "GATEWAY_DIGEST_KEY_FILE", "GATEWAY_AUDIT_INTEGRITY_KEY_FILE", "GATEWAY_BUNDLE_TRUST_STORE",
+            "GATEWAY_APP_KEY_FILE", "GATEWAY_DIGEST_KEY_FILE", "GATEWAY_BUNDLE_TRUST_STORE",
             "GATEWAY_BUNDLE_DIR", "GATEWAY_RESPONSE_TMP_DIR", "GATEWAY_BACKUP_KEY_FILE", "GATEWAY_BACKUP_REPOSITORY",
             "GATEWAY_DRAIN_DEADLINE", "GATEWAY_BOOTSTRAP_ADMIN_USERNAME", "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
             "GATEWAY_BOOTSTRAP_ADMIN_EMAIL", "GATEWAY_BOOTSTRAP_ADMIN_DISPLAY_NAME",
@@ -458,7 +462,6 @@ class ContractValidator:
             ("migration-manifest.valid.json", "migration-manifest.schema.json"),
             ("database-schema-manifest.valid.json", "database-schema-manifest.schema.json"),
             ("secret-envelope.valid.json", "secret-envelope.schema.json"),
-            ("audit-integrity.valid.json", "audit-integrity.schema.json"),
             ("backup-restore-manifest.valid.json", "backup-restore-manifest.schema.json"),
             ("postgres-test-evidence.valid.json", "postgres-test-evidence.schema.json"),
         ]
@@ -477,7 +480,7 @@ class ContractValidator:
             self.check(item["name"] == path.name, "migration-manifest", "migration ordering/name drifted")
             self.check(item["sha256"] == text_sha256(path), path.name, "published migration checksum drifted")
         database = self.documents[(CONTRACTS / "fixtures" / "database-schema-manifest.valid.json").resolve()]
-        self.check(len(database["required_tables"]) == 112, "database-schema-manifest", "112-table baseline drifted")
+        self.check(len(database["required_tables"]) == 118, "database-schema-manifest", "118-table baseline drifted")
         self.check(
             set(database["logical_schemas"]) == {"iam", "gateway", "catalog", "telemetry", "security", "ops"},
             "database-schema-manifest", "logical schema set drifted",

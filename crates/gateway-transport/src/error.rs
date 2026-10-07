@@ -125,6 +125,8 @@ pub enum TransportErrorCode {
     TlsHandshake,
     /// ALPN differs from the selected Bundle.
     AlpnMismatch,
+    /// Negotiated cipher is not in the Bundle's allowed list.
+    CipherMismatch,
     /// HTTP/1 framing is ambiguous or malformed.
     H1Framing,
     /// HTTP/2 connection or stream protocol failed.

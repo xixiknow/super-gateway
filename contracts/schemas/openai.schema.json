@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-gateway.local/contracts/schemas/openai.schema.json",
+  "title": "OpenAI Provider Foundation",
+  "$defs": {
+    "Provider": {
+      "type": "string",
+      "enum": [
+        "anthropic",
+        "openai"
+      ],
+      "default": "anthropic"
+    },
+    "AuthKind": {
+      "type": "string",
+      "enum": [
+        "oauth",
+        "api_key"
+      ]
+    },
+    "ReasoningPolicy": {
+      "type": "object",
+      "properties": {
+        "maximum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "downgrade": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "Account": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "group_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "provider": {
+          "type": "string",
+          "const": "openai"
+        },
+        "auth_kind": {
+          "$ref": "#/$defs/AuthKind"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "auth_state": {
+          "type": "string",
+          "enum": [
+            "pending_verify",
+            "healthy",
+            "refreshing",
+            "manual_update",
+            "needs_reauth"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "group_id",
+        "provider",
+        "auth_kind",
+        "enabled",
+        "auth_state",
+        "revision"
+      ]
+    }
+  }
+}

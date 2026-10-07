@@ -194,7 +194,6 @@ mod tests {
             database_schema_ready: true,
             bootstrap_ready: true,
             business_key_provider_ready: true,
-            audit_integrity_ready: true,
             active_configuration_ready: true,
             transport_core_ready: true,
             required_bundles_ready: true,

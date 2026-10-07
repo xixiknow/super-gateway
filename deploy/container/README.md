@@ -27,7 +27,6 @@ chmod 700 deploy/container/secrets deploy/container/bundles
 deploy/container/secrets/migrator-database-url
 deploy/container/secrets/runtime-database-url
 deploy/container/secrets/digest-key
-deploy/container/secrets/audit-integrity-key
 ```
 
 示例 DSN 结构：
@@ -37,11 +36,10 @@ postgres://gateway_migrator:PASSWORD@POSTGRES_HOST:5432/super_gateway
 postgres://gateway_runtime:PASSWORD@POSTGRES_HOST:5432/super_gateway
 ```
 
-生成本地高熵 Digest/Audit key：
+生成本地高熵 Digest key：
 
 ```bash
 openssl rand -hex 32 > deploy/container/secrets/digest-key
-openssl rand -hex 32 > deploy/container/secrets/audit-integrity-key
 chmod 600 deploy/container/secrets/*
 ```
 

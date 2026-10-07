@@ -44,7 +44,7 @@ pub enum TransportCancelAction {
     AwaitTransportConfirmation,
 }
 
-/// Complete, auditable cancellation result.
+/// Complete cancellation result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CancelDisposition {
     pub transport_action: TransportCancelAction,

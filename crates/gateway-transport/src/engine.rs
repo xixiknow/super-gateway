@@ -369,6 +369,8 @@ mod tests {
                 grease_enabled: false,
                 permute_extensions: false,
                 session_resumption: false,
+                min_tls_version: None,
+                max_tls_version: None,
             },
             application: CompiledApplicationProfile::H1(Http1Profile {
                 request_line_form: "origin".into(),

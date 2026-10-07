@@ -4,6 +4,8 @@
 
 #![allow(clippy::similar_names, clippy::too_many_lines)]
 
+mod openai;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
@@ -48,9 +50,8 @@ use gateway_services::{
     usage::{ObservedResponseUsage, calculate_cost},
 };
 use gateway_storage::{
-    AuditOutboxRecord, CancelEstimateEvidencePersist, CostPersist, DeliveryComplete, DeliveryStart, PgStorage,
-    QuotaObservationPersist, RequestCreate, RequestLifecycleComplete, SchedulerResourceEventRecord,
-    SubmissionIntentArm, UsagePersist,
+    CancelEstimateEvidencePersist, CostPersist, DeliveryComplete, DeliveryStart, PgStorage, QuotaObservationPersist,
+    RequestCreate, RequestLifecycleComplete, SchedulerResourceEventRecord, SubmissionIntentArm, UsagePersist,
 };
 use gateway_transport::{
     EngineCatalogHandle, HealthEffect, MonotonicEventSink, RawResponseBody, RawUpstreamResponse, RetrySafety,
@@ -463,9 +464,12 @@ impl ProductionDispatcher {
         if matches!(error.health_effect, HealthEffect::None | HealthEffect::SuccessfulProbe) {
             return Ok(());
         }
+        let lease_profile = lease
+            .anthropic_profile()
+            .ok_or(DispatchError::DeterministicUnavailable)?;
         let credential_id = parse_uuid(lease.credential_id.as_str())?;
-        let bundle_id = parse_uuid(lease.bundle_id.as_str())?;
-        let archetype_version_id = parse_uuid(lease.archetype_version_id.as_str())?;
+        let bundle_id = parse_uuid(lease_profile.bundle_id.as_str())?;
+        let archetype_version_id = parse_uuid(lease_profile.archetype_version_id.as_str())?;
         let proxy_id = proxy_endpoint_id.map(|id| parse_uuid(id.as_str())).transpose()?;
         let diagnostic_code = transport_error_code(error.code);
         let mut transaction = self
@@ -475,18 +479,16 @@ impl ProductionDispatcher {
             .await
             .map_err(|_| DispatchError::Unavailable)?;
 
-        let (targets, blocker_code, aggregate_type, aggregate_id, aggregate_revision, action) = match error
+        let (targets, blocker_code, _aggregate_type, _aggregate_id, _aggregate_revision, _action) = match error
             .health_effect
         {
             HealthEffect::QuarantineBundle => {
-                let revision: Option<i64> = sqlx::query_scalar(
-                    "UPDATE catalog.transport_bundle SET lifecycle_code='quarantined',runtime_state_code='quarantined' \
-                         WHERE id=$1 AND runtime_state_code<>'quarantined' RETURNING artifact_version",
-                )
-                .bind(bundle_id)
-                .fetch_optional(&mut *transaction)
-                .await
-                .map_err(|_| DispatchError::Unavailable)?;
+                // Only the orthogonal runtime_state dial moves here; the R6 lifecycle
+                // CHECK forbids writing 'quarantined' into lifecycle_code.
+                let revision: Option<i64> =
+                    PgStorage::quarantine_transport_bundle_runtime(&mut *transaction, bundle_id)
+                        .await
+                        .map_err(|_| DispatchError::Unavailable)?;
                 let Some(revision) = revision else {
                     transaction.rollback().await.map_err(|_| DispatchError::Unavailable)?;
                     return Ok(());
@@ -619,9 +621,8 @@ impl ProductionDispatcher {
             }
         };
 
-        let mut effective_revision = aggregate_revision;
         for (affected_credential_id, _) in &targets {
-            let revision: i64 = sqlx::query_scalar(
+            let _revision: i64 = sqlx::query_scalar(
                 "UPDATE gateway.anthropic_credential SET transport_state_code='transport_unavailable', \
                    scheduling_state_code='transport_unavailable',revision=revision+1,updated_at=clock_timestamp() \
                  WHERE id=$1 RETURNING revision",
@@ -630,9 +631,6 @@ impl ProductionDispatcher {
             .fetch_one(&mut *transaction)
             .await
             .map_err(|_| DispatchError::Unavailable)?;
-            if *affected_credential_id == aggregate_id {
-                effective_revision = revision;
-            }
             sqlx::query(
                 "INSERT INTO gateway.credential_transport_blocker \
                  (id,credential_id,blocker_code,state_code,detail,observed_at) \
@@ -648,31 +646,6 @@ impl ProductionDispatcher {
             .await
             .map_err(|_| DispatchError::Unavailable)?;
         }
-        self.storage
-            .append_audit_outbox_in(
-                &mut transaction,
-                &AuditOutboxRecord {
-                    actor_type: "system".to_owned(),
-                    actor_id: None,
-                    action: action.to_owned(),
-                    object_type: aggregate_type.to_owned(),
-                    object_id: Some(aggregate_id.to_string()),
-                    outcome: "success".to_owned(),
-                    redacted_detail: json!({
-                        "diagnostic_code":diagnostic_code,"affected_credentials":targets.len(),
-                        "bundle_id":bundle_id,"proxy_id":proxy_id
-                    }),
-                    topic: "transport.health.quarantined".to_owned(),
-                    aggregate_id,
-                    aggregate_revision: effective_revision,
-                    payload: json!({
-                        "diagnostic_code":diagnostic_code,"affected_credentials":targets.len(),
-                        "bundle_id":bundle_id,"proxy_id":proxy_id
-                    }),
-                },
-            )
-            .await
-            .map_err(|_| DispatchError::Unavailable)?;
         transaction.commit().await.map_err(|_| DispatchError::Unavailable)?;
         for (affected_credential_id, affected_group_id) in targets {
             let _ = self
@@ -1014,7 +987,21 @@ impl ProductionDispatcher {
 
 #[async_trait]
 impl MessageDispatcher for ProductionDispatcher {
+    async fn openai_websocket_idle(&self) -> Option<Duration> {
+        sqlx::query_scalar::<_, i32>(
+            "SELECT websocket_idle_seconds FROM gateway.openai_settings WHERE enabled AND websocket_enabled",
+        )
+        .fetch_optional(&self.storage.pool())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|seconds| u64::try_from(seconds).ok())
+        .map(Duration::from_secs)
+    }
     async fn dispatch(&self, request: DispatchRequest) -> Result<UpstreamResponse, DispatchError> {
+        if let DispatchEndpoint::OpenAi(endpoint) = request.endpoint {
+            return self.dispatch_openai(request, endpoint).await;
+        }
         let group = self
             .runtime_group(&request.group_id)
             .ok_or(DispatchError::DeterministicUnavailable)?;
@@ -1036,6 +1023,7 @@ impl MessageDispatcher for ProductionDispatcher {
                 endpoint_code: match request.endpoint {
                     DispatchEndpoint::Messages => "messages",
                     DispatchEndpoint::CountTokens => "count_tokens",
+                    DispatchEndpoint::OpenAi(_) => return Err(DispatchError::DeterministicUnavailable),
                 }
                 .into(),
                 client_class_code: match request.client_class {
@@ -1056,10 +1044,46 @@ impl MessageDispatcher for ProductionDispatcher {
             })
             .await
             .map_err(|_| DispatchError::Unavailable)?;
-        let body_capture = self.storage.body_capture_config().await.unwrap_or_default();
+        let mut request_guard = RequestTerminalGuard::new(self.storage.clone(), request_uuid, request.started_at);
+        let request_type = if request.openai_connection.is_some() {
+            "websocket"
+        } else if request.generic.stream {
+            "streaming"
+        } else {
+            "sync"
+        };
+        if self
+            .storage
+            .record_request_client(request_uuid, &request.client_identity, request_type)
+            .await
+            .is_err()
+        {
+            tracing::warn!(request_id=%request_uuid, "request client metadata persistence failed");
+        }
+        if self
+            .storage
+            .record_request_reasoning(request_uuid, request.generic.replay_body.bytes())
+            .await
+            .is_err()
+        {
+            tracing::warn!(request_id = %request_uuid, "request reasoning metadata persistence failed");
+        }
+        let body_capture = self.storage.body_capture_config().await.unwrap_or_else(|_| {
+            tracing::warn!(request_id = %request_uuid, "body capture settings unavailable");
+            Default::default()
+        });
         if body_capture.enabled {
-            let original = serde_json::from_slice::<serde_json::Value>(&request.original_body).ok();
-            let policy = serde_json::from_slice::<serde_json::Value>(request.generic.replay_body.bytes()).ok();
+            if let Some(headers) = &request.original_headers
+                && self
+                    .storage
+                    .capture_original_headers(request_uuid, headers)
+                    .await
+                    .is_err()
+            {
+                tracing::warn!(request_id = %request_uuid, "ingress header capture failed");
+            }
+            let original = body_capture.request_json(&request.original_body);
+            let policy = body_capture.request_json(request.generic.replay_body.bytes());
             if self
                 .storage
                 .capture_request_body(request_uuid, original, policy, None)
@@ -1069,7 +1093,6 @@ impl MessageDispatcher for ProductionDispatcher {
                 tracing::warn!(request_id = %request_uuid, "original request body capture failed");
             }
         }
-        let mut request_guard = RequestTerminalGuard::new(self.storage.clone(), request_uuid);
         if !active_bundle_available_for_os(&self.storage, &request.group_id, request.client_os).await? {
             // First request of a new OS for this Group: provision the missing
             // (credential, OS) profiles now instead of waiting for the next
@@ -1178,28 +1201,66 @@ impl MessageDispatcher for ProductionDispatcher {
             });
             let connection_ordinal = connection_budget.attempts();
             let messages_ordinal = messages_attempts.saturating_add(1);
+            let lease_profile = lease
+                .anthropic_profile()
+                .ok_or(DispatchError::DeterministicUnavailable)?;
             let selected = load_selected_credential(&self.storage, &lease).await?;
             let catalog = self.engines.snapshot();
             let engine = catalog
                 .find_exact(
-                    lease.archetype_version_id.as_str(),
-                    lease.bundle_id.as_str(),
-                    lease.bundle_version,
-                    lease.bundle_hash.as_str(),
+                    lease_profile.archetype_version_id.as_str(),
+                    lease_profile.bundle_id.as_str(),
+                    lease_profile.bundle_version,
+                    lease_profile.bundle_hash.as_str(),
                 )
                 .ok_or(DispatchError::DeterministicUnavailable)?;
             let derived_session = derive_session_id(&selected.session_hmac, request.base_session_id.as_str())?;
-            let final_request = Arc::new(build_final_request(&request, &selected, &engine, &derived_session)?);
+            let final_request = Arc::new(build_final_request(
+                &request,
+                &selected,
+                &engine,
+                &derived_session,
+                u32::from(connection_ordinal),
+            )?);
+            if self
+                .storage
+                .record_request_reasoning(request_uuid, final_request.body.as_ref())
+                .await
+                .is_err()
+            {
+                tracing::warn!(request_id = %request_uuid, "final reasoning metadata persistence failed");
+            }
             if body_capture.enabled {
-                let final_body = serde_json::from_slice::<serde_json::Value>(final_request.body.as_ref()).ok();
+                let mut headers = gateway_domain::HeaderSnapshot::capture(
+                    gateway_domain::HeaderTransport::Http,
+                    final_request
+                        .headers
+                        .iter()
+                        .map(|h| (h.name.as_ref(), h.value.as_ref())),
+                );
+                headers.attempt_ordinal = Some(u32::from(connection_ordinal));
+                if self
+                    .storage
+                    .begin_header_attempt(request_uuid, u32::from(connection_ordinal))
+                    .await
+                    .is_err()
+                    || self
+                        .storage
+                        .capture_upstream_headers(request_uuid, false, &headers)
+                        .await
+                        .is_err()
+                {
+                    tracing::warn!(request_id = %request_uuid, "upstream request header capture failed");
+                }
+                let final_body = body_capture.request_json(final_request.body.as_ref());
                 match self
                     .storage
-                    .capture_request_body(request_uuid, None, None, final_body.clone())
+                    .capture_final_request_body(request_uuid, final_body.clone())
                     .await
                 {
                     Ok(()) => {
                         let encoded = final_body.as_ref().and_then(|value| serde_json::to_vec(value).ok());
-                        if encoded.as_deref() != Some(final_request.body.as_ref()) {
+                        if final_body.is_some() && encoded.as_deref() != Some(final_request.body.as_ref()) {
                             let _ = self.storage.mark_body_digest_mismatch(request_uuid).await;
                         }
                     }
@@ -1243,17 +1304,17 @@ impl MessageDispatcher for ProductionDispatcher {
                     identity: AttemptIdentitySnapshot {
                         credential_id: lease.credential_id.clone(),
                         token_version: lease.token_version,
-                        profile_id: lease.profile_id.clone(),
-                        profile_epoch: lease.profile_epoch,
-                        device_identity_id: lease.device_identity_id.clone(),
-                        device_epoch: lease.device_epoch,
-                        archetype_version_id: lease.archetype_version_id.clone(),
-                        bundle_id: lease.bundle_id.clone(),
-                        bundle_version: lease.bundle_version,
-                        bundle_hash: lease.bundle_hash.clone(),
-                        egress_binding_id: lease.egress_binding_id.clone(),
+                        profile_id: lease_profile.profile_id.clone(),
+                        profile_epoch: lease_profile.profile_epoch,
+                        device_identity_id: lease_profile.device_identity_id.clone(),
+                        device_epoch: lease_profile.device_epoch,
+                        archetype_version_id: lease_profile.archetype_version_id.clone(),
+                        bundle_id: lease_profile.bundle_id.clone(),
+                        bundle_version: lease_profile.bundle_version,
+                        bundle_hash: lease_profile.bundle_hash.clone(),
+                        egress_binding_id: lease_profile.egress_binding_id.clone(),
                         proxy_endpoint_id: selected.proxy_endpoint_id.clone(),
-                        egress_epoch: lease.egress_epoch,
+                        egress_epoch: lease_profile.egress_epoch,
                         session_derivation_version: 1,
                     },
                     egress: selected.egress,
@@ -1304,7 +1365,22 @@ impl MessageDispatcher for ProductionDispatcher {
             }
             match execution {
                 Ok(raw) => {
-                    let (raw, body_third_party_rejection) = classify_and_replay_response(raw).await;
+                    if body_capture.enabled {
+                        let mut headers = gateway_domain::HeaderSnapshot::capture(
+                            gateway_domain::HeaderTransport::Http,
+                            raw.headers.iter().map(|(name, value)| (name.as_ref(), value.as_ref())),
+                        );
+                        headers.attempt_ordinal = Some(u32::from(connection_ordinal));
+                        if self
+                            .storage
+                            .capture_upstream_headers(request_uuid, true, &headers)
+                            .await
+                            .is_err()
+                        {
+                            tracing::warn!(request_id = %request_uuid, "upstream response header capture failed");
+                        }
+                    }
+                    let (raw, body_third_party_rejection, body_preview) = classify_and_replay_response(raw).await;
                     let request_bytes = first_byte.request_bytes();
                     if request_bytes == 0 {
                         fail_attempt_telemetry(&self.storage, &attempt_telemetry, 0, false).await?;
@@ -1328,6 +1404,12 @@ impl MessageDispatcher for ProductionDispatcher {
                         self.clock.now().monotonic,
                     )
                     .await;
+                    let account_rejection = if (raw.status == 403 || raw.status == 400) && !body_third_party_rejection {
+                        account_rejection(raw.status, body_preview.as_deref())
+                    } else {
+                        None
+                    };
+                    let account_rejected = account_rejection.is_some();
                     let retry_after = if raw.status == 429 {
                         let cooldown =
                             persist_rate_limit_cooldown(&self.storage, &attempt_telemetry, trusted_retry_after(&raw))
@@ -1342,7 +1424,29 @@ impl MessageDispatcher for ProductionDispatcher {
                     } else {
                         trusted_retry_after(&raw).unwrap_or(Duration::ZERO)
                     };
+                    if raw.status == 529 {
+                        let cooldown =
+                            persist_overload_cooldown(&self.storage, &attempt_telemetry, trusted_retry_after(&raw))
+                                .await?;
+                        group
+                            .observe_credential_cooldown(CredentialCooldownUpdate {
+                                credential_id: lease.credential_id.clone(),
+                                cooldown_until: Some(self.clock.now().monotonic.saturating_add(cooldown)),
+                            })
+                            .await?;
+                    } else if let Some((error_code, error_message)) = account_rejection {
+                        if let Some(group_uuid) =
+                            persist_account_rejection(&self.storage, &attempt_telemetry, error_code, &error_message)
+                                .await?
+                        {
+                            let _ = self
+                                .fence_credential_for_admin(group_uuid, attempt_telemetry.credential_id)
+                                .await;
+                        }
+                    }
                     if raw.status != 429
+                        && raw.status != 529
+                        && !account_rejected
                         && clear_rate_limit_cooldown(&self.storage, attempt_telemetry.credential_id)
                             .await
                             .unwrap_or(false)
@@ -1704,6 +1808,7 @@ impl MessageDispatcher for ProductionDispatcher {
             Some(lease.clone())
         };
         let completion = Arc::new(RequestCompletion {
+            started_at: request.started_at,
             endpoint: request.endpoint,
             storage: self.storage.clone(),
             group: group.clone(),
@@ -1794,42 +1899,79 @@ impl RuntimeGroup {
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(25));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut heartbeat = tokio::time::interval(Duration::from_secs(1));
-            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             while runtime.owner_valid.load(Ordering::Acquire) {
-                tokio::select! {
-                    _ = tick.tick() => {
-                        if let Ok(resolutions) = runtime.handle.tick(runtime.generation, runtime.clock.now().monotonic).await {
-                            if runtime.flush_resource_events().await.is_err() {
-                                runtime.fence_lost_owner().await;
-                                break;
-                            }
-                            runtime.route(resolutions).await;
-                        } else {
-                            runtime.fence_lost_owner().await;
-                            break;
-                        }
+                tick.tick().await;
+                if !runtime.owner_valid.load(Ordering::Acquire) {
+                    break;
+                }
+                if let Ok(resolutions) = runtime
+                    .handle
+                    .tick(runtime.generation, runtime.clock.now().monotonic)
+                    .await
+                {
+                    if runtime.flush_resource_events().await.is_err() {
+                        runtime.fence_lost_owner().await;
+                        break;
                     }
-                    _ = heartbeat.tick() => {
-                        let generation = i64::try_from(runtime.generation.get());
-                        let renewed = match generation {
-                            Ok(value) => tokio::time::timeout(
-                                Duration::from_secs(10),
-                                runtime.storage.heartbeat_group_owner(
-                                    runtime.group_uuid,
-                                    &runtime.executor_id,
-                                    value,
-                                ),
-                            ).await.is_ok_and(|result| result.is_ok()),
-                            Err(_) => false,
-                        };
-                        if renewed {
-                            let deadline = runtime.clock.now().monotonic.saturating_add(Duration::from_secs(20));
-                            runtime.local_lease_deadline_ms.store(duration_millis(deadline), Ordering::Release);
-                        } else {
-                            runtime.fence_lost_owner().await;
-                            break;
-                        }
+                    runtime.route(resolutions).await;
+                } else {
+                    runtime.fence_lost_owner().await;
+                    break;
+                }
+            }
+        });
+        self.spawn_owner_heartbeat();
+    }
+
+    /// Renew the 30s durable lease on its own task. The server lease outlives the
+    /// 20s local admission fence, and a 5s interval leaves several attempts inside
+    /// that window. A locked group row is retried; only a lost generation fences.
+    fn spawn_owner_heartbeat(self: &Arc<Self>) {
+        let runtime = self.clone();
+        tokio::spawn(async move {
+            let mut heartbeat = tokio::time::interval_at(
+                tokio::time::Instant::now() + Duration::from_secs(5),
+                Duration::from_secs(5),
+            );
+            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                heartbeat.tick().await;
+                if !runtime.owner_valid.load(Ordering::Acquire) {
+                    break;
+                }
+                if duration_millis(runtime.clock.now().monotonic)
+                    >= runtime.local_lease_deadline_ms.load(Ordering::Acquire)
+                {
+                    runtime.fence_lost_owner().await;
+                    break;
+                }
+                let Ok(generation) = i64::try_from(runtime.generation.get()) else {
+                    runtime.fence_lost_owner().await;
+                    break;
+                };
+                match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    runtime
+                        .storage
+                        .heartbeat_group_owner(runtime.group_uuid, &runtime.executor_id, generation),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {
+                        let deadline = runtime.clock.now().monotonic.saturating_add(Duration::from_secs(20));
+                        runtime
+                            .local_lease_deadline_ms
+                            .store(duration_millis(deadline), Ordering::Release);
+                    }
+                    Ok(Err(gateway_storage::StorageError::RevisionConflict)) => {
+                        runtime.fence_lost_owner().await;
+                        break;
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(event = "group_owner_heartbeat_deferred", group_id = %runtime.group_uuid, error = %error);
+                    }
+                    Err(_) => {
+                        tracing::warn!(event = "group_owner_heartbeat_deferred", group_id = %runtime.group_uuid, error = "timed out");
                     }
                 }
             }
@@ -2269,13 +2411,15 @@ enum RuntimeAdmission {
 }
 
 struct RequestTerminalGuard {
+    started_at: Instant,
     storage: Arc<PgStorage>,
     request_id: Option<Uuid>,
 }
 
 impl RequestTerminalGuard {
-    fn new(storage: Arc<PgStorage>, request_id: Uuid) -> Self {
+    fn new(storage: Arc<PgStorage>, request_id: Uuid, started_at: Instant) -> Self {
         Self {
+            started_at,
             storage,
             request_id: Some(request_id),
         }
@@ -2290,7 +2434,9 @@ impl Drop for RequestTerminalGuard {
     fn drop(&mut self) {
         if let Some(request_id) = self.request_id.take() {
             let storage = self.storage.clone();
+            let duration_ms = elapsed_ms(self.started_at, Instant::now());
             tokio::spawn(async move {
+                let _ = storage.record_request_timing(request_id, None, Some(duration_ms)).await;
                 let _ = storage
                     .terminalize_uncommitted_request(request_id, "failed_before_commit")
                     .await;
@@ -2370,7 +2516,12 @@ impl Drop for LeaseGuard {
     }
 }
 
+fn elapsed_ms(started: Instant, ended: Instant) -> i64 {
+    i64::try_from(ended.saturating_duration_since(started).as_millis()).unwrap_or(i64::MAX)
+}
+
 struct RequestCompletion {
+    started_at: Instant,
     endpoint: DispatchEndpoint,
     storage: Arc<PgStorage>,
     group: Arc<RuntimeGroup>,
@@ -2582,6 +2733,15 @@ impl DeliveryCompletion for RequestCompletion {
     }
 
     async fn usage_observed(&self, observed: ObservedResponseUsage) {
+        if let Some(first) = observed.first_content_at
+            && self
+                .storage
+                .record_request_timing(self.request_uuid, Some(elapsed_ms(self.started_at, first)), None)
+                .await
+                .is_err()
+        {
+            tracing::warn!(request_id=%self.request_uuid, "first content timing persistence failed");
+        }
         if self
             .storage
             .observe_delivery_upstream_bytes(
@@ -2606,6 +2766,18 @@ impl DeliveryCompletion for RequestCompletion {
     async fn completed(&self, report: DeliveryReport) {
         if self.finished.swap(true, Ordering::AcqRel) {
             return;
+        }
+        if self
+            .storage
+            .record_request_timing(
+                self.request_uuid,
+                None,
+                Some(elapsed_ms(self.started_at, report.finished_at)),
+            )
+            .await
+            .is_err()
+        {
+            tracing::warn!(request_id=%self.request_uuid, "request duration persistence failed");
         }
         self.usage_terminal.lock().await.outcome = Some(report.outcome);
         if matches!(self.endpoint, DispatchEndpoint::Messages) {
@@ -2661,7 +2833,11 @@ impl Drop for RequestCompletion {
         let delivery_id = self.delivery_id;
         let attempt_id = self.attempt_id;
         let committed = self.committed.load(Ordering::Acquire);
+        let duration_ms = elapsed_ms(self.started_at, Instant::now());
         tokio::spawn(async move {
+            let _ = storage
+                .record_request_timing(request_uuid, None, Some(duration_ms))
+                .await;
             if storage
                 .complete_request_lifecycle(&RequestLifecycleComplete {
                     request_id: request_uuid,
@@ -2795,6 +2971,9 @@ async fn create_attempt_telemetry(
     messages_ordinal: u8,
     reason_code: &'static str,
 ) -> Result<AttemptTelemetry, DispatchError> {
+    let lease_profile = lease
+        .anthropic_profile()
+        .ok_or(DispatchError::DeterministicUnavailable)?;
     let intent_id = Uuid::now_v7();
     let connection_attempt_id = Uuid::now_v7();
     let attempt_id = Uuid::now_v7();
@@ -2806,8 +2985,8 @@ async fn create_attempt_telemetry(
             ordinal: i16::from(messages_ordinal),
             credential_id: parse_uuid(lease.credential_id.as_str())?,
             token_version: i64::try_from(lease.token_version).map_err(|_| DispatchError::Unavailable)?,
-            profile_epoch: i64::try_from(lease.profile_epoch).map_err(|_| DispatchError::Unavailable)?,
-            egress_epoch: i64::try_from(lease.egress_epoch).map_err(|_| DispatchError::Unavailable)?,
+            profile_epoch: i64::try_from(lease_profile.profile_epoch).map_err(|_| DispatchError::Unavailable)?,
+            egress_epoch: i64::try_from(lease_profile.egress_epoch).map_err(|_| DispatchError::Unavailable)?,
             transport_bundle_id: selected.transport_bundle_id,
             generic_adjusted_request_hash: generic_hash.to_vec(),
         })
@@ -2817,7 +2996,7 @@ async fn create_attempt_telemetry(
         gateway_domain::HttpProtocol::H1 => "h1",
         gateway_domain::HttpProtocol::H2 => "h2",
     };
-    let bundle_hash = decode_sha256(lease.bundle_hash.as_str())?;
+    let bundle_hash = decode_sha256(lease_profile.bundle_hash.as_str())?;
     let proxy_endpoint_id = selected
         .proxy_endpoint_id
         .as_ref()
@@ -2836,10 +3015,10 @@ async fn create_attempt_telemetry(
     .bind(request_id)
     .bind(intent_id)
     .bind(parse_uuid(lease.credential_id.as_str())?)
-    .bind(i64::try_from(lease.profile_epoch).map_err(|_| DispatchError::Unavailable)?)
-    .bind(i64::try_from(lease.egress_epoch).map_err(|_| DispatchError::Unavailable)?)
+    .bind(i64::try_from(lease_profile.profile_epoch).map_err(|_| DispatchError::Unavailable)?)
+    .bind(i64::try_from(lease_profile.egress_epoch).map_err(|_| DispatchError::Unavailable)?)
     .bind(selected.transport_bundle_id)
-    .bind(i64::try_from(lease.bundle_version).map_err(|_| DispatchError::Unavailable)?)
+    .bind(i64::try_from(lease_profile.bundle_version).map_err(|_| DispatchError::Unavailable)?)
     .bind(bundle_hash)
     .bind(engine.authority.as_ref())
     .bind(protocol)
@@ -2857,8 +3036,8 @@ async fn create_attempt_telemetry(
         request_id,
         credential_id: parse_uuid(lease.credential_id.as_str())?,
         token_version: i64::try_from(lease.token_version).map_err(|_| DispatchError::Unavailable)?,
-        profile_epoch: i64::try_from(lease.profile_epoch).map_err(|_| DispatchError::Unavailable)?,
-        egress_epoch: i64::try_from(lease.egress_epoch).map_err(|_| DispatchError::Unavailable)?,
+        profile_epoch: i64::try_from(lease_profile.profile_epoch).map_err(|_| DispatchError::Unavailable)?,
+        egress_epoch: i64::try_from(lease_profile.egress_epoch).map_err(|_| DispatchError::Unavailable)?,
         transport_bundle_id: selected.transport_bundle_id,
         connection_ordinal,
         messages_ordinal,
@@ -3110,6 +3289,13 @@ async fn load_scheduler_credentials(
     catalog: &gateway_transport::EngineCatalog,
     now: Duration,
 ) -> anyhow::Result<Vec<CredentialConfig>> {
+    let provider: String = sqlx::query_scalar("SELECT provider_code FROM gateway.credential_group WHERE id=$1")
+        .bind(group_id)
+        .fetch_one(&storage.pool())
+        .await?;
+    if provider == "openai" {
+        return openai::load_credentials(storage, group_id).await;
+    }
     let rows = sqlx::query(
         "SELECT c.id,c.revision AS credential_projection_revision,c.token_version,c.lifecycle_state_code,c.auth_state_code,c.scheduling_state_code, \
                 c.transport_state_code,c.capacity_state_code, \
@@ -3231,6 +3417,7 @@ async fn load_scheduler_credentials(
                 new_session_wait: millis(&row, "new_session_wait_ms")?,
             },
             token_version: u64::try_from(row.try_get::<i64, _>("token_version")?)?,
+            openai_transport: None,
             profiles: BTreeMap::new(),
             quota_observation_version,
             state: CredentialState {
@@ -3260,6 +3447,9 @@ async fn load_selected_credential(
     storage: &PgStorage,
     lease: &CredentialLease,
 ) -> Result<SelectedCredential, DispatchError> {
+    let lease_profile = lease
+        .anthropic_profile()
+        .ok_or(DispatchError::DeterministicUnavailable)?;
     let credential_id = parse_uuid(lease.credential_id.as_str())?;
     let row = sqlx::query(
         "SELECT c.auth_kind_code,c.account_uuid,c.token_version,av.access_secret_id,av.setup_secret_id,av.console_secret_id, \
@@ -3299,16 +3489,16 @@ async fn load_selected_credential(
     )
     .bind(credential_id)
     .bind(i64::try_from(lease.token_version).map_err(|_| DispatchError::Unavailable)?)
-    .bind(parse_uuid(lease.profile_id.as_str())?)
-    .bind(i64::try_from(lease.profile_epoch).map_err(|_| DispatchError::Unavailable)?)
-    .bind(parse_uuid(lease.device_identity_id.as_str())?)
-    .bind(i64::try_from(lease.device_epoch).map_err(|_| DispatchError::Unavailable)?)
-    .bind(parse_uuid(lease.egress_binding_id.as_str())?)
-    .bind(i64::try_from(lease.egress_epoch).map_err(|_| DispatchError::Unavailable)?)
-    .bind(parse_uuid(lease.archetype_version_id.as_str())?)
-    .bind(i64::try_from(lease.bundle_version).map_err(|_| DispatchError::Unavailable)?)
-    .bind(lease.bundle_id.as_str())
-    .bind(lease.bundle_hash.as_str())
+    .bind(parse_uuid(lease_profile.profile_id.as_str())?)
+    .bind(i64::try_from(lease_profile.profile_epoch).map_err(|_| DispatchError::Unavailable)?)
+    .bind(parse_uuid(lease_profile.device_identity_id.as_str())?)
+    .bind(i64::try_from(lease_profile.device_epoch).map_err(|_| DispatchError::Unavailable)?)
+    .bind(parse_uuid(lease_profile.egress_binding_id.as_str())?)
+    .bind(i64::try_from(lease_profile.egress_epoch).map_err(|_| DispatchError::Unavailable)?)
+    .bind(parse_uuid(lease_profile.archetype_version_id.as_str())?)
+    .bind(i64::try_from(lease_profile.bundle_version).map_err(|_| DispatchError::Unavailable)?)
+    .bind(lease_profile.bundle_id.as_str())
+    .bind(lease_profile.bundle_hash.as_str())
     .bind(lease.client_os.as_str())
     .fetch_optional(&storage.pool())
     .await
@@ -3434,7 +3624,7 @@ async fn load_selected_credential(
     })
 }
 
-async fn decrypt_secret(storage: &PgStorage, secret_id: Uuid) -> Result<SecretBytes, DispatchError> {
+pub(crate) async fn decrypt_secret(storage: &PgStorage, secret_id: Uuid) -> Result<SecretBytes, DispatchError> {
     let row = sqlx::query(
         "SELECT secret_kind_code,provider_role_code,ciphertext,nonce,wrapped_dek,key_version,aad_schema_version, \
                 owner_type_code,owner_id,purpose_code \
@@ -3528,6 +3718,7 @@ fn build_final_request(
     selected: &SelectedCredential,
     engine: &gateway_transport::CompiledTransportEngine,
     session_id: &str,
+    retry_count: u32,
 ) -> Result<FinalUpstreamRequest, DispatchError> {
     let auth =
         std::str::from_utf8(selected.auth_secret.expose()).map_err(|_| DispatchError::DeterministicUnavailable)?;
@@ -3590,8 +3781,6 @@ fn build_final_request(
     };
     let mut headers = Vec::with_capacity(engine.headers.len());
     let mut auth_seen = false;
-    let mut client_request_id_seen = false;
-    let mut helper_method_seen = false;
     let mut x_app_seen = false;
     let mut beta_seen = false;
     for template in engine.headers.iter() {
@@ -3621,6 +3810,8 @@ fn build_final_request(
             anthropic_version,
             &anthropic_beta,
             body.len(),
+            retry_count,
+            &client_request_id,
         )?;
         if canonical == "authorization" || canonical == "x-api-key" {
             let expected = if selected.auth_kind.as_ref() == "console_api_key" {
@@ -3634,8 +3825,6 @@ fn build_final_request(
             auth_seen = true;
         }
         match canonical.as_str() {
-            "x-client-request-id" if is_claude_code => client_request_id_seen = true,
-            "x-stainless-helper-method" if is_claude_code => helper_method_seen = true,
             "x-app" if is_claude_code => x_app_seen = true,
             "anthropic-beta" if is_claude_code => beta_seen = true,
             _ => {}
@@ -3649,18 +3838,6 @@ fn build_final_request(
         return Err(DispatchError::DeterministicUnavailable);
     }
     if is_claude_code {
-        if !client_request_id_seen {
-            headers.push(UpstreamHeader {
-                name: "x-client-request-id".into(),
-                value: Arc::from(client_request_id.into_bytes()),
-            });
-        }
-        if request.generic.stream && !helper_method_seen {
-            headers.push(UpstreamHeader {
-                name: "x-stainless-helper-method".into(),
-                value: Arc::from(b"stream".to_vec()),
-            });
-        }
         if !x_app_seen {
             headers.push(UpstreamHeader {
                 name: "x-app".into(),
@@ -3674,6 +3851,16 @@ fn build_final_request(
             });
         }
     }
+    // Materialize the same trailing framing field the H1 writer would append,
+    // so diagnostics describe the complete headers without changing wire bytes.
+    if engine.key.protocol == gateway_domain::HttpProtocol::H1
+        && !headers.iter().any(|h| h.name.eq_ignore_ascii_case("content-length"))
+    {
+        headers.push(UpstreamHeader {
+            name: "Content-Length".into(),
+            value: Arc::from(body.len().to_string().into_bytes()),
+        });
+    }
     Ok(FinalUpstreamRequest {
         method: "POST".into(),
         scheme: "https".into(),
@@ -3682,6 +3869,7 @@ fn build_final_request(
             let path = match request.endpoint {
                 DispatchEndpoint::Messages => "/v1/messages",
                 DispatchEndpoint::CountTokens => "/v1/messages/count_tokens",
+                DispatchEndpoint::OpenAi(_) => return Err(DispatchError::DeterministicUnavailable),
             };
             if selected.auth_kind.as_ref() == "console_api_key" {
                 path.into()
@@ -3886,8 +4074,11 @@ fn render_template(
     anthropic_version: &str,
     anthropic_beta: &str,
     content_length: usize,
+    retry_count: u32,
+    client_request_id: &str,
 ) -> Result<String, DispatchError> {
     let content_length = content_length.to_string();
+    let retry_count = retry_count.to_string();
     let mut rendered = template.to_owned();
     for (token, value) in [
         ("{authority}", authority),
@@ -3897,6 +4088,8 @@ fn render_template(
         ("{anthropic_beta}", anthropic_beta),
         ("{content_type}", "application/json"),
         ("{content_length}", content_length.as_str()),
+        ("{retry_count}", retry_count.as_str()),
+        ("{client_request_id}", client_request_id),
     ] {
         rendered = rendered.replace(token, value);
     }
@@ -4059,7 +4252,7 @@ struct ProxySecretDocument {
     password: String,
 }
 
-fn parse_proxy_credentials(secret: &SecretBytes) -> Result<ProxyCredentials, DispatchError> {
+pub(crate) fn parse_proxy_credentials(secret: &SecretBytes) -> Result<ProxyCredentials, DispatchError> {
     let text = std::str::from_utf8(secret.expose()).map_err(|_| DispatchError::DeterministicUnavailable)?;
     let (username, password) = if let Ok(document) = serde_json::from_str::<ProxySecretDocument>(text) {
         (document.username, document.password)
@@ -4122,6 +4315,7 @@ fn transport_error_code(code: TransportErrorCode) -> &'static str {
         TransportErrorCode::TlsCertificate => "tls_certificate",
         TransportErrorCode::TlsHandshake => "tls_handshake",
         TransportErrorCode::AlpnMismatch => "alpn_mismatch",
+        TransportErrorCode::CipherMismatch => "cipher_mismatch",
         TransportErrorCode::H1Framing => "h1_framing",
         TransportErrorCode::H2Protocol => "h2_protocol",
         TransportErrorCode::Timeout => "timeout",
@@ -4286,6 +4480,85 @@ async fn persist_rate_limit_cooldown(
     ))
 }
 
+async fn persist_overload_cooldown(
+    storage: &PgStorage,
+    telemetry: &AttemptTelemetry,
+    trusted_retry_after: Option<Duration>,
+) -> Result<Duration, DispatchError> {
+    let explicit_seconds = trusted_retry_after
+        .map(|duration| i64::try_from(duration.as_secs()))
+        .transpose()
+        .map_err(|_| DispatchError::Unavailable)?
+        .map(|seconds| seconds.clamp(1, 900));
+    let mut transaction = storage.pool().begin().await.map_err(|_| DispatchError::Unavailable)?;
+    let row = sqlx::query(
+        "UPDATE gateway.anthropic_credential \
+         SET cooldown_until=clock_timestamp() + (COALESCE($2::bigint,60) * interval '1 second'), \
+             scheduling_state_code='cooldown',capacity_state_code='cooldown', \
+             last_error_code='overloaded',last_error_message='upstream overloaded (529)', \
+             last_error_at=clock_timestamp(), \
+             revision=revision+1,updated_at=clock_timestamp() \
+         WHERE id=$1 AND lifecycle_state_code='active' \
+         RETURNING CEIL(EXTRACT(EPOCH FROM (cooldown_until-clock_timestamp())))::bigint AS cooldown_seconds",
+    )
+    .bind(telemetry.credential_id)
+    .bind(explicit_seconds)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| DispatchError::Unavailable)?
+    .ok_or(DispatchError::Unavailable)?;
+    let seconds = row
+        .try_get::<i64, _>("cooldown_seconds")
+        .map_err(|_| DispatchError::Unavailable)?
+        .clamp(1, 900);
+    sqlx::query(
+        "INSERT INTO telemetry.credential_cooldown_event \
+         (id,credential_id,reason_code,started_at,cooldown_until,source_attempt_id) \
+         VALUES ($1,$2,'overload',clock_timestamp(),clock_timestamp()+($3::bigint*interval '1 second'),$4)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(telemetry.credential_id)
+    .bind(seconds)
+    .bind(telemetry.attempt_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| DispatchError::Unavailable)?;
+    transaction.commit().await.map_err(|_| DispatchError::Unavailable)?;
+    Ok(Duration::from_secs(
+        u64::try_from(seconds).map_err(|_| DispatchError::Unavailable)?,
+    ))
+}
+
+/// Persist an account-level rejection (403/400): stop scheduling via
+/// `scheduling_state_code='blocked'` and surface the reason on the account row.
+/// Returns the group id when the row transitioned, so the caller can fence the
+/// in-memory runtime immediately.
+async fn persist_account_rejection(
+    storage: &PgStorage,
+    telemetry: &AttemptTelemetry,
+    error_code: &str,
+    error_message: &str,
+) -> Result<Option<Uuid>, DispatchError> {
+    let mut transaction = storage.pool().begin().await.map_err(|_| DispatchError::Unavailable)?;
+    let row = sqlx::query(
+        "UPDATE gateway.anthropic_credential \
+         SET scheduling_state_code='blocked', \
+             last_error_code=$2,last_error_message=$3,last_error_at=clock_timestamp(), \
+             revision=revision+1,updated_at=clock_timestamp() \
+         WHERE id=$1 AND lifecycle_state_code='active' \
+           AND (scheduling_state_code<>'blocked' OR last_error_code IS DISTINCT FROM $2) \
+         RETURNING group_id",
+    )
+    .bind(telemetry.credential_id)
+    .bind(error_code)
+    .bind(error_message)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| DispatchError::Unavailable)?;
+    transaction.commit().await.map_err(|_| DispatchError::Unavailable)?;
+    Ok(row.and_then(|row| row.try_get::<Uuid, _>("group_id").ok()))
+}
+
 async fn clear_rate_limit_cooldown(storage: &PgStorage, credential_id: Uuid) -> Result<bool, sqlx::Error> {
     let mut transaction = storage.pool().begin().await?;
     let updated = sqlx::query(
@@ -4293,8 +4566,9 @@ async fn clear_rate_limit_cooldown(storage: &PgStorage, credential_id: Uuid) -> 
          SET consecutive_cooldown_count=0,cooldown_until=NULL, \
              scheduling_state_code=CASE WHEN scheduling_state_code='cooldown' THEN 'eligible' ELSE scheduling_state_code END, \
              capacity_state_code=CASE WHEN capacity_state_code='cooldown' THEN 'available' ELSE capacity_state_code END, \
+             last_error_code=NULL,last_error_message=NULL,last_error_at=NULL, \
              revision=revision+1,updated_at=clock_timestamp() \
-         WHERE id=$1 AND (consecutive_cooldown_count>0 OR cooldown_until IS NOT NULL)",
+         WHERE id=$1 AND (consecutive_cooldown_count>0 OR cooldown_until IS NOT NULL OR last_error_at IS NOT NULL)",
     )
     .bind(credential_id)
     .execute(&mut *transaction)
@@ -4516,11 +4790,13 @@ fn parse_client_os_code(value: &str) -> Option<ClientOs> {
 const THIRD_PARTY_REJECTION_BODY_PREVIEW_BYTES: usize = 64 * 1024;
 const THIRD_PARTY_REJECTION_BODY_WAIT: Duration = Duration::from_millis(250);
 
-async fn classify_and_replay_response(mut response: RawUpstreamResponse) -> (RawUpstreamResponse, bool) {
+async fn classify_and_replay_response(
+    mut response: RawUpstreamResponse,
+) -> (RawUpstreamResponse, bool, Option<Vec<u8>>) {
     let header_rejection = is_third_party_rejection(response.status, &response.headers, None);
     let body_eligible = (400..500).contains(&response.status) && response.status != 429;
     if !body_eligible || header_rejection {
-        return (response, header_rejection);
+        return (response, header_rejection, None);
     }
 
     let (body, preview) = match response.body {
@@ -4535,7 +4811,49 @@ async fn classify_and_replay_response(mut response: RawUpstreamResponse) -> (Raw
     };
     response.body = body;
     let body_rejection = is_third_party_rejection(response.status, &response.headers, Some(&preview));
-    (response, body_rejection)
+    (response, body_rejection, Some(preview))
+}
+
+/// Classify upstream 4xx responses that mean the account itself is unusable —
+/// suspension, credit exhaustion, disabled organization — rather than a
+/// request-level problem. Returns `(last_error_code, last_error_message)`.
+fn account_rejection(status: u16, body_preview: Option<&[u8]>) -> Option<(&'static str, String)> {
+    if status != 403 && status != 400 {
+        return None;
+    }
+    let body = String::from_utf8_lossy(body_preview?).to_ascii_lowercase();
+    if status == 403 {
+        let code = if body.contains("suspended") || body.contains("banned") || body.contains("violation") {
+            "account_suspended"
+        } else {
+            "account_forbidden"
+        };
+        return Some((code, account_error_message(body_preview)));
+    }
+    [
+        ("credit balance", "credit_balance"),
+        ("organization has been disabled", "organization_disabled"),
+        ("identity verification", "identity_verification_required"),
+    ]
+    .into_iter()
+    .find(|(needle, _)| body.contains(needle))
+    .map(|(_, code)| (code, account_error_message(body_preview)))
+}
+
+fn account_error_message(body_preview: Option<&[u8]>) -> String {
+    let Some(body) = body_preview else {
+        return String::new();
+    };
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) {
+        if let Some(message) = value.pointer("/error/message").and_then(|message| message.as_str()) {
+            return message.chars().take(300).collect();
+        }
+    }
+    String::from_utf8_lossy(&body[..body.len().min(512)])
+        .trim()
+        .chars()
+        .take(300)
+        .collect()
 }
 
 async fn replay_response_body(
@@ -4713,6 +5031,7 @@ mod tests {
         ActivationGeneration, CompiledApplicationProfile, CompiledTransportEngine, EngineCatalog, EngineCatalogHandle,
         EngineKey, Http1Profile, NoopTransportCore, RawResponseBody, RawUpstreamResponse, TlsProfile,
     };
+    use sqlx::Connection as _;
     use sqlx::Row as _;
     use uuid::Uuid;
 
@@ -4815,6 +5134,8 @@ mod tests {
                 grease_enabled: false,
                 permute_extensions: false,
                 session_resumption: false,
+                min_tls_version: None,
+                max_tls_version: None,
             },
             application: CompiledApplicationProfile::H1(Http1Profile {
                 request_line_form: "origin".into(),
@@ -4910,7 +5231,7 @@ mod tests {
             protocol: HttpProtocol::H1,
             body: RawResponseBody::NonStream(receiver),
         };
-        let (response, classified) = classify_and_replay_response(response).await;
+        let (response, classified, _) = classify_and_replay_response(response).await;
         assert!(classified);
         let RawResponseBody::NonStream(mut body) = response.body else {
             panic!("expected non-stream body");
@@ -4924,7 +5245,7 @@ mod tests {
 
     #[test]
     fn unknown_header_template_fails_closed() {
-        assert!(render_template("{unknown}", "a", "b", "c", "d", "e", 0).is_err());
+        assert!(render_template("{unknown}", "a", "b", "c", "d", "e", 0, 0, "f").is_err());
     }
 
     #[test]
@@ -5094,6 +5415,129 @@ mod tests {
         assert_eq!(reactivated.try_get::<i64, _>("owner_generation")?, 3);
         assert_eq!(reactivated.try_get::<i64, _>("revision")?, 3);
         dispatcher.shutdown_owners().await;
+        Ok(())
+    }
+
+    /// Create the target database when the admin URL points at the server's
+    /// maintenance database, so the regression can run locally against the live
+    /// local PostgreSQL cluster without pre-provisioning. CI passes an existing
+    /// disposable database, in which case this is a no-op.
+    async fn ensure_quarantine_database(database_url: &str) -> String {
+        let (base, query) = match database_url.split_once('?') {
+            Some((base, query)) => (base, format!("?{query}")),
+            None => (database_url, String::new()),
+        };
+        let database_name = base.rsplit('/').next().unwrap_or("postgres").to_owned();
+        let maintenance = format!("{}/postgres{query}", &base[..base.len() - database_name.len()]);
+        let mut connection = match sqlx::PgConnection::connect(&maintenance).await {
+            Ok(connection) => connection,
+            Err(_) => return database_url.to_owned(),
+        };
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)")
+            .bind(&database_name)
+            .fetch_one(&mut connection)
+            .await
+            .unwrap_or(true);
+        if !exists {
+            sqlx::query(&format!("CREATE DATABASE \"{database_name}\""))
+                .execute(&mut connection)
+                .await
+                .expect("create disposable regression database");
+        }
+        database_url.to_owned()
+    }
+
+    #[tokio::test]
+    async fn runtime_quarantine_moves_only_runtime_state_and_stays_idempotent() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let Ok(database_url) = std::env::var("TEST_R4_RUNTIME_DATABASE_ADMIN_URL") else {
+            return Ok(());
+        };
+        let database_url = ensure_quarantine_database(&database_url).await;
+        let database_url = SecretValue::new(database_url);
+        PgStorage::migrate(&database_url).await?;
+        let storage = Arc::new(PgStorage::connect(&database_url, RuntimeRolePolicy::AllowPrivilegedTest).await?);
+
+        let archetype_id = Uuid::now_v7();
+        let version_id = Uuid::now_v7();
+        let bundle_id = Uuid::now_v7();
+        let artifact_version: i64 = 2_001_000 + (Uuid::now_v7().as_u128() % 100_000) as i64;
+        let mut transaction = storage.pool().begin().await?;
+        sqlx::query(
+            "INSERT INTO catalog.environment_archetype \
+             (id,name,os_family_code,architecture_code,lifecycle_code,created_at,updated_at) \
+             VALUES ($1,$2,'windows','x86_64','active',clock_timestamp(),clock_timestamp())",
+        )
+        .bind(archetype_id)
+        .bind(format!("quarantine-regression-{archetype_id}"))
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO catalog.environment_archetype_version \
+             (id,archetype_id,version,lifecycle_code,runtime_code,runtime_version,client_version,protocol_profile,content_hash,created_at) \
+             VALUES ($1,$2,1,'active','node','24','2.1.241',jsonb_build_object(),$3,clock_timestamp())",
+        )
+        .bind(version_id)
+        .bind(archetype_id)
+        .bind(Uuid::now_v7().as_bytes().to_vec())
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO catalog.transport_bundle \
+             (id,artifact_version,engine_abi_version,lifecycle_code,manifest,manifest_hash,signature,signing_key_id,object_uri,created_at, \
+              source_archetype_version_id,capture_cohort,protocol_code,backend_id,min_engine_build) \
+             VALUES ($1,$2,'1.0','active','{}'::jsonb,$3,$4,'local-release-signing-v1','bundles/quarantine-regression.json',clock_timestamp(), \
+              $5,'quarantine-regression-cohort','h1','gateway-transport-boringssl-h1-v1','1.0')",
+        )
+        .bind(bundle_id)
+        .bind(artifact_version)
+        .bind(Uuid::now_v7().as_bytes().to_vec())
+        .bind(Uuid::now_v7().as_bytes().to_vec())
+        .bind(version_id)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+
+        // The R6 CHECK must be present, and the legacy two-dial UPDATE shape must
+        // be rejected by it — otherwise this regression would prove nothing.
+        let constraint: String =
+            sqlx::query_scalar("SELECT conname FROM pg_constraint WHERE conname='transport_bundle_lifecycle_code_check' AND conrelid='catalog.transport_bundle'::regclass")
+                .fetch_one(&storage.pool())
+                .await?;
+        assert_eq!(constraint, "transport_bundle_lifecycle_code_check");
+        let legacy = sqlx::query(
+            "UPDATE catalog.transport_bundle SET lifecycle_code='quarantined',runtime_state_code='quarantined' WHERE id=$1",
+        )
+        .bind(bundle_id)
+        .execute(&storage.pool())
+        .await;
+        assert!(legacy.is_err(), "R6 CHECK must reject a quarantined lifecycle value");
+
+        let revision = PgStorage::quarantine_transport_bundle_runtime(&storage.pool(), bundle_id).await?;
+        assert_eq!(revision, Some(artifact_version));
+        let (lifecycle, runtime_state): (String, String) =
+            sqlx::query_as("SELECT lifecycle_code,runtime_state_code FROM catalog.transport_bundle WHERE id=$1")
+                .bind(bundle_id)
+                .fetch_one(&storage.pool())
+                .await?;
+        assert_eq!(lifecycle, "active", "quarantine must not touch the lifecycle dial");
+        assert_eq!(runtime_state, "quarantined");
+
+        let repeated = PgStorage::quarantine_transport_bundle_runtime(&storage.pool(), bundle_id).await?;
+        assert_eq!(repeated, None, "quarantine must be idempotent");
+
+        sqlx::query("DELETE FROM catalog.transport_bundle WHERE id=$1")
+            .bind(bundle_id)
+            .execute(&storage.pool())
+            .await?;
+        sqlx::query("DELETE FROM catalog.environment_archetype_version WHERE id=$1")
+            .bind(version_id)
+            .execute(&storage.pool())
+            .await?;
+        sqlx::query("DELETE FROM catalog.environment_archetype WHERE id=$1")
+            .bind(archetype_id)
+            .execute(&storage.pool())
+            .await?;
         Ok(())
     }
 }

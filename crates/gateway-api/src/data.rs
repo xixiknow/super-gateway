@@ -32,6 +32,7 @@ pub enum EndpointPermission {
 pub enum DispatchEndpoint {
     Messages,
     CountTokens,
+    OpenAi(gateway_domain::OpenAiEndpoint),
 }
 
 /// Token-bucket configuration.
@@ -64,6 +65,7 @@ impl RateLimit {
 /// Fully resolved, request-frozen Platform Key/User/Group access projection.
 #[derive(Clone, Debug)]
 pub struct AccessGrant {
+    pub provider: gateway_domain::Provider,
     pub owner_user_id: UserId,
     pub platform_key_id: PlatformKeyId,
     pub group_id: GroupId,
@@ -224,6 +226,8 @@ impl AccessResolver for VersionedDigestAccessResolver {
 /// Published model projection used by `/v1/models`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelRecord {
+    pub openai_metadata: Option<serde_json::Value>,
+    pub provider: gateway_domain::Provider,
     pub id: Box<str>,
     pub display_name: Box<str>,
     pub created_at: Box<str>,
@@ -305,9 +309,16 @@ impl std::fmt::Debug for ManagementRuntimeBridge {
     }
 }
 
-/// Credential-neutral dispatch input. Original identity headers have no representation here.
+/// Credential-neutral dispatch input. Header diagnostics are redacted at ingress.
 #[derive(Clone, Debug)]
 pub struct DispatchRequest {
+    /// Monotonic timestamp taken at HTTP ingress or at this WebSocket turn.
+    pub started_at: std::time::Instant,
+    /// Caller-advertised identity for telemetry only.
+    pub client_identity: gateway_domain::ClientIdentity,
+    /// Redacted ingress diagnostics; never used to build upstream identity.
+    pub original_headers: Option<gateway_domain::HeaderSnapshot>,
+    pub openai_connection: Option<Arc<tokio::sync::Mutex<gateway_transport::OpenAiConnection>>>,
     pub endpoint: DispatchEndpoint,
     pub request_id: RequestId,
     pub owner_user_id: UserId,
@@ -338,12 +349,18 @@ pub type UpstreamResponse = gateway_services::response::PreparedClientResponse;
 /// Message scheduling/transport port. R3 tests inject a capturing implementation.
 #[async_trait]
 pub trait MessageDispatcher: Send + Sync {
+    /// Disabled unless the implementation explicitly publishes WebSocket readiness.
+    async fn openai_websocket_idle(&self) -> Option<Duration> {
+        None
+    }
     async fn dispatch(&self, request: DispatchRequest) -> Result<UpstreamResponse, DispatchError>;
 }
 
 /// Stable pre-commit dispatch error class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DispatchError {
+    InvalidRequest,
+    ContinuationUnavailable,
     Unavailable,
     Overloaded {
         retry_after_seconds: u64,
@@ -507,6 +524,8 @@ mod runtime_tests {
 
     fn model(id: &str) -> ModelRecord {
         ModelRecord {
+            provider: gateway_domain::Provider::Anthropic,
+            openai_metadata: None,
             id: id.into(),
             display_name: id.into(),
             created_at: "0".into(),

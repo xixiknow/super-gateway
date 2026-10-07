@@ -93,7 +93,7 @@ pub(crate) async fn promote(request: PromoteRequest) -> Result<()> {
         "candidate and Manifest use different capture runs"
     );
     verify_audit(&request.audit, &candidate.bundle_sha256)?;
-    verify_stability(&request.stability_report)?;
+    verify_stability(&request.stability_report, &candidate.bundle_sha256)?;
     let tls = formal_tls_profile(&candidate)?;
     let headers = formal_headers(&candidate)?;
     let replay = run_formal_replay(&request, &candidate, &tls, &headers).await?;
@@ -441,8 +441,12 @@ fn verify_audit(path: &Path, candidate_hash: &str) -> Result<()> {
     Ok(())
 }
 
-fn verify_stability(path: &Path) -> Result<()> {
+fn verify_stability(path: &Path, candidate_hash: &str) -> Result<()> {
     let report: Value = read_json(path)?;
+    ensure!(
+        report["bundle_sha256"] == candidate_hash,
+        "stability report is not bound to this candidate"
+    );
     let iterations = report
         .get("iterations")
         .and_then(Value::as_u64)
@@ -478,7 +482,7 @@ fn verify_formal_envelope(envelope: &SignedBundleEnvelope, trust_store: &BundleT
     Ok(())
 }
 
-fn load_or_create_signing_key(path: &Path) -> Result<SigningKey> {
+pub(crate) fn load_or_create_signing_key(path: &Path) -> Result<SigningKey> {
     let value = if path.exists() {
         fs::read_to_string(path).with_context(|| format!("read signing key {}", path.display()))?
     } else {
@@ -511,7 +515,13 @@ fn parse_client_version(value: &str) -> Result<String> {
     Ok(version.to_owned())
 }
 
-fn encode_artifact_version(version: &str) -> Result<u64> {
+pub(crate) fn encode_artifact_version(version: &str) -> Result<u64> {
+    ensure!(
+        version.split('.').all(|part| !part.is_empty()
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))),
+        "expected version must be canonical major.minor.patch"
+    );
     let parts = version
         .split('.')
         .map(str::parse::<u64>)
@@ -521,7 +531,10 @@ fn encode_artifact_version(version: &str) -> Result<u64> {
         parts.len() == 3 && parts[1] < 1_000 && parts[2] < 1_000,
         "Claude Code version cannot be encoded"
     );
-    Ok(parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2])
+    parts[0]
+        .checked_mul(1_000_000)
+        .and_then(|major| major.checked_add(parts[1] * 1_000 + parts[2]))
+        .context("Claude Code version overflows artifact version")
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -540,4 +553,27 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
 fn file_sha256(path: &Path) -> Result<String> {
     let bytes = fs::read(path).with_context(|| format!("read {} for SHA-256", path.display()))?;
     Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn artifact_version_is_canonical_and_checked() {
+        assert_eq!(encode_artifact_version("2.1.245").unwrap(), 2_001_245);
+        for invalid in [
+            "",
+            "2.1",
+            "2.1.245.0",
+            "02.1.245",
+            "2.1000.1",
+            "2.1.1000",
+            "+2.1.1",
+            "2.1.1-beta",
+            "18446744073709551615.0.0",
+        ] {
+            assert!(encode_artifact_version(invalid).is_err(), "{invalid}");
+        }
+    }
 }

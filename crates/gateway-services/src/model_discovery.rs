@@ -39,6 +39,31 @@ pub struct ModelDiscoveryRetry {
     pub retry_after_seconds: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PublicDirectoryError {
+    stage: &'static str,
+    reason: &'static str,
+    status: Option<u16>,
+}
+
+impl PublicDirectoryError {
+    const fn new(stage: &'static str, reason: &'static str) -> Self {
+        Self {
+            stage,
+            reason,
+            status: None,
+        }
+    }
+
+    const fn http(stage: &'static str, status: u16) -> Self {
+        Self {
+            stage,
+            reason: "http_status",
+            status: Some(status),
+        }
+    }
+}
+
 #[async_trait]
 pub trait PublicModelDirectoryHttpPort: Send + Sync {
     async fn execute_public(
@@ -240,7 +265,23 @@ impl PgModelCatalogCollector {
                     "fallback":false
                 }),
             ),
-            Err(()) => builtin_model_directory()?,
+            Err(error) => {
+                tracing::warn!(
+                    event = "model_public_directory_fallback",
+                    %job_id,
+                    stage = error.stage,
+                    reason = error.reason,
+                    http_status = error.status,
+                    "public model directory failed; using built-in snapshot"
+                );
+                let (source, documents, mut manifest) = builtin_model_directory()?;
+                manifest["fallback_stage"] = json!(error.stage);
+                manifest["fallback_reason"] = json!(error.reason);
+                if let Some(status) = error.status {
+                    manifest["fallback_http_status"] = json!(status);
+                }
+                (source, documents, manifest)
+            }
         };
         let (models, mut source_models) = normalize_model_documents(documents)?;
         source_models.sort_by(|left, right| {
@@ -266,17 +307,13 @@ impl PgModelCatalogCollector {
             })
     }
 
-    async fn load_public_model_directory(&self) -> Result<Vec<ModelDocument>, ()> {
-        let endpoint: Uri = PUBLIC_MODEL_DIRECTORY_URL.parse().map_err(|_| ())?;
-        let response = self
-            .public_http
-            .execute_public(endpoint, 256 * 1024)
-            .await
-            .map_err(|_| ())?;
-        if !(200..=299).contains(&response.status) {
-            return Err(());
-        }
-        let directory = parse_public_model_directory(response.body.expose())?;
+    async fn load_public_model_directory(&self) -> Result<Vec<ModelDocument>, PublicDirectoryError> {
+        let endpoint: Uri = PUBLIC_MODEL_DIRECTORY_URL
+            .parse()
+            .map_err(|_| PublicDirectoryError::new("overview", "invalid_url"))?;
+        let response = self.fetch_public_document(endpoint, "overview").await?;
+        let directory = parse_public_model_directory(response.body.expose())
+            .map_err(|()| PublicDirectoryError::new("overview", "parse_failed"))?;
         let summaries = directory
             .models
             .into_iter()
@@ -284,38 +321,58 @@ impl PgModelCatalogCollector {
             .collect::<BTreeMap<_, _>>();
         let mut models = Vec::with_capacity(directory.detail_models.len());
         for reference in directory.detail_models {
-            let endpoint: Uri = reference.endpoint.parse().map_err(|_| ())?;
-            let response = self
-                .public_http
-                .execute_public(endpoint, 256 * 1024)
-                .await
-                .map_err(|_| ())?;
-            if !(200..=299).contains(&response.status) {
-                return Err(());
-            }
+            let endpoint: Uri = reference
+                .endpoint
+                .parse()
+                .map_err(|_| PublicDirectoryError::new("detail", "invalid_url"))?;
+            let response = self.fetch_public_document(endpoint, "detail").await?;
             let mut model = parse_public_model_detail(
                 response.body.expose(),
                 &reference.display_name,
                 &reference.catalog_status,
-            )?;
+            )
+            .map_err(|()| PublicDirectoryError::new("detail", "parse_failed"))?;
             if reference
                 .expected_id
                 .as_deref()
                 .is_some_and(|expected| expected != model.id)
             {
-                return Err(());
+                return Err(PublicDirectoryError::new("detail", "model_id_mismatch"));
             }
             if let Some(summary) = summaries.get(&model.id) {
                 model.max_input_tokens = summary.max_input_tokens.or(model.max_input_tokens);
                 model.max_tokens = summary.max_tokens.or(model.max_tokens);
-                merge_provider_capabilities(&mut model.capabilities, summary.capabilities.as_ref())?;
+                merge_provider_capabilities(&mut model.capabilities, summary.capabilities.as_ref())
+                    .map_err(|()| PublicDirectoryError::new("detail", "capability_merge_failed"))?;
             }
             models.push(model);
         }
         if models.len() != summaries.len() + directory.legacy_model_count {
-            return Err(());
+            return Err(PublicDirectoryError::new("directory", "model_count_mismatch"));
         }
         Ok(models)
+    }
+
+    async fn fetch_public_document(
+        &self,
+        mut endpoint: Uri,
+        stage: &'static str,
+    ) -> Result<crate::credential_provider::ProviderHttpResponse, PublicDirectoryError> {
+        for _ in 0..=3 {
+            let response = self
+                .public_http
+                .execute_public(endpoint.clone(), 256 * 1024)
+                .await
+                .map_err(|_| PublicDirectoryError::new(stage, "request_failed"))?;
+            if (200..=299).contains(&response.status) {
+                return Ok(response);
+            }
+            if !matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+                return Err(PublicDirectoryError::http(stage, response.status));
+            }
+            endpoint = public_redirect_target(&endpoint, &response.headers, stage)?;
+        }
+        Err(PublicDirectoryError::new(stage, "redirect_limit_exceeded"))
     }
 
     async fn load_material(
@@ -452,6 +509,80 @@ struct ResolvedRequestProfile {
 const PUBLIC_MODEL_DIRECTORY_URL: &str = "https://platform.claude.com/docs/en/models/overview.md";
 const BUILTIN_MODEL_DIRECTORY: &[u8] = include_bytes!("../assets/anthropic-public-models.json");
 const REQUEST_CAPABILITY_MATRIX: &[u8] = include_bytes!("../assets/anthropic-request-capabilities.json");
+
+fn public_redirect_target(
+    current: &Uri,
+    headers: &[(Box<str>, Box<[u8]>)],
+    stage: &'static str,
+) -> Result<Uri, PublicDirectoryError> {
+    let locations = headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("location"))
+        .collect::<Vec<_>>();
+    if locations.len() != 1 {
+        return Err(PublicDirectoryError::new(stage, "redirect_location_missing"));
+    }
+    let location = std::str::from_utf8(&locations[0].1)
+        .map_err(|_| PublicDirectoryError::new(stage, "redirect_location_invalid"))?;
+    let target = if location.starts_with('/') && !location.starts_with("//") {
+        format!("https://platform.claude.com{location}")
+    } else {
+        location.to_owned()
+    };
+    let target: Uri = target
+        .parse()
+        .map_err(|_| PublicDirectoryError::new(stage, "redirect_location_invalid"))?;
+    let rejection = if target.scheme_str() != Some("https") {
+        Some("scheme")
+    } else if target.host() != Some("platform.claude.com") {
+        Some("host")
+    } else if target.port_u16().is_some_and(|port| port != 443) {
+        Some("port")
+    } else if target
+        .authority()
+        .is_some_and(|authority| authority.as_str().contains('@'))
+    {
+        Some("userinfo")
+    } else if target.query().is_some() {
+        Some("query")
+    } else if !is_public_model_document_path(target.path()) {
+        Some("path")
+    } else if target == *current {
+        Some("self_redirect")
+    } else {
+        None
+    };
+    if let Some(rejection) = rejection {
+        tracing::warn!(
+            event = "model_public_directory_redirect_rejected",
+            stage,
+            rejection,
+            source_host = current.host(),
+            source_path = current.path(),
+            target_scheme = target.scheme_str(),
+            target_host = target.host(),
+            target_port = target.port_u16(),
+            target_path = target.path(),
+            has_query = target.query().is_some(),
+            "public model document redirect rejected"
+        );
+        return Err(PublicDirectoryError::new(stage, "redirect_target_rejected"));
+    }
+    Ok(target)
+}
+
+fn is_public_model_document_path(path: &str) -> bool {
+    if path == "/docs/en/models/overview.md" {
+        return true;
+    }
+    path.strip_prefix("/docs/en/models/")
+        .and_then(|value| value.strip_suffix("/overview.md"))
+        .is_some_and(|slug| {
+            !slug.is_empty()
+                && slug.len() <= 64
+                && slug.chars().all(|value| value.is_ascii_alphanumeric() || value == '-')
+        })
+}
 
 fn builtin_model_directory() -> Result<(ModelDiscoverySource, Vec<ModelDocument>, Value), ModelDiscoveryRetry> {
     let snapshot: BuiltinModelDirectory =
@@ -1483,7 +1614,8 @@ mod tests {
     use super::{
         ModelDocument, append_effort_rules, append_sampling_rules, append_thinking_rules, base_messages_rules,
         build_gateway_capability_candidate, builtin_model_directory, parse_public_model_detail,
-        parse_public_model_directory, parse_public_token_count, request_capability_matrix, resolve_request_profile,
+        parse_public_model_directory, parse_public_token_count, public_redirect_target, request_capability_matrix,
+        resolve_request_profile,
     };
 
     #[test]
@@ -1518,6 +1650,44 @@ Legacy models (still available): [Claude Opus Legacy](https://platform.claude.co
     }
 
     #[test]
+    fn follows_only_allowed_public_model_document_redirects() {
+        let current = "https://platform.claude.com/docs/en/models/overview.md"
+            .parse()
+            .expect("current URI");
+        let target = public_redirect_target(
+            &current,
+            &[(
+                "location".into(),
+                Box::from("/docs/en/models/opus-5-5/overview.md".as_bytes()),
+            )],
+            "overview",
+        )
+        .expect("same-host model detail redirect");
+        assert_eq!(
+            target.to_string(),
+            "https://platform.claude.com/docs/en/models/opus-5-5/overview.md"
+        );
+        for location in [
+            "https://example.com/docs/en/models/overview.md",
+            "//example.com/docs/en/models/overview.md",
+            "/docs/en/models/opus-5-5/pricing.md",
+            "/docs/en/models/opus-5-5/nested/overview.md",
+            "/docs/en/models/overview.md?token=secret",
+            "/docs/en/models/overview.md",
+        ] {
+            assert!(
+                public_redirect_target(
+                    &current,
+                    &[("Location".into(), Box::from(location.as_bytes()))],
+                    "overview"
+                )
+                .is_err(),
+                "accepted {location}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_legacy_model_details_with_provider_limits() {
         let markdown = br"
 Model ID: `claude-opus-legacy`
@@ -1545,14 +1715,32 @@ Model ID: `claude-opus-legacy`
     fn rejects_incomplete_public_tables_and_keeps_a_valid_builtin_snapshot() {
         assert!(parse_public_model_directory(b"| Feature | Claude |\n| Claude API ID | `claude-x` |").is_err());
         let (_, models, manifest) = builtin_model_directory().expect("builtin model directory");
-        assert_eq!(models.len(), 10);
+        assert_eq!(models.len(), 11);
+        assert!(models.iter().any(|model| model.id == "claude-opus-5-5"));
+        let opus_55 = models
+            .iter()
+            .find(|model| model.id == "claude-opus-5-5")
+            .expect("Opus 5.5");
+        assert!(opus_55.max_input_tokens.is_none());
+        assert!(opus_55.max_tokens.is_none());
+        let candidate = build_gateway_capability_candidate(opus_55)
+            .expect("valid capability")
+            .expect("candidate");
+        assert_eq!(candidate.schema_payload["metadata"]["profile_completeness"], "partial");
         assert!(models.iter().any(|model| model.id == "claude-opus-4-5-20251101"));
         assert!(models.iter().any(|model| model.id == "claude-sonnet-4-5-20250929"));
         let released = models
             .iter()
+            .filter(|model| model.id != "claude-opus-5-5")
             .map(|model| model.created_at.as_deref().expect("built-in release date"))
             .collect::<Vec<_>>();
         assert!(released.iter().all(|value| value.ends_with("T00:00:00Z")));
+        assert!(
+            models
+                .iter()
+                .find(|model| model.id == "claude-opus-5-5")
+                .is_some_and(|model| model.created_at.is_none())
+        );
         assert_eq!(manifest["source"], "builtin_snapshot");
     }
 
@@ -1578,6 +1766,7 @@ Model ID: `claude-opus-legacy`
                 "claude-opus-4-5-20251101",
                 "claude-haiku-4-5-20251001",
                 "claude-sonnet-4-5-20250929",
+                "claude-opus-5-5",
             ]
         );
     }

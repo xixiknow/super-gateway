@@ -8,12 +8,13 @@ publish.workspace = true
 
 [features]
 default = []
-boring-backend = ["dep:boring", "dep:bytes", "dep:h2", "dep:http", "dep:serde_json", "dep:tokio-boring"]
+boring-backend = ["dep:boring", "dep:bytes", "dep:h2", "dep:http", "dep:serde_json", "dep:tokio-boring", "dep:gateway-policy"]
 
 [dependencies]
 boring = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 capture-schema = { path = "../capture-schema" }
+gateway-policy = { path = "../../../crates/gateway-policy", optional = true }
 h2 = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

@@ -158,6 +158,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "client_version",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Requests the published Codex model directory"
           }
         ],
         "responses": {
@@ -320,6 +328,636 @@
           }
         }
       }
+    },
+    "/v1/responses": {
+      "post": {
+        "operationId": "createResponse",
+        "summary": "OpenAI official API or Codex subscription request",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "stream": {
+                    "type": "boolean"
+                  },
+                  "previous_response_id": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "model"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Native JSON/SSE, or explicit Chat/Responses conversion for subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "403": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "409": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "500": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "504": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      },
+      "get": {
+        "operationId": "responsesWebSocket",
+        "summary": "One account-bound serial Responses WebSocket",
+        "responses": {
+          "101": {
+            "description": "Switching protocols; response.create frames are admitted per turn"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "operationId": "createChatCompletion",
+        "summary": "OpenAI official API or Codex subscription request",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "stream": {
+                    "type": "boolean"
+                  },
+                  "previous_response_id": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "model"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Native JSON/SSE, or explicit Chat/Responses conversion for subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "403": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "409": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "500": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "504": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/v1/responses/compact": {
+      "post": {
+        "operationId": "compactResponse",
+        "summary": "OpenAI official API or Codex subscription request",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "stream": {
+                    "type": "boolean"
+                  },
+                  "previous_response_id": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "model"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Native JSON/SSE, or explicit Chat/Responses conversion for subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "403": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "409": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "500": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "504": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/v1/models/{model}": {
+      "get": {
+        "operationId": "getModel",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAI model metadata",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/responses": {
+      "post": {
+        "operationId": "createResponseAliasresponses",
+        "summary": "OpenAI official API or Codex subscription request",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "stream": {
+                    "type": "boolean"
+                  },
+                  "previous_response_id": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "model"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Native JSON/SSE, or explicit Chat/Responses conversion for subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "403": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "409": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "500": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "504": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      },
+      "get": {
+        "operationId": "responsesWebSocketAliasresponses",
+        "summary": "One account-bound serial Responses WebSocket",
+        "responses": {
+          "101": {
+            "description": "Switching protocols; response.create frames are admitted per turn"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/responses/compact": {
+      "post": {
+        "operationId": "compactResponseAliasresponsescompact",
+        "summary": "OpenAI official API or Codex subscription request",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "stream": {
+                    "type": "boolean"
+                  },
+                  "previous_response_id": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "model"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Native JSON/SSE, or explicit Chat/Responses conversion for subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "403": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "409": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "500": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "504": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/chat/completions": {
+      "post": {
+        "operationId": "createChatCompletionAliaschatcompletions",
+        "summary": "OpenAI official API or Codex subscription request",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "stream": {
+                    "type": "boolean"
+                  },
+                  "previous_response_id": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "model"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Native JSON/SSE, or explicit Chat/Responses conversion for subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "403": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "409": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "500": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "503": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "504": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/models": {
+      "get": {
+        "operationId": "listModelsAliasmodels",
+        "summary": "List the Group published model snapshot",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "after_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/models/{model}": {
+      "get": {
+        "operationId": "getModelAliasmodelsmodel",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAI model metadata",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
+    },
+    "/backend-api/codex/models": {
+      "get": {
+        "operationId": "listModelsAliasbackendapicodexmodels",
+        "summary": "List the Group published model snapshot",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "after_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/DataError"
+          },
+          "429": {
+            "$ref": "#/components/responses/DataError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -360,8 +998,10 @@
                   "type": "string",
                   "enum": [
                     "user",
-                    "assistant"
-                  ]
+                    "assistant",
+                    "system"
+                  ],
+                  "description": "Mid-conversation system messages are supported by compatible models; preserve their original position."
                 },
                 "content": {}
               },
@@ -432,8 +1072,10 @@
                   "type": "string",
                   "enum": [
                     "user",
-                    "assistant"
-                  ]
+                    "assistant",
+                    "system"
+                  ],
+                  "description": "Mid-conversation system messages are supported by compatible models; preserve their original position."
                 },
                 "content": {}
               },
@@ -592,9 +1234,10 @@
   "x-public-route-policy": {
     "unknown_v1_requires_auth": true,
     "count_tokens_public": true,
-    "websocket": false,
+    "websocket": true,
     "providers": [
-      "anthropic_official"
+      "anthropic_official",
+      "openai_official"
     ]
   }
 }

@@ -74,22 +74,35 @@ cargo run -p transport-matrix -- --bundle var/real-capture/windows-2.1.241-fresh
 
 ### 自动采集真实 Claude Code
 
-完整的 2.1.245 发布入口在主工程目录执行：
+先在主工程目录执行离线预检（版本号按计划采集的版本填写）：
 
 ```powershell
-cargo run --manifest-path transport-poc/Cargo.toml `
+cargo run --locked --manifest-path transport-poc/Cargo.toml `
   -p spike-cli --all-features -- release-bundle `
+  --interactive `
   --claude-bin C:\Users\yangrs\.local\bin\claude.exe `
+  --expected-version 2.1.245 `
   --iterations 20 `
-  --output-dir transport-poc/var/real-capture/windows-2.1.245
+  --output-dir transport-poc/var/real-capture/windows-2.1.245 `
+  --preflight
 ```
+
+`--preflight` 只读取本地文件并核对参数、平台、哈希和续跑记录，不启动 Claude、不创建输出目录或签名密钥、不访问上游；首次 Cargo 构建可能需要下载依赖。预检中的客户端版本是期望值，真正采集前才执行版本命令核实。正式模式还会提前检查 Engine 文件；可用 `--engine-artifact PATH` 指定。
+
+决定开始采集后移除 `--preflight`。`--target` 可显式指定本机目标，必须与实际 OS/架构一致。Windows x64 支持完整 H1 发布；Linux/macOS 及其他支持的本机架构使用 `--evidence-only`，只输出配对证据和模板，正式签名与网关自动导入的跨平台支持仍待补齐。
 
 命令严格校验版本和 Claude 可执行文件 SHA-256，逐轮生成共享 capture run ID 的官方
 TLS/受控 Messages 证据，执行 20 轮稳定性、TLS/H1 Replay、取消验证和 Canary Audit，
 最后再用正式 `gateway-transport` 重放并生成 `SignedBundleEnvelope`。随机无效认证不会
-产生模型用量；Credential、Prompt、请求正文、Claude stdout/stderr 均不写入发布目录。
+产生模型用量；Credential、用户 Prompt、完整请求正文、Claude stdout/stderr 均不写入发布目录。
 输出的 `*.signed-bundle.json` 可在管理页直接上传；上传会从已验签的发布元数据登记新的
 verified Archetype，Bundle 激活仍是单独的治理动作，不会替换内置 2.1.241。
+
+新增 `reference/NN-system-template.json` 保存每轮静态 system 模板，绑定对应受控证据的 run ID、哈希及环境。模板只采用现有分段器识别的静态块，保留受支持的缓存标注；边界未解析、混入已知动态段或轮次间内容变化时停止。最终输出 `system_template.json` 和 `evidence-package.json`。模板独立于归一化 wire 证据，也未纳入签名 Bundle；需通过原型的 `system_template` 字段单独导入。
+
+续跑会核对版本、客户端与工具哈希、Engine、签名公钥、环境摘要、平台、启动模式和轮数；变化或旧格式记录需要新的输出目录。运行时清除继承的 `CLAUDE_CODE_ENTRYPOINT`。2.1.245 在 `-p` 或非 TTY 输出下会强制使用 `sdk-cli`；需要真实 `cli` 画像时，使用 `--interactive`，通过伪终端输入请求并对受控请求 UA 做断言。终端画面仅在内存解析；临时配置与交互会话文件随隔离目录清理。受控模式以实际收到请求、合成响应出现在终端及真实 UA 为成功条件，不伪造 JSONL assistant/result 事件。官方交互模式只支持合成认证的 TLS 证据。当前自动配对流程仍使用合成认证，**不代表真实 OAuth beta 集已验证**；三 OS 真实 OAuth 基线与激活验收仍属于 T4.1 后续工作。
+
+TLS 重放在取得完整 ClientHello 后返回采集结果，并继续透传握手，不再等待上游双向 EOF。Windows MSVC 下工具构建已自动设置足够的栈空间。
 
 Windows 下 BoringSSL/NASM 的中间构建路径使用 ASCII 目录。`controlled` 只连接本地合成 Messages 端点，不使用真实 Credential，也不产生 Anthropic 用量：
 

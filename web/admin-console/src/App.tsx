@@ -1,5 +1,6 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Drawer } from "./drawer";
+import { CopyRequestContent, RequestHeaders, RequestMetrics, requestClient, formatRequestDuration, formatRequestTime, type RequestCapture } from "./RequestContent";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
@@ -16,13 +17,15 @@ import {
   verifyMfa,
 } from "./api";
 import { ResourceActionButton, ResourceActionKey } from "./ResourceAction";
+import { OpenAiSettings } from "./OpenAiAccounts";
+import { AccountsPage } from "./AccountsPage";
 import { PlatformKeysTable } from "./PlatformKeys";
 import { UsersTable } from "./Users";
 import { ModelsTable } from "./ModelsTable";
 import { ArchetypeBundlePage } from "./ArchetypeBundles";
 import { GovernancePage } from "./GovernancePage";
 import { useToast } from "./feedback";
-import { RowActionDef, RowActionsCell } from "./row-actions";
+import { RowActionDef } from "./row-actions";
 import { useResourceRowActions } from "./resource-actions";
 import { TablePager, usePagination } from "./pagination";
 import { columnLabel, displayCell } from "./display";
@@ -30,6 +33,9 @@ import { LanguageSwitch, Locale, MessageKey, useI18n } from "./i18n";
 import { GalaxyTransition } from "./GalaxyTransition";
 import { SelectField } from "./select-field";
 import { Starfield } from "./Starfield";
+import { useTheme } from "./theme";
+import { CredentialsPage } from "./CredentialsPage";
+import { ErrorState, ResourceTable } from "./resource-table";
 
 type NavEntry = { path: string; labelKey: MessageKey; icon: string; adminOnly?: boolean; sectionKey: MessageKey };
 
@@ -37,8 +43,8 @@ const navigation: NavEntry[] = [
   { path: "/", labelKey: "nav.home", icon: "home", sectionKey: "nav.overview" },
   { path: "/users", labelKey: "nav.users", icon: "users", adminOnly: true, sectionKey: "nav.access" },
   { path: "/platform-keys", labelKey: "nav.platformKeys", icon: "key", sectionKey: "nav.access" },
-  { path: "/groups", labelKey: "nav.groups", icon: "layers", adminOnly: true, sectionKey: "nav.access" },
   { path: "/credentials", labelKey: "nav.credentials", icon: "shield", adminOnly: true, sectionKey: "nav.access" },
+  { path: "/accounts", labelKey: "nav.accounts", icon: "grid", adminOnly: true, sectionKey: "nav.access" },
   { path: "/egress", labelKey: "nav.egress", icon: "globe", adminOnly: true, sectionKey: "nav.traffic" },
   { path: "/models", labelKey: "nav.models", icon: "box", adminOnly: true, sectionKey: "nav.traffic" },
   { path: "/requests", labelKey: "nav.requests", icon: "activity", sectionKey: "nav.traffic" },
@@ -53,6 +59,23 @@ const navigation: NavEntry[] = [
 
 function Icon({ name }: { name: string }) {
   return <svg className="icon sm" aria-hidden="true"><use href={`#i-${name}`} /></svg>;
+}
+
+function ThemeToggle({ variant = "soft" }: { variant?: "soft" | "outline" }) {
+  const { theme, toggle } = useTheme();
+  const { t } = useI18n();
+  const label = theme === "dark" ? t("theme.toLight") : t("theme.toDark");
+  return (
+    <button
+      type="button"
+      className={`ibtn ${variant}${theme === "dark" ? " theme-dark" : " theme-light"}`}
+      aria-label={label}
+      title={label}
+      onClick={toggle}
+    >
+      <Icon name={theme === "dark" ? "sun" : "moon"} />
+    </button>
+  );
 }
 
 export function App() {
@@ -127,7 +150,7 @@ function LoginScreen() {
         <div className="signal-strip"><span /><span /><span /><small>{t("auth.ready")}</small></div>
       </section>
       <section className="login-panel">
-        <div className="login-topline"><LanguageSwitch /></div>
+        <div className="login-topline"><ThemeToggle variant="outline" /><LanguageSwitch /></div>
         <div>
           <div className="login-card card">
             <div className="login-steps" aria-hidden="true">
@@ -200,7 +223,7 @@ function SessionSetupScreen({ principal, initialStage }: { principal: Principal;
         <p className="story-copy">{t("setup.storyCopy")}</p>
       </section>
       <section className="login-panel">
-        <div className="login-topline"><LanguageSwitch /></div>
+        <div className="login-topline"><ThemeToggle variant="outline" /><LanguageSwitch /></div>
         <div className="login-card card">
           <div className="login-steps" aria-hidden="true">
             <span className={`lstep ${stage === "password-change" ? "on" : "done"}`}><i>{stage === "password-change" ? "01" : "✓"}</i>{t("setup.stepPassword")}</span>
@@ -241,7 +264,9 @@ function ConsoleShell({ principal }: { principal: Principal }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationDetail, setNotificationDetail] = useState<NotificationRecord | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const notificationAnchorRef = useRef<HTMLDivElement>(null);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
   const notifications = useQuery({ queryKey: ["notifications"], queryFn: () => api<NotificationRecord[]>("/admin/v1/notifications"), retry: false });
   const unreadCount = (notifications.data ?? []).filter((item) => !item.read_at).length;
   const allowedNavigation = useMemo(() => navigation.filter((item) => !item.adminOnly || principal.role === "platform_admin"), [principal.role]);
@@ -255,6 +280,19 @@ function ConsoleShell({ principal }: { principal: Principal }) {
     }
     return groups;
   }, [allowedNavigation]);
+  // ≤760px 汉堡抽屉:路由切换即收起;从窄屏跨回桌面时自动关闭
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(max-width: 760px)");
+    const sync = (event: MediaQueryListEvent) => {
+      if (!event.matches) setNavOpen(false);
+    };
+    query.addEventListener?.("change", sync);
+    return () => query.removeEventListener?.("change", sync);
+  }, []);
   useEffect(() => {
     if (!notificationsOpen && !notificationDetail) return;
     // Esc 优先关闭详情对话框，其次关闭通知浮层
@@ -287,21 +325,34 @@ function ConsoleShell({ principal }: { principal: Principal }) {
     document.addEventListener("keydown", handleShortcut);
     return () => document.removeEventListener("keydown", handleShortcut);
   }, []);
+  // 桌面侧栏与 ≤760px 汉堡抽屉共用同一份导航内容
+  const navBody = (
+    <>
+      <div className="brand"><div className="brand-mark small"><span>SG</span></div><div><b>SUPER GATEWAY</b><small>CONTROL TOWER</small></div></div>
+      <nav aria-label={t("shell.mainNav")}>
+        {sections.map((group) => <div key={group.sectionKey} role="group" aria-label={t(group.sectionKey)}><div className="nav-label">{t(group.sectionKey)}</div>{group.items.map((entry) => <NavLink key={entry.path} to={entry.path} end={entry.path === "/"} className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}><Icon name={entry.icon} /><span>{t(entry.labelKey)}</span></NavLink>)}</div>)}
+      </nav>
+      <div className="sidebar-foot"><span className="live-dot" />{t("shell.status")}</div>
+    </>
+  );
   return (
     <div className="console-shell">
       <a className="skip-link" href="#main-content">{t("shell.skip")}</a>
-      <aside className="sidebar">
-        <div className="brand"><div className="brand-mark small"><span>SG</span></div><div><b>SUPER GATEWAY</b><small>CONTROL TOWER</small></div></div>
-        <nav aria-label={t("shell.mainNav")}>
-          {sections.map((group) => <div key={group.sectionKey} role="group" aria-label={t(group.sectionKey)}><div className="nav-label">{t(group.sectionKey)}</div>{group.items.map((entry) => <NavLink key={entry.path} to={entry.path} end={entry.path === "/"} className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}><Icon name={entry.icon} /><span>{t(entry.labelKey)}</span></NavLink>)}</div>)}
-        </nav>
-        <div className="sidebar-foot"><span className="live-dot" />{t("shell.status")}</div>
-      </aside>
+      <aside className="sidebar">{navBody}</aside>
+      {navOpen && (
+        <Drawer title={t("shell.controlTower")} onRequestClose={() => setNavOpen(false)}>
+          <div className="sidebar in-drawer">{navBody}</div>
+        </Drawer>
+      )}
       <div className="workspace">
         <header className="topbar">
-          <div><p className="crumb">{t("shell.controlTower")} / <strong>{active ? t(active.labelKey) : t("shell.controlTower")}</strong> · UTC</p></div>
+          <div className="topbar-lead">
+            <button ref={navToggleRef} className="ibtn nav-toggle" type="button" aria-label={t("shell.menu")} aria-expanded={navOpen} onClick={() => setNavOpen(true)}><Icon name="menu" /></button>
+            <p className="crumb"><span className="crumb-prefix">{t("shell.controlTower")} / </span><strong>{active ? t(active.labelKey) : t("shell.controlTower")}</strong><span className="crumb-suffix"> · {active?.path === "/requests" ? "UTC+8" : "UTC"}</span></p>
+          </div>
           <div className="top-actions">
             <LanguageSwitch compact />
+            <ThemeToggle />
             <button className="search-pill" type="button" aria-label={t("shell.search")} onClick={() => setSearchOpen(true)}><Icon name="search" /><span>{t("shell.searchPlaceholder")}</span><kbd>⌘K</kbd></button>
             <div className="notification-anchor" ref={notificationAnchorRef}>
               <button className={`ibtn soft ${notificationsOpen ? "on" : ""}`} type="button" aria-label={t("shell.alertCenter")} aria-expanded={notificationsOpen} aria-controls="notification-popover" onClick={() => setNotificationsOpen((open) => !open)}><Icon name="bell" />{unreadCount > 0 && <i className="ib-dot" />}</button>
@@ -314,13 +365,15 @@ function ConsoleShell({ principal }: { principal: Principal }) {
         <main id="main-content" className="main-content" tabIndex={-1}>
           <Routes>
             <Route index element={<Dashboard principal={principal} />} />
-            <Route path="groups" element={<ManagedResourcePage principal={principal} path="/groups" titleKey="nav.groups" eyebrowKey="groups.eyebrow" apiPath="/admin/v1/groups" action="group" descriptionKey="groups.description" columns={["name", "status", "credential_count", "credential_available", "credential_abnormal", "egress_mode", "model_scope", "month_tokens", "month_amount", "last_success_at"]} />} />
-            <Route path="credentials" element={<ManagedResourcePage principal={principal} path="/credentials" titleKey="nav.credentials" eyebrowKey="credentials.eyebrow" apiPath="/admin/v1/credentials" action="credential" descriptionKey="credentials.description" columns={["account_uuid", "purpose", "auth_kind", "lifecycle_state", "scheduling_state", "updated_at"]} archivedKey="lifecycle_state" />} />
+            {/* 凭据分组已并入凭据页:旧 /groups 路由重定向 */}
+            <Route path="groups" element={<Navigate to="/credentials" replace />} />
+            <Route path="credentials" element={<CredentialsPage principal={principal} />} />
+            <Route path="accounts" element={<AccountsPage principal={principal} />} />
             <Route path="requests" element={<RequestUsagePage />} />
             <Route path="exports" element={<ExportsPage />} />
             <Route path="bundles" element={<ArchetypeBundlePage />} />
             <Route path="governance" element={<GovernancePage />} />
-            {allowedNavigation.filter((entry) => !["/", "/groups", "/credentials", "/requests", "/exports", "/bundles", "/governance"].includes(entry.path)).map((entry) => <Route key={entry.path} path={entry.path.slice(1)} element={<ResourcePage entry={entry} principal={principal} />} />)}
+            {allowedNavigation.filter((entry) => !["/", "/credentials", "/accounts", "/requests", "/exports", "/bundles", "/governance"].includes(entry.path)).map((entry) => <Route key={entry.path} path={entry.path.slice(1)} element={<ResourcePage entry={entry} principal={principal} />} />)}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
@@ -431,7 +484,7 @@ function Dashboard({ principal }: { principal: Principal }) {
       <section className="metric-grid" aria-label={t("dashboard.metrics")}><Metric label={t("dashboard.currentRequests")} value={metricValue(activeRequests)} note={t("dashboard.resourceAxis")} tone="teal" /><Metric label={t("dashboard.streaming")} value={metricValue(streaming)} note="SSE delivery" tone="sky" /><Metric label={t("dashboard.completed")} value={metricValue(count("completed"))} note={t("dashboard.deliveredBytes", { value: count("delivered_bytes").toLocaleString() })} tone="amber" /><Metric label={t("dashboard.anomalies")} value={metricValue(anomalies)} note={t("dashboard.adminReview")} tone="coral" /></section>
       <section className="split-grid">
         <div className="card pad signal-card"><div className="section-head"><div><p className="eyebrow">{t("dashboard.callChain")}</p><h2>{t("dashboard.entryUpstream")}</h2></div><span className="tag t-teal dotled">{t("dashboard.transparent")}</span></div><div className="pipeline"><span>CLIENT</span><i /><span>EDGE</span><i /><span>EXECUTOR</span><i /><span>TRANSPORT</span><i /><span>ANTHROPIC</span></div><div className="timeline compact"><div className="tl-item ok"><b>{t("dashboard.headerBoundary")}</b><p>{t("dashboard.headerBoundaryBody")}</p></div><div className="tl-item ok"><b>{t("dashboard.rawPass")}</b><p>{t("dashboard.rawPassBody")}</p></div><div className="tl-item warn"><b>{t("dashboard.externalEvidence")}</b><p>{t("dashboard.externalEvidenceBody")}</p></div></div></div>
-        <div className="card pad"><div className="section-head"><div><p className="eyebrow">{t("dashboard.attention")}</p><h2>{t("dashboard.runtimeTips")}</h2></div><NavLink className="tbtn" to="/operations">{t("dashboard.viewAll")}</NavLink></div><ul className="attention-list"><li><span className="tag t-amber">EVIDENCE</span><div><b>{t("dashboard.transportGate")}</b><small>{t("dashboard.transportGateBody")}</small></div><time>{t("dashboard.continuous")}</time></li><li><span className="tag t-sky">PLAN</span><div><b>{t("dashboard.planDisplay")}</b><small>{t("dashboard.planDisplayBody")}</small></div><time>{t("dashboard.rule")}</time></li><li><span className="tag t-teal">SECURE</span><div><b>{t("dashboard.auditChain")}</b><small>{t("dashboard.auditChainBody")}</small></div><time>{t("dashboard.normal")}</time></li></ul></div>
+        <div className="card pad"><div className="section-head"><div><p className="eyebrow">{t("dashboard.attention")}</p><h2>{t("dashboard.runtimeTips")}</h2></div><NavLink className="tbtn" to="/operations">{t("dashboard.viewAll")}</NavLink></div><ul className="attention-list"><li><span className="tag t-amber">EVIDENCE</span><div><b>{t("dashboard.transportGate")}</b><small>{t("dashboard.transportGateBody")}</small></div><time>{t("dashboard.continuous")}</time></li><li><span className="tag t-sky">PLAN</span><div><b>{t("dashboard.planDisplay")}</b><small>{t("dashboard.planDisplayBody")}</small></div><time>{t("dashboard.rule")}</time></li></ul></div>
       </section>
     </div>
   );
@@ -439,26 +492,6 @@ function Dashboard({ principal }: { principal: Principal }) {
 
 function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone: string }) {
   return <article className={`scard metric ${tone}`}><div className="sh"><span>{label}</span><span className={`signal ${tone}`} /></div><div className="sn">{value}</div><div className="sm">{note}</div></article>;
-}
-
-function ManagedResourcePage({ principal, path, titleKey, eyebrowKey, apiPath, action, descriptionKey, columns, archivedKey }: { principal: Principal; path: string; titleKey: MessageKey; eyebrowKey: MessageKey; apiPath: string; action: ResourceActionKey; descriptionKey: MessageKey; columns: string[]; archivedKey?: string }) {
-  const { t } = useI18n();
-  const title = t(titleKey);
-  const result = useQuery({ queryKey: [apiPath], queryFn: () => api<unknown[]>(apiPath), retry: false });
-  const { rowActions, rowDialogs } = useResourceRowActions(path, principal);
-  // 后端列表暂无生命周期过滤参数,已归档记录默认在客户端隐藏,可切换查看
-  const [includeArchived, setIncludeArchived] = useState(false);
-  const items = archivedKey && !includeArchived
-    ? result.data?.filter((item) => !(typeof item === "object" && item !== null && (item as Record<string, unknown>)[archivedKey] === "archived"))
-    : result.data;
-  const toolbar = <>
-    {archivedKey && <div className="segmented" role="group" aria-label={t("table.filter")}>
-      <button type="button" className={!includeArchived ? "active" : ""} onClick={() => setIncludeArchived(false)}>{t("table.activeOnly")}</button>
-      <button type="button" className={includeArchived ? "active" : ""} onClick={() => setIncludeArchived(true)}>{t("table.includeArchived")}</button>
-    </div>}
-    <ResourceActionButton action={action} iconOnly />
-  </>;
-  return <div className="page-stack"><header className="page-heading"><div><p className="eyebrow mono">{t(eyebrowKey)}</p><h1>{title}</h1><p>{t(descriptionKey)}</p></div></header>{result.isError && <ErrorState error={result.error} />}<ResourceTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} columnKeys={columns} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />{rowDialogs}</div>;
 }
 
 interface TimeseriesBucket extends Record<string, unknown> {
@@ -507,6 +540,40 @@ function UsageChart({ points }: { points: TimeseriesBucket[] }) {
   );
 }
 
+interface RequestRecord extends Record<string, unknown> {
+  id: string;
+  platform_key_name: string | null;
+  group_name: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
+  client_class: string;
+  client_name: string | null;
+  client_version: string | null;
+  request_type: "streaming" | "sync" | "websocket" | null;
+  first_content_ms: number | null;
+  duration_ms: number | null;
+  tps: number | null;
+  tps_estimated: boolean;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_input_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+}
+
+const requestColumns = ["created_at", "platform_key_name", "group_name", "model", "reasoning_effort", "client_class", "request_type", "token_usage", "request_timing", "usage_completeness"];
+const requestDetailColumns = [...requestColumns.filter((key) => key !== "token_usage" && key !== "request_timing"), "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "endpoint", "http_status", "first_content_ms", "duration_ms", "tps", "phase", "outcome", "completed_at"];
+
+function requestCell(key: string, value: unknown, locale: Locale, record: Record<string, unknown> = {}): string {
+  if (key === "client_class") return requestClient(record, locale);
+  if (value == null) return "—";
+  if (["created_at", "completed_at"].includes(key)) return formatRequestTime(value);
+  if (["platform_key_name", "group_name", "model", "reasoning_effort"].includes(key)) return String(value);
+  if (key === "first_content_ms" || key === "duration_ms") return formatRequestDuration(value);
+  if (key === "tps" && typeof value === "number") return `${value.toFixed(1)} token/s`;
+  if (key === "request_type") return ({ streaming: locale === "zh-CN" ? "\u6d41\u5f0f" : "Streaming", sync: locale === "zh-CN" ? "\u540c\u6b65" : "Synchronous", websocket: "WebSocket" } as Record<string, string>)[String(value)] ?? String(value);
+  return displayCell(value, locale);
+}
+
 interface AttemptMessages {
   ordinal: number | null;
   reason: string | null;
@@ -532,36 +599,40 @@ function formatRequestBody(value: unknown): string {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
-function RequestDetailDialog({ requestId, onClose }: { requestId: string; onClose(): void }) {
+function RequestDetailDrawer({ requestId, onClose }: { requestId: string; onClose(): void }) {
   const { locale, t } = useI18n();
   const [bodyTab, setBodyTab] = useState<"original_request" | "policy_request" | "final_upstream_request" | "upstream_response" | "upstream_response_final">("original_request");
   const detailEndpoint = `/admin/v1/requests/${encodeURIComponent(requestId)}`;
   const detail = useQuery({ queryKey: [detailEndpoint], queryFn: () => api<Record<string, unknown>>(detailEndpoint), retry: false });
   const attempts = useQuery({ queryKey: [`${detailEndpoint}/attempts`], queryFn: () => api<AttemptRecord[]>(`${detailEndpoint}/attempts`), retry: false });
-  const body = useQuery({ queryKey: [`${detailEndpoint}/body`], queryFn: () => api<Record<string, unknown>>(`${detailEndpoint}/body`), retry: false });
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+  const body = useQuery({ queryKey: [`${detailEndpoint}/body`], queryFn: () => api<RequestCapture>(`${detailEndpoint}/body`), retry: false });
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const preview = useQuery({ queryKey: [`${detailEndpoint}/preview`], queryFn: () => api<Record<string, unknown>>(`${detailEndpoint}/preview`), enabled: previewOpen, retry: false });
   const record = detail.data ?? {};
-  const fields = Object.entries(record).filter(([, value]) => value === null || typeof value !== "object").slice(0, 12);
+  const fields = requestDetailColumns.map((key) => [key, record[key]] as const);
   const rows = (attempts.data ?? []).filter((item): item is AttemptRecord => typeof item === "object" && item !== null);
-  return createPortal(
-    <div className="overlay show" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="modal request-detail-modal" role="dialog" aria-modal="true" aria-labelledby="request-detail-title">
-        <div className="modal-head"><div><p className="eyebrow mono">REQUEST / TIMELINE</p><h3 id="request-detail-title">{t("request.detailTitle")}</h3><p className="muted mono breakable">{requestId}</p></div><button type="button" className="ibtn outline" aria-label={t("common.close")} onClick={onClose}>×</button></div>
-        <div className="modal-body">
+  return <Drawer eyebrow="REQUEST / TIMELINE" title={t("request.detailTitle")} subtitle={requestId}
+    className="request-detail-drawer" onRequestClose={onClose}
+    foot={<button type="button" className="btn btn-ghost" onClick={onClose}>{t("common.close")}</button>}>
           {detail.isLoading ? <div className="loading-lines"><span className="skel line" /><span className="skel line" /></div>
             : detail.isError ? <div className="alert alert-warn" role="alert"><Icon name="alert" /><div><div className="at">{t("error.loadTitle")}</div></div></div>
-              : <dl className="key-data-grid">{fields.map(([key, value]) => <div key={key}><dt>{columnLabel(key, locale)}</dt><dd className="mono breakable">{displayCell(value, locale)}</dd></div>)}</dl>}
+              : <dl className="key-data-grid">{fields.map(([key, value]) => <div key={key}><dt>{columnLabel(key, locale)}</dt><dd className="mono breakable">{requestCell(key, value, locale, record)}</dd></div>)}</dl>}
           <section className="request-body-panel">
-            <div className="section-head"><div><p className="eyebrow mono">REQUEST / BODY</p><h4>{t("request.bodyTitle")}</h4></div>{body.data?.body_digest_mismatch === true && <span className="tag t-amber">{t("request.bodyMismatch")}</span>}</div>
+            <div className="section-head"><div><p className="eyebrow mono">REQUEST / BODY</p><h4>{t("request.bodyTitle")}</h4></div><div className="section-actions"><CopyRequestContent text={body.data?.[bodyTab] == null ? null : formatRequestBody(body.data[bodyTab])} label={t(`request.body.${bodyTab}`)} />{body.data?.body_digest_mismatch === true && <span className="tag t-amber">{t("request.bodyMismatch")}</span>}<button type="button" className="btn btn-ghost" onClick={() => setPreviewOpen((value) => !value)}>{previewOpen ? t("request.preview.hide") : t("request.preview.open")}</button></div></div>
             <div className="segmented local request-body-tabs">
               {(["original_request", "policy_request", "final_upstream_request", "upstream_response", "upstream_response_final"] as const).map((tab) => <button key={tab} type="button" className={bodyTab === tab ? "active" : ""} onClick={() => setBodyTab(tab)}>{t(`request.body.${tab}` as MessageKey)}</button>)}
             </div>
-            {body.isLoading ? <div className="loading-lines"><span className="skel line" /></div> : body.isError ? <p className="muted">{t("request.bodyUnavailable")}</p> : <pre className="request-body-content">{formatRequestBody(body.data?.[bodyTab])}</pre>}
+            {body.isLoading ? <div className="loading-lines"><span className="skel line" /></div> : body.isError ? (body.error instanceof ApiError && body.error.status === 404
+              ? <p className="muted">{t("request.bodyUnavailable")}</p> : <ErrorState error={body.error} />)
+              : body.data?.capture_status === "unavailable" ? <div className="request-body-empty">
+                <p>{t("request.bodyUnavailable")}</p>
+                <p className="muted">{t(body.data.capture_enabled === false ? "request.captureDisabled" : "request.captureEnabled")}</p>
+                <p className="muted">{t("request.captureLimits", { days: Number(body.data.retention_days), bytes: Number(body.data.max_bytes).toLocaleString(locale) })}</p>
+              </div> : body.data?.[bodyTab] == null ? <p className="muted">{t("request.bodyStageUnavailable")}</p>
+                : <pre className="request-body-content">{formatRequestBody(body.data?.[bodyTab])}</pre>}
+            {previewOpen && <section className="request-preview-panel"><div className="section-head"><div><p className="eyebrow mono">REQUEST / PREVIEW</p><h4>{t("request.preview.title")}</h4></div><div className="section-actions"><span className="tag t-amber">{t("request.preview.simulated")}</span><CopyRequestContent text={preview.data?.preview_status === "available" ? formatRequestBody(preview.data) : null} label={t("request.preview.title")} /></div></div>{preview.isLoading ? <div className="loading-lines"><span className="skel line" /></div> : preview.isError ? <ErrorState error={preview.error} /> : preview.data?.preview_status === "missing_capture" ? <p className="muted">{t("request.preview.unavailable")}</p> : <><p className="muted">{t("request.previewScope")}</p><pre className="request-body-content">{formatRequestBody(preview.data)}</pre></>}</section>}
           </section>
+          <RequestHeaders capture={body.data} loading={body.isLoading} failed={body.isError} />
           <h4 className="request-timeline-heading">{t("request.timeline")}</h4>
           {attempts.isLoading ? <div className="loading-lines"><span className="skel line" /><span className="skel line" /></div>
             : attempts.isError ? <div className="alert alert-warn" role="alert"><Icon name="alert" /><div><div className="at">{t("error.loadTitle")}</div></div></div>
@@ -571,17 +642,12 @@ function RequestDetailDialog({ requestId, onClose }: { requestId: string; onClos
                   const success = messages?.state === "succeeded" || item.state === "succeeded";
                   const failed = messages?.state === "failed" || item.state === "failed";
                   return <div key={item.id} className={`tl-item ${success ? "ok" : failed ? "err" : "warn"}`}>
-                    <div className="tl-time mono">{new Date(item.started_at).toLocaleString(locale)}</div>
+                    <div className="tl-time mono">{formatRequestTime(item.started_at)}</div>
                     <div className="tl-title">{t("request.connectionAttempt")} #{item.ordinal} · {displayCell(item.state, locale)}{messages?.http_status ? ` · HTTP ${messages.http_status}` : ""}</div>
                     <div className="tl-desc">{displayCell(item.intent_state, locale)}{messages ? ` · ${t("request.messagesAttempt")} ${displayCell(messages.state, locale)}${messages.retry_decision ? ` · ${displayCell(messages.retry_decision, locale)}` : ""}` : ""}</div>
                   </div>;
                 })}</div>}
-        </div>
-        <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>{t("common.close")}</button></div>
-      </section>
-    </div>,
-    document.body,
-  );
+  </Drawer>;
 }
 
 function RequestUsagePage() {
@@ -591,18 +657,17 @@ function RequestUsagePage() {
   const [completeness, setCompleteness] = useState("");
   const [appliedFilters, setAppliedFilters] = useState({ query: "", completeness: "" });
   const [detailId, setDetailId] = useState<string | null>(null);
-  const requests = useQuery({ queryKey: ["requests"], queryFn: () => api<unknown[]>("/admin/v1/requests"), enabled: view === "requests" });
+  const requests = useQuery({ queryKey: ["requests"], queryFn: () => api<RequestRecord[]>("/admin/v1/requests"), enabled: view === "requests" });
   const usage = useQuery({ queryKey: ["usage-summary"], queryFn: () => api<Record<string, unknown>>("/admin/v1/usage/summary"), enabled: view === "analytics" });
   const timeseries = useQuery({ queryKey: ["/admin/v1/usage/timeseries"], queryFn: () => api<TimeseriesBucket[]>("/admin/v1/usage/timeseries"), enabled: view === "analytics" });
   const filteredRequests = (requests.data ?? [])
-    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
     .filter((record) => {
       const id = String(record.request_id ?? record.id ?? "").toLocaleLowerCase();
       const state = String(record.completeness ?? record.usage_completeness ?? "");
       return (!appliedFilters.query || id.includes(appliedFilters.query.toLocaleLowerCase()))
         && (!appliedFilters.completeness || state === appliedFilters.completeness);
     })
-    .map((record) => ({ ...record, id: String(record.request_id ?? record.id ?? "") }));
+    .map((record) => ({ ...Object.fromEntries(requestColumns.map((key) => [key, null])), ...record, token_usage: true, id: String(record.request_id ?? record.id ?? "") }));
   const requestRowActions: RowActionDef<Record<string, unknown>>[] = [
     { key: "detail", labelKey: "request.viewDetail", icon: "activity", primary: true, requiresRevision: false, custom: (row) => setDetailId(String(row.id)) },
   ];
@@ -614,7 +679,9 @@ function RequestUsagePage() {
     {view === "requests" && <>
       <form className="filter-rail" onSubmit={(event) => { event.preventDefault(); setAppliedFilters({ query: requestQuery.trim(), completeness }); }}><div className="field"><label htmlFor="search-request">{t("request.searchId")}</label><input id="search-request" className="inp" value={requestQuery} onChange={(event) => setRequestQuery(event.target.value)} placeholder={t("request.searchPlaceholder")} /></div><div className="field"><label htmlFor="usage-state">{t("request.completeness")}</label><SelectField id="usage-state" value={completeness} onChange={setCompleteness} options={[{ value: "", label: t("request.all") }, { value: "complete", label: t("request.complete") }, { value: "partial", label: t("request.partial") }, { value: "unknown", label: t("request.unknown") }]} /></div><button type="submit" className="btn btn-ghost">{t("request.apply")}</button></form>
       {requests.error && <ErrorState error={requests.error} />}
-      <ResourceTable loading={requests.isLoading} items={filteredRequests} title={t("request.detail")} rowActions={requestRowActions} onRefresh={() => void requests.refetch()} refreshing={requests.isFetching} toolbar={<ResourceActionButton action="export" iconOnly />} />
+      <ResourceTable tableClassName="requests-table" loading={requests.isLoading} items={filteredRequests} title={t("request.detail")} columnKeys={requestColumns} renderCell={(column, record) => column === "token_usage"
+        ? <dl className="request-token-grid">{([ ["input_tokens", "read"], ["output_tokens", "write"], ["cache_read_input_tokens", "cacheRead"], ["cache_creation_input_tokens", "cacheWrite"] ] as const).map(([key, label]) => <div key={key}><dt>{t(`request.tokens.${label}`)}</dt><dd>{typeof record[key] === "number" ? record[key].toLocaleString(locale) : "—"}</dd></div>)}</dl>
+        : column === "request_timing" ? <RequestMetrics record={record} /> : requestCell(column, record[column], locale, record)} rowActions={requestRowActions} onRefresh={() => void requests.refetch()} refreshing={requests.isFetching} toolbar={<ResourceActionButton action="export" iconOnly />} />
     </>}
     {view === "analytics" && <>
       {(usage.error ?? timeseries.error) && <ErrorState error={(usage.error ?? timeseries.error) as Error} />}
@@ -627,7 +694,7 @@ function RequestUsagePage() {
       {chartPoints.length > 0 && <section className="card pad usage-chart-card"><div className="section-head"><div><p className="eyebrow mono">USAGE / DAILY</p><h2>{t("usage.chartTitle")}</h2></div><span className="tag t-gray">{t("usage.chartWindow", { count: chartPoints.length })}</span></div><UsageChart points={chartPoints} /></section>}
       <ResourceTable loading={timeseries.isLoading} items={timeseries.data} title={t("usage.chartTitle")} columnKeys={["bucket_start", "request_count", "input_tokens", "output_tokens", "estimated_amount", "completeness"]} onRefresh={() => { void usage.refetch(); void timeseries.refetch(); }} refreshing={usage.isFetching || timeseries.isFetching} toolbar={<ResourceActionButton action="export" iconOnly />} />
     </>}
-    {detailId && <RequestDetailDialog requestId={detailId} onClose={() => setDetailId(null)} />}
+    {detailId && <RequestDetailDrawer requestId={detailId} onClose={() => setDetailId(null)} />}
   </div>;
 }
 
@@ -668,7 +735,7 @@ function ResourcePage({ entry, principal }: { entry: NavEntry; principal: Princi
       : entry.path === "/models"
         ? <ModelsTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />
         : <ResourceTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} columnKeys={recommendedColumns[entry.path]} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />;
-  return <div className="page-stack"><header className="page-heading"><div><p className="eyebrow mono">{t("resource.eyebrow")}</p><h1>{title}</h1><p>{t("resource.description")}</p></div></header>{result.isError && <ErrorState error={result.error} />}{entry.path === "/operations" && <><BodyCaptureSettingsPanel /><RuntimeSettingsPanel /></>}{endpoint === null && <div className="alert alert-warn"><Icon name="alert" /><div><div className="at">{t("resource.onDemand")}</div><div className="ad">{t("resource.onDemandBody")}</div></div></div>}{table}{rowDialogs}</div>;
+  return <div className="page-stack"><header className="page-heading"><div><p className="eyebrow mono">{t("resource.eyebrow")}</p><h1>{title}</h1><p>{t("resource.description")}</p></div></header>{result.isError && <ErrorState error={result.error} />}{entry.path === "/operations" && <><OpenAiSettings /><BodyCaptureSettingsPanel /><RuntimeSettingsPanel /></>}{endpoint === null && <div className="alert alert-warn"><Icon name="alert" /><div><div className="at">{t("resource.onDemand")}</div><div className="ad">{t("resource.onDemandBody")}</div></div></div>}{table}{rowDialogs}</div>;
 }
 
 function BodyCaptureSettingsPanel() {
@@ -731,7 +798,7 @@ function ExportsPage() {
       <div className="cardbar"><div className="cbl"><h2>{t("nav.exports")}</h2><span className="tag t-gray">{t("export.oneTime")}</span></div><div className="cbr"><ResourceActionButton action="export" iconOnly /><button className={`ibtn outline${result.isFetching ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={result.isFetching} onClick={() => void result.refetch()}><Icon name="refresh" /></button></div></div>
       {result.isLoading ? <div className="loading-lines"><span className="skel title" /><span className="skel line" /><span className="skel line" /></div>
         : records.length === 0 ? <div className="empty"><div className="empty-orbit"><Icon name="download" /></div><h3>{t("export.emptyTitle")}</h3><p>{t("export.emptyBody")}</p></div>
-          : <><div className="tbl-wrap"><table className="tbl"><caption className="sr-only">{t("table.caption", { title: t("nav.exports"), count: records.length })}</caption>
+          : <><div className="tbl-wrap"><table className="tbl exports-table"><caption className="sr-only">{t("table.caption", { title: t("nav.exports"), count: records.length })}</caption>
             <thead><tr><th scope="col">{t("export.column.dataset")}</th><th scope="col">{t("action.export.format")}</th><th scope="col">{t("action.export.scope")}</th><th scope="col">{t("export.column.state")}</th><th scope="col">{t("export.column.created")}</th><th scope="col">{t("export.column.completed")}</th><th scope="col">{t("export.column.rows")}</th><th scope="col" className="row-actions-heading">{t("table.actions")}</th></tr></thead>
             <tbody>{pager.pageRows.map((item) => <tr key={item.id}>
               <td className="mono">{item.dataset}</td>
@@ -747,19 +814,4 @@ function ExportsPage() {
             </tr>)}</tbody></table></div><TablePager page={pager.page} pageCount={pager.pageCount} total={pager.total} onPage={pager.setPage} /></>}
     </section>
   </div>;
-}
-
-function ResourceTable({ loading, items, title, rowActions, columnKeys, onRefresh, refreshing = false, toolbar }: { loading: boolean; items?: unknown[]; title: string; rowActions?: RowActionDef<Record<string, unknown>>[]; columnKeys?: string[]; onRefresh?: () => void; refreshing?: boolean; toolbar?: ReactNode }) {
-  const { locale, t } = useI18n();
-  const records = (items ?? []).filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null);
-  const columns = (columnKeys && columnKeys.length > 0) ? columnKeys.filter((key) => records.some((record) => key in record)) : Array.from(new Set(records.flatMap((record) => Object.keys(record)))).slice(0, 6);
-  const pager = usePagination(records);
-  return <section className="card table-card" aria-busy={loading}><div className="cardbar"><div className="cbl"><h2>{title}</h2><span className="tag t-gray">{t("table.stableSort")}</span></div><div className="cbr">{toolbar}{onRefresh && <button className={`ibtn outline${refreshing ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={refreshing} onClick={onRefresh}><Icon name="refresh" /></button>}</div></div>{loading ? <div className="loading-lines"><span className="skel title" /><span className="skel line" /><span className="skel line" /></div> : records.length === 0 ? <div className="empty"><div className="empty-orbit"><Icon name="inbox" /></div><h3>{t("table.emptyTitle")}</h3><p>{t("table.emptyBody")}</p></div> : <><div className="tbl-wrap"><table className="tbl"><caption className="sr-only">{t("table.caption", { title, count: records.length })}</caption><thead><tr>{columns.map((column) => <th key={column} scope="col">{columnLabel(column, locale)}</th>)}{rowActions && rowActions.length > 0 && <th scope="col" className="row-actions-heading">{t("table.actions")}</th>}</tr></thead><tbody>{pager.pageRows.map((record, index) => <tr key={String(record.id ?? index)}>{columns.map((column) => <td key={column} className="mono">{displayCell(record[column], locale)}</td>)}{rowActions && rowActions.length > 0 && <td><RowActionsCell row={record} actions={rowActions} /></td>}</tr>)}</tbody></table></div><TablePager page={pager.page} pageCount={pager.pageCount} total={pager.total} onPage={pager.setPage} /></>}</section>;
-}
-
-function ErrorState({ error }: { error: Error }) {
-  const { t } = useI18n();
-  const status = error instanceof ApiError ? error.status : 0;
-  const message = error instanceof ApiError && error.message === "request_failed" ? t("common.requestFailed") : error.message;
-  return <div className="alert alert-warn" role="alert"><Icon name="alert" /><div><div className="at">{t("error.loadTitle")}</div><div className="ad">{status ? t("common.http", { status, message }) : message}</div></div></div>;
 }

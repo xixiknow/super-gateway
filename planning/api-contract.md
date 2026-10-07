@@ -743,7 +743,6 @@ User 响应字段固定为：`id`、`username`、`display_name`、`email`、`rol
 | POST | `/admin/v1/platform-keys/{id}:reactivate` | 恢复 |
 | POST | `/admin/v1/platform-keys/{id}:revoke` | 永久吊销 |
 | GET | `/admin/v1/platform-keys/{id}/config-versions` | 配置历史 |
-| GET | `/admin/v1/platform-keys/{id}/audit-events` | Key 范围审计 |
 | GET | `/admin/v1/platform-keys/{id}/client-config` | 生成不含 secret 的客户端配置模板 |
 
 ### 23.2 创建与返回字段
@@ -869,7 +868,9 @@ Key Owner 只可查询和操作本人 Key，并可创建 owner 为自己的 Key�
 | POST | `/admin/v1/credentials/{id}:archive` | 归档 |
 | POST | `/admin/v1/credentials/{id}:refresh-token` | 手工触发 Token refresh Job |
 | POST | `/admin/v1/credentials/{id}:refresh-plan` | 手工刷新展示用 PLAN |
-| POST | `/admin/v1/credentials/{id}:clear-cooldown` | 明确清除 cooldown |
+| POST | `/admin/v1/credentials/{id}:clear-cooldown` | 明确清除 cooldown，含账号级拒绝 blocked 恢复与 last_error 清除 |
+| POST | `/admin/v1/credentials/{id}:probe-usage` | 主动探测 OAuth 账号官方 5h/7d 用量窗口并按观测落库 |
+| GET | `/admin/v1/credentials/{id}/usage` | 按凭证聚合的用量概览、按日历史与按模型分解 |
 | POST | `/admin/v1/credentials/{id}:begin-recovery` | 从 `manual_recovery_required` 开始恢复 |
 | POST | `/admin/v1/credentials/{id}:migrate-group` | 排空后迁移至目标 Group |
 | POST | `/admin/v1/credentials/{id}:rebind-egress` | 重绑出口并原子增加 profile epoch 与 egress epoch |
@@ -981,9 +982,20 @@ Bundle 创建/上传 DTO 必须携带唯一 `source_archetype_version_id`、capt
 | GET | `/admin/v1/requests` | 请求与使用记录统一列表 |
 | GET | `/admin/v1/requests/{id}` | 阶段、attempt、usage、成本与错误 |
 | GET | `/admin/v1/requests/{id}/attempts` | ConnectionAttempt 与 Messages Attempt |
-| GET | `/admin/v1/requests/{id}/body` | 请求三阶段正文与上游响应正文 |
+| GET | `/admin/v1/requests/{id}/body` | 请求三阶段正文、上游响应正文，以及原始入站/最终上行/上游响应三组脱敏 Header |
+| GET | `/admin/v1/requests/{id}/preview` | 基于已采集正文的无凭据重组预览，返回单对象，不发送上游请求 |
 | GET | `/admin/v1/usage/summary` | 时间、User、Key、Group、Credential、模型聚合 |
 | GET | `/admin/v1/usage/timeseries` | 使用量与估算成本时序 |
+| GET | `/admin/v1/usage/today-by-credential` | 当日按 Credential 聚合的请求、token 与估算成本 |
+| GET、POST | `/admin/v1/openai/accounts` | OpenAI 账号列表和加密导入，导入后默认停用 |
+| GET、PUT | `/admin/v1/groups/{id}/openai-policy` | OpenAI 分组推理强度上限与超限行为，使用分组修订号 |
+| POST | `/admin/v1/openai/oauth-sessions` | 开始 OpenAI PKCE 浏览器授权 |
+| POST | `/admin/v1/openai/oauth-sessions/{id}:complete` | 提交授权回调 code 与 state，单次兑换并加密导入 |
+| POST | `/admin/v1/openai/accounts/{id}:refresh` | 立即刷新 OAuth 令牌，单账号互斥 |
+| POST | `/admin/v1/openai/accounts/{id}:test` | 固定出口连接验证，订阅账号身份和额度快照核验，结果按修订号提交 |
+| PATCH | `/admin/v1/openai/accounts/{id}` | 更新账号名称、启停、并发、优先级、模型和 WebSocket 设置；启用需连接验证 |
+| GET | `/admin/v1/openai/accounts/{id}/usage` | 按账号聚合的用量概览、按日历史与按模型分解 |
+| GET、PUT | `/admin/v1/settings/openai` | OpenAI 全局设置，更新需 If-Match |
 | GET | `/admin/v1/settings/body-capture` | 正文采集设置 |
 | PUT | `/admin/v1/settings/body-capture` | 更新正文采集设置 |
 | GET | `/admin/v1/settings/runtime` | 运行时阈值设置（价格同步周期、第三方拒绝告警阈值） |
@@ -992,6 +1004,8 @@ Bundle 创建/上传 DTO 必须携带唯一 `source_archetype_version_id`、capt
 | POST | `/admin/v1/exports` | 创建导出 |
 | GET | `/admin/v1/exports/{id}` | Job 状态 |
 | GET | `/admin/v1/exports/{id}/download` | 短期一次性下载 |
+
+请求列表与详情的展示指标包含 `client_name`、`client_version`、`request_type`（`streaming / sync / websocket`）、`first_content_ms`、`duration_ms`、`tps` 和 `tps_estimated`。客户端信息来自实际入站 User-Agent，独立于正文采集。首字为首次非空文本、思考或工具参数输出；总耗时从入站至下行交付结束，WebSocket 按每次 `response.create` 计算。流式与 WebSocket 的 TPS 为输出 token / 首字后秒数，同步为输出 token / 总秒数；未知、未完成或有效分母缺失时为 null。历史总耗时回退为记录起止时间差，历史首字不推算。
 
 请求记录和使用记录共用 Request 详情，避免两套事实表。列表默认字段包括 Request ID、User、Key、Group、客户端类别、模型、stream、状态、时间、attempt 数、输入/输出 token、cache token、估算金额与 currency。Admin 还可见脱敏 Credential、Archetype、profile/egress epoch、Transport Engine、跨 Credential 切换、内部错误分类；Key Owner 只见本人请求，且隐藏 Credential 内部信息。
 
@@ -1042,7 +1056,6 @@ usage 使用两个正交字段：`source=official|local_estimate|console_count|c
 | POST | `/admin/v1/notifications:read-all` | 当前用户全部已读 |
 | GET | `/admin/v1/dashboard/summary` | 角色裁剪后的首页聚合 |
 | GET | `/admin/v1/system/status` | release、Schema、readiness、capacity、SLO 与完整性摘要 |
-| GET | `/admin/v1/audit-events` | 全局管理审计；Key Owner 自动限定本人范围 |
 | GET | `/admin/v1/operations/jobs` | 异步 Job |
 | GET | `/admin/v1/operations/jobs/{id}` | Job 进度与逐项结果 |
 | POST | `/admin/v1/operations/jobs/{id}:cancel` | 取消尚可中止的 Job |

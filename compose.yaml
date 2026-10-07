@@ -31,7 +31,6 @@ services:
       GATEWAY_DATABASE_URL_FILE: /run/secrets/runtime_database_url
       GATEWAY_BUSINESS_KEY_PROVIDER: database
       GATEWAY_DIGEST_KEY_FILE: /run/secrets/digest_key
-      GATEWAY_AUDIT_INTEGRITY_KEY_FILE: /run/secrets/audit_integrity_key
       GATEWAY_BUNDLE_TRUST_STORE: /etc/super-gateway/bundle-trust-store.json
       GATEWAY_BUNDLE_DIR: /var/lib/super-gateway/bundles
       GATEWAY_RESPONSE_TMP_DIR: /var/lib/super-gateway/response-tmp
@@ -45,7 +44,6 @@ services:
     secrets:
       - runtime_database_url
       - digest_key
-      - audit_integrity_key
     volumes:
       - type: bind
         source: ./deploy/container/config/bundle-trust-store.json
@@ -83,5 +81,3 @@ secrets:
     file: ./deploy/container/secrets/runtime-database-url
   digest_key:
     file: ./deploy/container/secrets/digest-key
-  audit_integrity_key:
-    file: ./deploy/container/secrets/audit-integrity-key

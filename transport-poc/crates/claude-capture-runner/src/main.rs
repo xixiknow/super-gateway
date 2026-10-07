@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+mod interactive;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -35,6 +36,9 @@ const CONNECTION_ID: &str = "claude-capture-connection";
 #[derive(Debug, Parser)]
 #[command(about = "Run privacy-safe Claude Code transport evidence captures")]
 struct Cli {
+    /// Launch a real interactive terminal instead of print/sdk-cli mode.
+    #[arg(long, global = true)]
+    interactive: bool,
     #[arg(long, global = true, default_value = "claude")]
     claude_bin: PathBuf,
     #[arg(long)]
@@ -51,6 +55,9 @@ struct Cli {
 enum CaptureCommand {
     /// Capture real Claude Code HTTP/2 behavior against a local synthetic endpoint.
     Controlled {
+        /// Export only resolved static system blocks from the isolated capture.
+        #[arg(long)]
+        system_template_output: Option<PathBuf>,
         #[arg(long, default_value = "Reply with exactly: capture complete")]
         prompt: String,
         #[arg(long, default_value = "sonnet")]
@@ -86,6 +93,7 @@ enum CaptureCommand {
 
 #[derive(Debug, Serialize)]
 struct RunSummary {
+    launch_mode: &'static str,
     capture_run_id: Uuid,
     capture_artifact_id: Uuid,
     lane: CaptureLane,
@@ -123,6 +131,7 @@ struct ControlledBatchReport {
 
 #[derive(Debug)]
 struct ChildSummary {
+    interactive_completed: bool,
     exit_code: Option<i32>,
     stdout_bytes: usize,
     stderr_bytes: usize,
@@ -168,6 +177,7 @@ struct DrainedOutput {
 }
 
 struct OfficialCaptureOptions<'a> {
+    interactive: bool,
     prompt: &'a str,
     model: &'a str,
     timeout: Duration,
@@ -191,10 +201,33 @@ async fn main() -> Result<()> {
     ensure!(cli.timeout_seconds > 0, "timeout-seconds must be positive");
     let timeout = Duration::from_secs(cli.timeout_seconds);
     let capture_run_id = cli.capture_run_id.unwrap_or_else(Uuid::new_v4);
-    let environment = inspect_environment(&cli.claude_bin, timeout).await?;
+    let mut environment = inspect_environment(&cli.claude_bin, timeout).await?;
+    environment.labels.insert(
+        "launch_mode".into(),
+        if cli.interactive {
+            "interactive-pty"
+        } else {
+            "print-sdk-cli"
+        }
+        .into(),
+    );
     let (normalized, child) = match cli.command {
-        CaptureCommand::Controlled { prompt, model } => {
-            run_controlled(&cli.claude_bin, &prompt, &model, capture_run_id, environment, timeout).await?
+        CaptureCommand::Controlled {
+            prompt,
+            model,
+            system_template_output,
+        } => {
+            run_controlled(
+                &cli.claude_bin,
+                &prompt,
+                &model,
+                capture_run_id,
+                environment,
+                timeout,
+                system_template_output.as_deref(),
+                cli.interactive,
+            )
+            .await?
         }
         CaptureCommand::ControlledBatch {
             iterations,
@@ -202,6 +235,7 @@ async fn main() -> Result<()> {
             prompt,
             model,
         } => {
+            ensure!(!cli.interactive, "interactive batches use release-bundle orchestration");
             return run_controlled_batch(
                 &cli.claude_bin,
                 environment,
@@ -232,6 +266,7 @@ async fn main() -> Result<()> {
                 capture_run_id,
                 environment,
                 OfficialCaptureOptions {
+                    interactive: cli.interactive,
                     prompt: &prompt,
                     model: &model,
                     timeout,
@@ -245,6 +280,11 @@ async fn main() -> Result<()> {
     };
     persist_normalized(&cli.output, &normalized)?;
     let summary = RunSummary {
+        launch_mode: if cli.interactive {
+            "interactive-pty"
+        } else {
+            "print-sdk-cli"
+        },
         capture_run_id,
         capture_artifact_id: normalized.capture_artifact_id,
         lane: normalized.lane.clone(),
@@ -285,6 +325,8 @@ async fn run_controlled_batch(
             capture_run_id,
             environment.clone(),
             options.timeout,
+            None,
+            false,
         )
         .await
         {
@@ -361,6 +403,8 @@ async fn run_controlled(
     capture_run_id: Uuid,
     environment: EnvironmentDescriptor,
     timeout: Duration,
+    template_output: Option<&Path>,
+    interactive: bool,
 ) -> Result<(NormalizedCapture, ChildSummary)> {
     let synthetic_token = format!("{CONTROLLED_AUTH_PREFIX}{}", Uuid::new_v4());
     let server = ControlledH2Server::bind_claude_messages(
@@ -397,13 +441,26 @@ async fn run_controlled(
     tokio::fs::write(&settings_path, serde_json::to_vec(&settings)?)
         .await
         .context("write ephemeral Claude capture settings")?;
-    let capture_task = tokio::spawn(server.capture_one());
+    let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let captured = completed.clone();
+    let capture_task = tokio::spawn(async move {
+        let result = server.capture_one().await;
+        if result.is_ok() {
+            captured.store(true, std::sync::atomic::Ordering::Release);
+        }
+        result
+    });
     let child = run_claude(
         claude_bin,
         prompt,
         model,
         temp.path(),
-        timeout.min(Duration::from_secs(15)),
+        if interactive {
+            timeout
+        } else {
+            timeout.min(Duration::from_secs(15))
+        },
+        interactive.then_some((completed, true)),
         |command| {
             scrub_controlled_environment(command);
             command
@@ -438,16 +495,52 @@ async fn run_controlled(
         result.skipped_background_requests
     );
     ensure!(
-        !child.timed_out
-            && child.exit_code == Some(0)
-            && child.protocol.assistant_events > 0
-            && child.protocol.result_success_events > 0
-            && child.protocol.result_error_events == 0
-            && child.protocol.api_retry_events == 0,
+        (interactive && child.interactive_completed)
+            || (!interactive
+                && !child.timed_out
+                && child.exit_code == Some(0)
+                && child.protocol.assistant_events > 0
+                && child.protocol.result_success_events > 0
+                && child.protocol.result_error_events == 0
+                && child.protocol.api_retry_events == 0),
         "controlled capture child did not complete a retry-free assistant/result exchange"
     );
     let batch = controlled_batch(capture_run_id, environment, &result);
-    Ok((normalize_capture(&batch)?, child))
+    if interactive {
+        let request = result
+            .http1_request
+            .as_ref()
+            .context("interactive capture requires H1 UA validation")?;
+        ensure!(
+            request
+                .headers
+                .iter()
+                .any(|header| header.name.eq_ignore_ascii_case("user-agent")
+                    && header.value.ends_with("(external, cli)")),
+            "interactive capture did not observe cli User-Agent"
+        );
+    }
+    let normalized = normalize_capture(&batch)?;
+    if let Some(path) = template_output {
+        let template = summary
+            .static_system_template
+            .value()
+            .context("static system boundary unresolved or contains dynamic content; template not exported")?;
+        let template_hash = hex::encode(Sha256::digest(serde_json::to_vec(template)?));
+        persist_json(
+            path,
+            &serde_json::json!({
+                "schema_version":1,
+                "source":"isolated_controlled_capture",
+                "capture_run_id":capture_run_id,
+                "normalized_sha256":normalized.normalized_sha256,
+                "environment":normalized.environment,
+                "system_template_sha256":template_hash,
+                "system_template":template,
+            }),
+        )?;
+    }
+    Ok((normalized, child))
 }
 
 fn controlled_batch(
@@ -490,6 +583,7 @@ async fn run_official_tls(
     options: OfficialCaptureOptions<'_>,
 ) -> Result<(NormalizedCapture, ChildSummary)> {
     let OfficialCaptureOptions {
+        interactive,
         prompt,
         model,
         timeout,
@@ -516,7 +610,19 @@ async fn run_official_tls(
     tokio::fs::create_dir_all(&config_dir)
         .await
         .context("create isolated official Claude configuration")?;
-    let capture_task = tokio::spawn(tap.capture_allowed_client_hello(max_rejected_tunnels));
+    ensure!(
+        !interactive || !require_completed_exchange,
+        "interactive official capture supports synthetic TLS evidence only"
+    );
+    let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let captured = completed.clone();
+    let capture_task = tokio::spawn(async move {
+        let result = tap.capture_allowed_client_hello(max_rejected_tunnels).await;
+        if result.is_ok() {
+            captured.store(true, std::sync::atomic::Ordering::Release);
+        }
+        result
+    });
     let proxy_url = format!("http://{proxy_addr}");
     let settings_path = temp.path().join("official-capture-settings.json");
     let settings = official_proxy_settings(&proxy_url);
@@ -525,28 +631,36 @@ async fn run_official_tls(
         .context("write ephemeral official capture settings")?;
     let synthetic_token =
         synthetic_auth.then(|| format!("sk-ant-api03-{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()));
-    let child = run_claude(claude_bin, prompt, model, temp.path(), timeout, |command| {
-        command
-            .env_remove("ANTHROPIC_BASE_URL")
-            .env_remove("ANTHROPIC_API_KEY")
-            .env_remove("ANTHROPIC_AUTH_TOKEN")
-            .env_remove("ALL_PROXY")
-            .env_remove("all_proxy")
-            .env_remove("NO_PROXY")
-            .env_remove("no_proxy")
-            .env("HTTPS_PROXY", &proxy_url)
-            .env("HTTP_PROXY", &proxy_url)
-            .env("https_proxy", &proxy_url)
-            .env("http_proxy", &proxy_url)
-            .env("NODE_USE_ENV_PROXY", "1")
-            .env("CLAUDE_CONFIG_DIR", &config_dir)
-            .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
-            .arg("--settings")
-            .arg(&settings_path);
-        if let Some(token) = &synthetic_token {
-            command.env("ANTHROPIC_AUTH_TOKEN", token);
-        }
-    })
+    let child = run_claude(
+        claude_bin,
+        prompt,
+        model,
+        temp.path(),
+        timeout,
+        interactive.then_some((completed, false)),
+        |command| {
+            command
+                .env_remove("ANTHROPIC_BASE_URL")
+                .env_remove("ANTHROPIC_API_KEY")
+                .env_remove("ANTHROPIC_AUTH_TOKEN")
+                .env_remove("ALL_PROXY")
+                .env_remove("all_proxy")
+                .env_remove("NO_PROXY")
+                .env_remove("no_proxy")
+                .env("HTTPS_PROXY", &proxy_url)
+                .env("HTTP_PROXY", &proxy_url)
+                .env("https_proxy", &proxy_url)
+                .env("http_proxy", &proxy_url)
+                .env("NODE_USE_ENV_PROXY", "1")
+                .env("CLAUDE_CONFIG_DIR", &config_dir)
+                .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+                .arg("--settings")
+                .arg(&settings_path);
+            if let Some(token) = &synthetic_token {
+                command.env("ANTHROPIC_AUTH_TOKEN", token);
+            }
+        },
+    )
     .await;
     eprintln!("privacy-safe official route: chained_upstream_proxy={chained_upstream_proxy}");
     if let Ok(summary) = &child {
@@ -802,12 +916,28 @@ async fn run_claude<F>(
     model: &str,
     working_dir: &Path,
     timeout: Duration,
+    interactive: Option<(std::sync::Arc<std::sync::atomic::AtomicBool>, bool)>,
     configure: F,
 ) -> Result<ChildSummary>
 where
     F: FnOnce(&mut Command),
 {
     let mut command = Command::new(claude_bin);
+    if let Some((completed, require_response)) = interactive {
+        command
+            .arg("--model")
+            .arg(model)
+            .arg("--tools")
+            .arg("")
+            .arg("--prompt-suggestions")
+            .arg("false")
+            .current_dir(working_dir)
+            .env("DISABLE_AUTOUPDATER", "1")
+            .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT");
+        configure(&mut command);
+        return interactive::run(command, prompt.to_owned(), timeout, completed, require_response).await;
+    }
     command
         .arg("-p")
         .arg(prompt)
@@ -824,6 +954,7 @@ where
         .arg("false")
         .current_dir(working_dir)
         .env("DISABLE_AUTOUPDATER", "1")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -851,6 +982,7 @@ where
     let mut protocol = summarize_child_protocol(&stdout.diagnostic_prefix);
     protocol.diagnostic_prefix_truncated = stdout.truncated;
     Ok(ChildSummary {
+        interactive_completed: false,
         exit_code: (!timed_out).then(|| status.code()).flatten(),
         stdout_bytes: stdout.total_bytes,
         stderr_bytes: stderr.total_bytes,

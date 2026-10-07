@@ -25,3 +25,5 @@
 /web/admin-console/galaxy_*.py
 /web/admin-console/repro-*.html
 /web/admin-console/repro-*.tsx
+
+/.zcode/

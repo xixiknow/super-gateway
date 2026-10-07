@@ -13,6 +13,7 @@ import "./app.css";
 import { App } from "./App";
 import { FeedbackProvider } from "./feedback";
 import { I18nProvider } from "./i18n";
+import { ThemeProvider } from "./theme";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,13 +24,15 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <I18nProvider>
-      <FeedbackProvider>
-        <QueryClientProvider client={queryClient}>
-          <BrowserRouter basename="/admin">
-            <App />
-          </BrowserRouter>
-        </QueryClientProvider>
-      </FeedbackProvider>
+      <ThemeProvider>
+        <FeedbackProvider>
+          <QueryClientProvider client={queryClient}>
+            <BrowserRouter basename="/admin">
+              <App />
+            </BrowserRouter>
+          </QueryClientProvider>
+        </FeedbackProvider>
+      </ThemeProvider>
     </I18nProvider>
   </React.StrictMode>,
 );

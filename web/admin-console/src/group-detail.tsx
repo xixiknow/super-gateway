@@ -4,13 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useConfirm, useToast } from "./feedback";
 import { MessageKey, useI18n } from "./i18n";
-import { rowActionError } from "./row-actions";
+import { postLifecycle, rowActionError } from "./row-actions";
 import { SelectField } from "./select-field";
 import { DataGrid, Icon, PaneStatus, Row, SubTable, deriveColumns } from "./detail-kit";
 
 /* ============================================================
    分组详情对话框:概览 / 组内凭据 / 调度与限流 / 请求治理 /
-   能力与出口 / 配置版本六页签。
+   能力出口 / 配置版本六页签,外加重命名与生命周期管理。
+   凭据分组合并进凭据页后,这里是分组的唯一管理入口。
    配置调整基于当前生效配置创建不可变版本,保存后直接生效。
    ============================================================ */
 
@@ -576,9 +577,73 @@ function ConfigDraftForm({ endpoint, active, onBack, onDone }: { endpoint: strin
   );
 }
 
-export function GroupDetailDialog({ row, onClose }: { row: Row; onClose(): void }) {
-  const { t } = useI18n();
+/** 重命名分组:PATCH /admin/v1/groups/{id},携带乐观锁 */
+function GroupRenameDialog({ record, onClose }: { record: Row; onClose(): void }) {
+  const { locale, t } = useI18n();
+  const toast = useToast();
   const queryClient = useQueryClient();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const revision = asNumber(record.revision);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !pending) onClose(); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [pending, onClose]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = String(new FormData(event.currentTarget).get("name") ?? "").trim();
+    setPending(true);
+    setError(null);
+    try {
+      await api(`/admin/v1/groups/${encodeURIComponent(String(record.id ?? ""))}`, {
+        method: "PATCH",
+        headers: revision !== undefined ? { "If-Match": `"rev-${revision}"` } : undefined,
+        body: JSON.stringify({ name }),
+      });
+      toast.success(t("action.success"));
+      await queryClient.invalidateQueries({ queryKey: ["/admin/v1/groups"] });
+      onClose();
+    } catch (cause) {
+      setError(cause);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return createPortal(
+    <div className="overlay show" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose(); }}>
+      <section className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="group-rename-title">
+        <form onSubmit={(event) => void submit(event)}>
+          <div className="modal-head">
+            <div><h3 id="group-rename-title">{t("edit.group.title")}</h3><p className="muted">{String(record.name ?? "")}</p></div>
+            <button type="button" className="ibtn outline" aria-label={t("common.close")} onClick={onClose} disabled={pending}>×</button>
+          </div>
+          <div className="modal-body">
+            {error !== null && <div className="alert alert-err action-error" role="alert"><div><div className="at">{t("action.submitFailed")}</div><div className="ad">{rowActionError(error, locale)}</div></div></div>}
+            <div className="field">
+              <label htmlFor="group-rename-name">{t("action.group.name")}</label>
+              <input id="group-rename-name" name="name" className="inp" required maxLength={256} defaultValue={String(record.name ?? "")} autoFocus />
+            </div>
+          </div>
+          <div className="modal-foot">
+            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={pending}>{t("common.cancel")}</button>
+            <button type="submit" className="btn btn-primary" disabled={pending}>{pending ? t("common.submitting") : t("common.save")}</button>
+          </div>
+        </form>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+export function GroupDetailDialog({ row, onClose }: { row: Row; onClose(): void }) {
+  const { locale, t } = useI18n();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
   const id = String(row.id ?? "");
   const endpoint = `/admin/v1/groups/${encodeURIComponent(id)}`;
   const detail = useQuery({ queryKey: [endpoint], queryFn: () => api<Row>(endpoint), retry: false });
@@ -587,6 +652,8 @@ export function GroupDetailDialog({ row, onClose }: { row: Row; onClose(): void 
   const versions = useQuery({ queryKey: [`${endpoint}/config-versions`], queryFn: () => api<Row[]>(`${endpoint}/config-versions`), retry: false });
   const [tab, setTab] = useState<Tab>("scheduling");
   const [configDraft, setConfigDraft] = useState(true);
+  const [managing, setManaging] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     document.addEventListener("keydown", closeOnEscape);
@@ -594,6 +661,37 @@ export function GroupDetailDialog({ row, onClose }: { row: Row; onClose(): void 
   }, [onClose]);
 
   const record = detail.data ?? {};
+  const status = stringOf(record.status) ?? stringOf(row.status) ?? "";
+  const revision = asNumber(record.revision) ?? asNumber(row.revision);
+  const groupName = String(record.name ?? row.name ?? id);
+
+  /** 分组生命周期:停用 / 启用 / 归档(原「凭据分组」页行操作并入此处) */
+  async function lifecycle(suffix: "disable" | "reactivate" | "archive") {
+    if (revision === undefined) return;
+    const result = await confirm({
+      titleKey: `rowaction.confirm.${suffix}.title` as MessageKey,
+      bodyKey: `rowaction.confirm.${suffix}.body` as MessageKey,
+      bodyVars: { name: groupName },
+      withReason: true,
+      danger: suffix !== "reactivate",
+    });
+    if (!result.ok) return;
+    setManaging(true);
+    try {
+      await postLifecycle("/admin/v1/groups", { id, revision }, suffix, result.reason);
+      toast.success(t("action.success"));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [endpoint] }),
+        queryClient.invalidateQueries({ queryKey: ["/admin/v1/groups"] }),
+        queryClient.invalidateQueries({ queryKey: ["/admin/v1/credentials"] }),
+      ]);
+    } catch (error) {
+      toast.error(rowActionError(error, locale));
+    } finally {
+      setManaging(false);
+    }
+  }
+
   const versionRows = (versions.data ?? []).filter((item): item is Row => typeof item === "object" && item !== null);
   const credentialRows = (credentials.data ?? []).filter((item): item is Row => typeof item === "object" && item !== null);
   const activeConfig = versionRows.find((item) => item.is_active === true);
@@ -631,16 +729,22 @@ export function GroupDetailDialog({ row, onClose }: { row: Row; onClose(): void 
     { key: "versions", label: "group.tab.versions" },
   ];
 
-  return createPortal(
+  const portal = createPortal(
     <div className="overlay show" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="modal group-detail-modal" role="dialog" aria-modal="true" aria-labelledby="group-detail-title">
         <div className="modal-head">
           <div>
             <p className="eyebrow mono">GROUP / OPS</p>
             <h3 id="group-detail-title">{t("group.detail.title")}</h3>
-            <p className="muted mono breakable">{String(record.name ?? row.name ?? id)}</p>
+            <p className="muted mono breakable">{groupName}</p>
           </div>
-          <button type="button" className="ibtn outline" aria-label={t("common.close")} onClick={onClose}>×</button>
+          <div className="modal-head-actions">
+            {status === "active" && <button type="button" className="ibtn outline" data-tip={t("rowaction.rename")} aria-label={t("rowaction.rename")} disabled={managing} onClick={() => setRenameOpen(true)}><Icon name="edit" /></button>}
+            {status === "active" && <button type="button" className="ibtn outline danger" data-tip={t("rowaction.disable")} aria-label={t("rowaction.disable")} disabled={managing} onClick={() => void lifecycle("disable")}><Icon name="pause" /></button>}
+            {status === "disabled" && <button type="button" className="ibtn outline" data-tip={t("rowaction.reactivate")} aria-label={t("rowaction.reactivate")} disabled={managing} onClick={() => void lifecycle("reactivate")}><Icon name="play" /></button>}
+            {status === "disabled" && <button type="button" className="ibtn outline danger" data-tip={t("rowaction.archive")} aria-label={t("rowaction.archive")} disabled={managing} onClick={() => void lifecycle("archive")}><Icon name="package" /></button>}
+            <button type="button" className="ibtn outline" aria-label={t("common.close")} onClick={onClose}>×</button>
+          </div>
         </div>
         <div className="modal-body credential-detail-body">
           <PaneStatus loading={detail.isLoading} error={detail.error}>
@@ -698,4 +802,6 @@ export function GroupDetailDialog({ row, onClose }: { row: Row; onClose(): void 
     </div>,
     document.body,
   );
+
+  return <>{portal}{renameOpen && <GroupRenameDialog record={record.id ? record : row} onClose={() => setRenameOpen(false)} />}</>;
 }

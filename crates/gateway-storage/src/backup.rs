@@ -6,11 +6,11 @@
     clippy::too_many_lines
 )]
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::Row as _;
 use uuid::Uuid;
 
-use crate::{AuditOutboxRecord, PgStorage, StorageError};
+use crate::{PgStorage, StorageError};
 
 #[derive(Clone, Debug)]
 pub struct BackupRunCommit {
@@ -89,7 +89,7 @@ impl PgStorage {
 
     pub async fn complete_backup_run(&self, commit: &BackupRunCommit) -> Result<(), StorageError> {
         let mut transaction = self.pool().begin().await.map_err(map_sqlx)?;
-        let revision: i64 = sqlx::query_scalar(
+        let _revision: i64 = sqlx::query_scalar(
             "UPDATE ops.backup_run b SET state_code='succeeded',manifest=$4,manifest_sha256=$5, \
                database_system_id=$6,timeline=$7,lsn_start=$8::pg_lsn,lsn_end=$9::pg_lsn,wal_archived_at=$10::timestamptz, \
                watermarks=$11,backup_key_version=$12,repository_ref=$13,bytes_written=$14,error_code=NULL, \
@@ -116,11 +116,7 @@ impl PgStorage {
         .map_err(map_sqlx)?
         .ok_or(StorageError::RevisionConflict)?;
         complete_job_in(&mut transaction, commit.job_id, commit.generation, "backup_succeeded").await?;
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &system_audit("backup_succeeded", "backup_run", commit.run_id, revision),
-        )
-        .await?;
+
         transaction.commit().await.map_err(map_sqlx)
     }
 
@@ -167,7 +163,7 @@ impl PgStorage {
 
     pub async fn complete_restore_validation(&self, commit: &RestoreValidationCommit) -> Result<(), StorageError> {
         let mut transaction = self.pool().begin().await.map_err(map_sqlx)?;
-        let revision: i64 = sqlx::query_scalar(
+        let _revision: i64 = sqlx::query_scalar(
             "UPDATE ops.restore_drill d SET state_code='succeeded',manifest_sha256=$4,checks=$5,lineage=$6, \
                result=jsonb_build_object('validated',true),completed_at=clock_timestamp(),revision=revision+1 \
              FROM ops.durable_job j WHERE d.id=$1 AND d.durable_job_id=j.id AND j.id=$2 \
@@ -191,16 +187,7 @@ impl PgStorage {
             "restore_validation_succeeded",
         )
         .await?;
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &system_audit(
-                "restore_validation_succeeded",
-                "restore_validation",
-                commit.drill_id,
-                revision,
-            ),
-        )
-        .await?;
+
         transaction.commit().await.map_err(map_sqlx)
     }
 
@@ -209,7 +196,7 @@ impl PgStorage {
             return Err(StorageError::InvalidLifecycle);
         }
         let mut transaction = self.pool().begin().await.map_err(map_sqlx)?;
-        let revision: i64 = sqlx::query_scalar(
+        let _revision: i64 = sqlx::query_scalar(
             "UPDATE ops.restore_drill d SET state_code='succeeded',manifest_sha256=$4,isolated_environment_id=$5, \
                db_recovered=$6,object_replayed=$7,ledger_replayed=$8,checks=$9,lineage=$10,rpo_seconds=$11, \
                rto_seconds=$12,serving_simulated_at=clock_timestamp(),destroyed_at=clock_timestamp(), \
@@ -242,11 +229,7 @@ impl PgStorage {
             "restore_drill_succeeded",
         )
         .await?;
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &system_audit("restore_drill_succeeded", "restore_drill", commit.drill_id, revision),
-        )
-        .await?;
+
         transaction.commit().await.map_err(map_sqlx)
     }
 
@@ -282,22 +265,6 @@ impl PgStorage {
         }
         fail_job_in(&mut transaction, job_id, generation, error_code).await?;
         transaction.commit().await.map_err(map_sqlx)
-    }
-}
-
-fn system_audit(action: &str, object_type: &str, object_id: Uuid, revision: i64) -> AuditOutboxRecord {
-    AuditOutboxRecord {
-        actor_type: "system".to_owned(),
-        actor_id: None,
-        action: action.to_owned(),
-        object_type: object_type.to_owned(),
-        object_id: Some(object_id.to_string()),
-        outcome: "success".to_owned(),
-        redacted_detail: json!({}),
-        topic: action.replace('_', "."),
-        aggregate_id: object_id,
-        aggregate_revision: revision,
-        payload: json!({"object_id":object_id,"state":"succeeded"}),
     }
 }
 

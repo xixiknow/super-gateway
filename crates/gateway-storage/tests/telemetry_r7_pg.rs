@@ -178,6 +178,122 @@ async fn telemetry_r7_commit_usage_and_single_terminal_contract() -> Result<(), 
             response_mode: ResponseMode::NonStreaming,
         })
         .await?;
+    assert!(storage.get_request_body(request_id).await?.is_none());
+    storage
+        .record_request_reasoning(request_id, br#"{"reasoning":{"effort":"high"}}"#)
+        .await?;
+    storage
+        .capture_request_body(request_id, Some(serde_json::json!({"model":"fixture"})), None, None)
+        .await?;
+    storage
+        .capture_request_body(
+            request_id,
+            None,
+            None,
+            Some(serde_json::json!({"reasoning":{"effort":"low"}})),
+        )
+        .await?;
+    let captured = storage
+        .get_request_body(request_id)
+        .await?
+        .ok_or("missing body capture")?;
+    assert_eq!(captured.original_request, Some(serde_json::json!({"model":"fixture"})));
+    assert_eq!(
+        captured.final_upstream_request,
+        Some(serde_json::json!({"reasoning":{"effort":"low"}}))
+    );
+    storage.capture_final_request_body(request_id, None).await?;
+    let skipped = storage
+        .get_request_body(request_id)
+        .await?
+        .ok_or("missing original capture")?;
+    assert!(skipped.original_request.is_some());
+    assert!(
+        skipped.final_upstream_request.is_none(),
+        "oversized retry must not expose the previous attempt body"
+    );
+    storage
+        .record_request_reasoning(request_id, br#"{"reasoning":{"effort":"low"}}"#)
+        .await?;
+    let mut headers = gateway_domain::HeaderSnapshot::capture(
+        gateway_domain::HeaderTransport::Http,
+        [
+            ("authorization", b"Bearer fixture-secret".as_slice()),
+            ("x-trace", b"first"),
+            ("x-trace", b"second"),
+        ],
+    );
+    storage.capture_original_headers(request_id, &headers).await?;
+    storage.begin_header_attempt(request_id, 1).await?;
+    headers.attempt_ordinal = Some(1);
+    storage.capture_upstream_headers(request_id, false, &headers).await?;
+    storage.capture_upstream_headers(request_id, true, &headers).await?;
+    let captured = storage.get_request_body(request_id).await?.ok_or("missing headers")?;
+    assert_eq!(
+        captured.original_headers.as_ref().ok_or("missing ingress")?["entries"][0]["value"],
+        "[REDACTED]"
+    );
+    assert!(captured.upstream_response_headers.is_some());
+    storage.begin_header_attempt(request_id, 2).await?;
+    assert!(
+        storage
+            .capture_upstream_headers(request_id, true, &headers)
+            .await
+            .is_err(),
+        "stale response must be fenced"
+    );
+    let captured = storage.get_request_body(request_id).await?.ok_or("missing headers")?;
+    assert!(captured.final_upstream_headers.is_none());
+    assert!(captured.upstream_response_headers.is_none());
+    assert!(captured.original_headers.is_some());
+    storage
+        .record_request_client(
+            request_id,
+            &gateway_domain::ClientIdentity::from_user_agent(Some("claude-cli/2.1.245 (external, cli)")),
+            "websocket",
+        )
+        .await?;
+    // The delivery and usage callbacks may finish in either order.
+    storage.record_request_timing(request_id, None, Some(3000)).await?;
+    storage.record_request_timing(request_id, Some(1000), None).await?;
+    storage
+        .record_request_timing(request_id, Some(2000), Some(9000))
+        .await?;
+    let metrics: (String, String, String, i64, i64) = sqlx::query_as("SELECT client_name,client_version,request_type,first_content_ms,duration_ms FROM telemetry.request_record WHERE request_id=$1")
+        .bind(request_id).fetch_one(&storage.pool()).await?;
+    assert_eq!(
+        metrics,
+        ("Claude Code".into(), "2.1.245".into(), "websocket".into(), 1000, 3000)
+    );
+    // Header snapshots and bodies expire together, while metadata survives.
+    sqlx::query(
+        "UPDATE telemetry.request_body SET captured_at=clock_timestamp()-interval '366 days' WHERE request_id=$1",
+    )
+    .bind(request_id)
+    .execute(&storage.pool())
+    .await?;
+    assert_eq!(storage.purge_expired_body_captures(100).await?, 1);
+    assert!(storage.get_request_body(request_id).await?.is_none());
+    let retained: (String, i64) =
+        sqlx::query_as("SELECT client_version,duration_ms FROM telemetry.request_record WHERE request_id=$1")
+            .bind(request_id)
+            .fetch_one(&storage.pool())
+            .await?;
+    assert_eq!(retained, ("2.1.245".into(), 3000));
+    sqlx::query("DELETE FROM telemetry.request_body WHERE request_id=$1")
+        .bind(request_id)
+        .execute(&storage.pool())
+        .await?;
+    let effort: Option<String> =
+        sqlx::query_scalar("SELECT reasoning_effort FROM telemetry.request_record WHERE request_id=$1")
+            .bind(request_id)
+            .fetch_one(&storage.pool())
+            .await?;
+    assert_eq!(
+        effort.as_deref(),
+        Some("low"),
+        "reasoning survives body retention cleanup"
+    );
     storage
         .advance_request_phase(request_id, "accepted", "validated")
         .await?;

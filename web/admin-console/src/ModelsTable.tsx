@@ -1,5 +1,5 @@
 import { ReactNode, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import { CapabilityWorkbench } from "./CapabilityWorkbench";
 import { Drawer } from "./drawer";
@@ -84,7 +84,6 @@ function capabilityValue(key: string, value: unknown, locale: "zh-CN" | "en-US")
 
 export function ModelsTable({ loading, items, title, rowActions, onRefresh, refreshing = false, toolbar }: ModelsTableProps) {
   const { locale, t } = useI18n();
-  const queryClient = useQueryClient();
   const records = (items ?? []).filter((item): item is RecordRow => typeof item === "object" && item !== null);
   const pager = usePagination(records);
   const [selectedRow, setSelectedRow] = useState<RecordRow | null>(null);
@@ -95,8 +94,12 @@ export function ModelsTable({ loading, items, title, rowActions, onRefresh, refr
     enabled: records.length > 0,
     retry: false,
   });
-  const priceSync = useQuery({ queryKey: ["/admin/v1/price-sync/status"], queryFn: () => api<Record<string, unknown>>("/admin/v1/price-sync/status"), retry: false });
-  const runPriceSync = useMutation({ mutationFn: () => api("/admin/v1/price-sync:run", { method: "POST", body: "{}" }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["/admin/v1/price-sync/status"] }); } });
+  const priceSync = useQuery({
+    queryKey: ["/admin/v1/price-sync/status"], queryFn: () => api<Record<string, unknown>>("/admin/v1/price-sync/status"), retry: false,
+    refetchInterval: (query) => query.state.data?.state === "running" ? 1000 : 15000,
+  });
+  const isRefreshing = refreshing || priceSync.isFetching;
+  function refreshAll() { onRefresh(); void priceSync.refetch(); }
   const versions = (capabilityVersions.data ?? []).filter((item): item is RecordRow => typeof item === "object" && item !== null);
   const hasActions = Boolean(rowActions?.length);
   const selectedVersions = selectedRow
@@ -108,16 +111,16 @@ export function ModelsTable({ loading, items, title, rowActions, onRefresh, refr
   }
 
   const priceState = String(priceSync.data?.state ?? "");
-  const priceStateLabel = priceState === "running" || priceState === "succeeded" || priceState === "failed"
+  const priceStateLabel = priceSync.isError ? t("models.price.state.unavailable") : priceSync.isLoading ? t("common.loading") : priceState === "running" || priceState === "succeeded" || priceState === "failed" || priceState === "never"
     ? t(`models.price.state.${priceState}` as MessageKey)
     : (priceState || "—");
   return <section className="card table-card models-table-card" aria-busy={loading}>
-    <div className="cardbar"><div className="cbl"><h2>{title}</h2><span className="tag t-gray">{t("table.stableSort")}</span><span className="tag t-sky">{priceStateLabel}</span></div><div className="cbr"><button className={`ibtn outline${runPriceSync.isPending ? " loading" : ""}`} type="button" aria-label={t("models.price.syncNow")} disabled={runPriceSync.isPending} onClick={() => runPriceSync.mutate()}><svg className="icon sm" aria-hidden="true"><use href="#i-globe" /></svg></button>{toolbar}<button className={`ibtn outline${refreshing ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={refreshing} onClick={onRefresh}><svg className="icon sm" aria-hidden="true"><use href="#i-refresh" /></svg></button></div></div>
+    <div className="cardbar"><div className="cbl"><h2>{title}</h2><span className="tag t-gray">{t("table.stableSort")}</span><span className="tag t-sky">{priceStateLabel}</span></div><div className="cbr">{toolbar}<button className={`ibtn outline${isRefreshing ? " loading" : ""}`} type="button" aria-label={t("table.refresh")} disabled={isRefreshing} onClick={refreshAll}><svg className="icon sm" aria-hidden="true"><use href="#i-refresh" /></svg></button></div></div>
     {loading
       ? <div className="loading-lines"><span className="skel title" /><span className="skel line" /><span className="skel line" /></div>
       : records.length === 0
         ? <div className="empty"><div className="empty-orbit"><svg className="icon sm" aria-hidden="true"><use href="#i-inbox" /></svg></div><h3>{t("table.emptyTitle")}</h3><p>{t("table.emptyBody")}</p></div>
-        : <><div className="tbl-wrap"><table className="tbl models-table"><caption className="sr-only">{t("table.caption", { title, count: records.length })}</caption><thead><tr>
+        : <><div className="tbl-wrap"><table className="tbl models-table"><caption className="sr-only">{t("table.caption", { title, count: records.length })}</caption><colgroup>{["identity", "source", "public", "lifecycle", "gateway", "price", "release", "capability", ...(hasActions ? ["actions"] : [])].map((name) => <col key={name} className={`model-col-${name}`} />)}</colgroup><thead><tr>
           <th scope="col">{t("models.column.model")}</th><th scope="col">{t("models.column.source")}</th><th scope="col">{t("models.column.publicCapability")}</th><th scope="col">{t("models.column.lifecycle")}</th><th scope="col">{t("models.column.gatewayCapability")}</th><th scope="col">{t("models.price.column")}</th><th scope="col">{t("models.column.releasedAt")}</th><th scope="col" className="capability-toggle-heading">{t("models.capability.open")}</th>{hasActions && <th scope="col" className="row-actions-heading">{t("table.actions")}</th>}
         </tr></thead><tbody>{pager.pageRows.map((row, index) => {
           const id = text(row, "id") || String(index);

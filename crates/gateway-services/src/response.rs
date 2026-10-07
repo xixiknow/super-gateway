@@ -62,7 +62,7 @@ impl Default for ResponseConfig {
 /// Prepared response body item.
 pub type PreparedBodyItem = Result<Bytes, ResponseError>;
 
-/// Non-blocking plaintext observer used by optional encrypted response audit.
+/// Non-blocking plaintext observer used by response usage observation.
 /// Implementations must return immediately and must never affect relay bytes.
 pub trait ResponseSideWriter: Send + 'static {
     fn observe(&mut self, bytes: &Bytes);
@@ -74,6 +74,14 @@ pub trait ResponseSideWriter: Send + 'static {
 pub struct PreparedDeliveryState(Arc<AtomicU8>);
 
 impl PreparedDeliveryState {
+    /// Mark an external protocol adapter's producer termination.
+    pub fn finish_external(&self, complete: bool) {
+        self.finish(if complete {
+            ProducerTermination::Complete
+        } else {
+            ProducerTermination::UpstreamBodyError
+        });
+    }
     fn finish(&self, state: ProducerTermination) {
         let _ = self
             .0
@@ -145,6 +153,7 @@ impl PreparedClientResponse {
         observer.observe_non_stream_body(&body);
         let (usage_sender, usage_receiver) = oneshot::channel();
         let _ = usage_sender.send(ObservedResponseUsage {
+            first_content_at: None,
             official: observer.finish(true),
             sse: None,
             upstream_bytes_received: u64::try_from(body.len()).unwrap_or(u64::MAX),
@@ -1278,6 +1287,8 @@ mod tests {
 /// Client-delivery terminal report. It is emitted exactly once by the API body adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeliveryReport {
+    /// Sampled at the delivery boundary, before asynchronous persistence.
+    pub finished_at: std::time::Instant,
     pub outcome: gateway_domain::DeliveryOutcome,
     pub bytes_delivered: u64,
 }

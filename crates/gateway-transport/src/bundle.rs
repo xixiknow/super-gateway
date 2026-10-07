@@ -10,7 +10,12 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 const ENVELOPE_VERSION: &str = "1.0.0";
-const SCHEMA_VERSION: &str = "1.0.0";
+const SCHEMA_VERSION: &str = "1.1.0";
+
+/// Current payload schema version, exposed for Bundle maintenance tooling.
+pub fn current_payload_schema_version() -> &'static str {
+    SCHEMA_VERSION
+}
 const SIGNATURE_DOMAIN: &str = "transport_bundle_v1";
 const POOL_FIELDS: [&str; 9] = [
     "credential_id",
@@ -96,6 +101,12 @@ pub struct TlsProfile {
     pub permute_extensions: bool,
     /// Resumption remains false until its own evidence gate passes.
     pub session_resumption: bool,
+    /// Minimum allowed TLS version (e.g., "TLSv1.2"). Optional for backward compatibility.
+    #[serde(default)]
+    pub min_tls_version: Option<Box<str>>,
+    /// Maximum allowed TLS version (e.g., "TLSv1.3"). Optional for backward compatibility.
+    #[serde(default)]
+    pub max_tls_version: Option<Box<str>>,
 }
 
 /// HTTP/1.1 wire profile.
@@ -661,6 +672,8 @@ mod tests {
                     grease_enabled: true,
                     permute_extensions: false,
                     session_resumption: false,
+                    min_tls_version: None,
+                    max_tls_version: None,
                 },
                 http1: Http1Profile {
                     request_line_form: "origin".into(),

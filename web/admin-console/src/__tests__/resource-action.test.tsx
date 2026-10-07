@@ -18,6 +18,37 @@ function renderAction(action: Parameters<typeof ResourceActionButton>[0]["action
 }
 
 describe("resource create actions", () => {
+  it("explains duplicate key names and allows correcting and resubmitting the form", async () => {
+    const groupId = "00000000-0000-0000-0000-000000000022";
+    const submittedNames: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) === "/admin/v1/groups") return new Response(JSON.stringify({ data: [{ id: groupId, name: "Primary Group", status: "active", credential_count: 2 }], meta: {} }));
+      if (String(input) === "/admin/v1/platform-keys" && init?.method === "POST") {
+        const { name } = JSON.parse(String(init.body));
+        submittedNames.push(name);
+        if (name === "api") return new Response(JSON.stringify({ error: { code: "platform_key_name_conflict", message: "Platform key name already exists. Choose another name." } }), { status: 409 });
+        return new Response(JSON.stringify({ data: { id: "key-2", name, status: "active" }, meta: {} }), { status: 201 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    const user = userEvent.setup();
+    renderAction("platform-key");
+    await user.click(screen.getByRole("button", { name: "创建" }));
+    const dialog = screen.getByRole("dialog", { name: "创建平台密钥" });
+    await user.type(screen.getByLabelText("名称"), "api");
+    const groupSelect = await screen.findByRole("combobox", { name: "凭据分组" });
+    await waitFor(() => expect(groupSelect).toBeEnabled());
+    await user.click(groupSelect);
+    await user.click(await screen.findByRole("option", { name: "Primary Group · 2 个凭据" }));
+    await user.click(within(dialog).getByRole("button", { name: "创建" }));
+    expect(await within(dialog).findByText("密钥名称已存在，请使用其他名称。")).toBeInTheDocument();
+    expect(screen.getByLabelText("名称")).toHaveValue("api");
+    await user.type(screen.getByLabelText("名称"), "-2");
+    await user.click(within(dialog).getByRole("button", { name: "创建" }));
+    expect(await screen.findByText("操作成功", { selector: ".at" })).toBeInTheDocument();
+    expect(submittedNames).toEqual(["api", "api-2"]);
+  });
+
   it("starts public model synchronization directly without an audit confirmation dialog", async () => {
     let jobReads = 0;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -31,23 +62,27 @@ describe("resource create actions", () => {
           id: "job-1", kind: "model_catalog_discovery_v1", state: jobReads === 1 ? "scheduled" : "succeeded", last_error: null,
         }, meta: {} }), { status: 200, headers: { "content-type": "application/json" } });
       }
+      if (path === "/admin/v1/price-sync:run") return new Response(JSON.stringify({ data: { id: "price-1" } }), { status: 202 });
+      if (path === "/admin/v1/operations/jobs/price-1") return new Response(JSON.stringify({ data: { state: "succeeded" } }));
       return new Response("{}", { status: 404 });
     });
     const user = userEvent.setup();
     const { client } = renderAction("model-refresh");
     const invalidate = vi.spyOn(client, "invalidateQueries");
 
-    await user.click(screen.getByRole("button", { name: "同步公开目录" }));
+    await user.click(screen.getByRole("button", { name: "同步目录与价格" }));
 
     expect(screen.queryByRole("dialog", { name: "同步 Anthropic 公开模型目录" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "同步中…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "正在同步目录…" })).toBeDisabled();
+    expect(fetchMock.mock.calls.some(([path]) => String(path) === "/admin/v1/price-sync:run")).toBe(false);
     expect(screen.queryByText(/模型表格已刷新/, { selector: ".toast-text" })).not.toBeInTheDocument();
-    expect(await screen.findByText(/模型表格已刷新/, { selector: ".toast-text" }, { timeout: 3_000 })).toBeInTheDocument();
+    expect(await screen.findByText(/目录与价格同步完成/, { selector: ".toast-text" }, { timeout: 3_000 })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([path]) => String(path) === "/admin/v1/operations/jobs/job-1")).toBe(true);
     const postCall = fetchMock.mock.calls.find(([path, init]) => String(path) === "/admin/v1/models:refresh" && init?.method === "POST");
     expect(JSON.parse(String(postCall?.[1]?.body))).toEqual({ reason: "admin_console_public_catalog_sync" });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["/admin/v1/models"] });
-    expect(screen.getByRole("button", { name: "同步公开目录" })).toBeEnabled();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["/admin/v1/price-sync/status"] });
+    expect(screen.getByRole("button", { name: "同步目录与价格" })).toBeEnabled();
   });
 
   it("reports a terminal public model synchronization job failure", async () => {
@@ -59,16 +94,64 @@ describe("resource create actions", () => {
       if (path === "/admin/v1/operations/jobs/job-failed") return new Response(JSON.stringify({ data: {
         id: "job-failed", kind: "model_catalog_discovery_v1", state: "dead_letter", last_error: "public_catalog_schema_invalid",
       }, meta: {} }), { status: 200, headers: { "content-type": "application/json" } });
+      if (path === "/admin/v1/price-sync:run") return new Response(JSON.stringify({ data: { id: "price-1" } }), { status: 202 });
+      if (path === "/admin/v1/operations/jobs/price-1") return new Response(JSON.stringify({ data: { state: "succeeded" } }));
       return new Response("{}", { status: 404 });
     });
     const { client } = renderAction("model-refresh");
     const invalidate = vi.spyOn(client, "invalidateQueries");
 
-    await userEvent.setup().click(screen.getByRole("button", { name: "同步公开目录" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "同步目录与价格" }));
 
     expect(await screen.findByText(/public_catalog_schema_invalid/, { selector: ".toast-text" })).toBeInTheDocument();
-    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["/admin/v1/models"] });
-    expect(screen.getByRole("button", { name: "同步公开目录" })).toBeEnabled();
+    expect(screen.getByText(/目录：public_catalog_schema_invalid；价格：已同步/, { selector: ".toast-text" })).toBeInTheDocument();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["/admin/v1/models"] });
+    expect(screen.getByRole("button", { name: "同步目录与价格" })).toBeEnabled();
+  });
+
+  it.each(["dead_letter", "submit_error", "missing_id", "read_error"])("keeps a price %s separate from catalog success", async (failure) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/admin/v1/models:refresh") return new Response(JSON.stringify({ data: { id: "catalog" } }), { status: 202 });
+      if (path === "/admin/v1/operations/jobs/catalog") return new Response(JSON.stringify({ data: { state: "succeeded" } }));
+      if (path === "/admin/v1/price-sync:run") {
+        if (failure === "submit_error") return new Response(JSON.stringify({ error: { message: "price_submit_failed" } }), { status: 503 });
+        return new Response(JSON.stringify({ data: failure === "missing_id" ? {} : { id: "prices" } }), { status: 202 });
+      }
+      if (path === "/admin/v1/operations/jobs/prices") return failure === "read_error"
+        ? new Response(JSON.stringify({ error: { message: "price_status_unavailable" } }), { status: 503 })
+        : new Response(JSON.stringify({ data: { state: "dead_letter", last_error: "price_source_unavailable" } }));
+      return new Response("{}", { status: 404 });
+    });
+    const { client } = renderAction("model-refresh");
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    await userEvent.setup().click(screen.getByRole("button", { name: "同步目录与价格" }));
+    expect(await screen.findByText(/目录：已同步；价格：/, { selector: ".toast-text" })).toBeInTheDocument();
+    expect(screen.queryByText(/目录与价格同步完成/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "同步目录与价格" })).toBeEnabled();
+    expect(fetchMock.mock.calls.filter(([path]) => String(path) === "/admin/v1/price-sync:run")).toHaveLength(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["/admin/v1/price-sync/status"] });
+  });
+
+  it("keeps the current sync phase and result when the page is remounted", async () => {
+    let completePrice!: () => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/admin/v1/models:refresh") return new Response(JSON.stringify({ data: { id: "catalog" } }), { status: 202 });
+      if (path === "/admin/v1/operations/jobs/catalog") return new Response(JSON.stringify({ data: { state: "succeeded" } }));
+      if (path === "/admin/v1/price-sync:run") return new Response(JSON.stringify({ data: { id: "prices" } }), { status: 202 });
+      if (path === "/admin/v1/operations/jobs/prices") return new Promise<Response>((resolve) => { completePrice = () => resolve(new Response(JSON.stringify({ data: { state: "succeeded" } }))); });
+      return new Response("{}", { status: 404 });
+    });
+    const first = renderAction("model-refresh");
+    await userEvent.setup().click(screen.getByRole("button", { name: "同步目录与价格" }));
+    expect(await screen.findByRole("button", { name: "正在同步价格…" })).toBeDisabled();
+    first.unmount();
+    render(<I18nProvider initialLocale="zh-CN"><FeedbackProvider><QueryClientProvider client={first.client}><ResourceActionButton action="model-refresh" /></QueryClientProvider></FeedbackProvider></I18nProvider>);
+    expect(screen.getByRole("button", { name: "正在同步价格…" })).toBeDisabled();
+    completePrice();
+    expect(await screen.findByText("目录：已同步；价格：已同步", { selector: ".model-sync-result" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "同步目录与价格" })).toBeEnabled();
   });
 
   it("opens the group form and submits the documented POST payload", async () => {
@@ -79,11 +162,11 @@ describe("resource create actions", () => {
     const user = userEvent.setup();
     renderAction("group");
 
-    await user.click(screen.getByRole("button", { name: "新建" }));
+    await user.click(screen.getByRole("button", { name: "新建分组" }));
     const dialog = screen.getByRole("dialog", { name: "新建凭据分组" });
     expect(dialog).toBeInTheDocument();
     await user.type(screen.getByLabelText("分组名称"), "研发团队");
-    await user.click(within(dialog).getByRole("button", { name: "新建" }));
+    await user.click(within(dialog).getByRole("button", { name: "新建分组" }));
 
     expect(await screen.findByText("操作成功", { selector: ".at" })).toBeInTheDocument();
     expect(screen.getByText("操作成功", { selector: ".toast-text" })).toBeInTheDocument();
@@ -91,7 +174,7 @@ describe("resource create actions", () => {
     const [path, init] = fetchMock.mock.calls[0];
     expect(path).toBe("/admin/v1/groups");
     expect(init?.method).toBe("POST");
-    expect(JSON.parse(String(init?.body))).toEqual({ name: "研发团队" });
+    expect(JSON.parse(String(init?.body))).toEqual({ name: "研发团队", provider: "anthropic" });
     expect(screen.getByText("group-1", { selector: "dd" })).toBeInTheDocument();
   });
 
@@ -167,13 +250,13 @@ describe("resource create actions", () => {
     const user = userEvent.setup();
     renderAction("credential");
 
-    await user.click(screen.getByRole("button", { name: "新建" }));
+    await user.click(screen.getByRole("button", { name: "新建凭据" }));
     const dialog = screen.getByRole("dialog", { name: "发起凭据注册" });
     const groupSelect = await screen.findByRole("combobox", { name: "目标凭据分组" });
     await waitFor(() => expect(groupSelect).toBeEnabled());
     await user.click(groupSelect);
     await user.click(await screen.findByRole("option", { name: "Primary Group · 0 个凭据" }));
-    await user.click(within(dialog).getByRole("button", { name: "新建" }));
+    await user.click(within(dialog).getByRole("button", { name: "新建凭据" }));
     await user.type(await screen.findByLabelText(/^授权码/), "authorization-code");
     expect(screen.queryByLabelText(/^回调 state/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^回调随机数/)).not.toBeInTheDocument();
@@ -212,14 +295,14 @@ describe("resource create actions", () => {
     const user = userEvent.setup();
     renderAction("credential");
 
-    await user.click(screen.getByRole("button", { name: "新建" }));
+    await user.click(screen.getByRole("button", { name: "新建凭据" }));
     const dialog = screen.getByRole("dialog", { name: "发起凭据注册" });
     const groupSelect = await screen.findByRole("combobox", { name: "目标凭据分组" });
     await waitFor(() => expect(groupSelect).toBeEnabled());
     await user.click(groupSelect);
     await user.click(await screen.findByRole("option", { name: "Primary Group · 0 个凭据" }));
     await user.click(screen.getByLabelText("安装令牌"));
-    await user.click(within(dialog).getByRole("button", { name: "新建" }));
+    await user.click(within(dialog).getByRole("button", { name: "新建凭据" }));
     await user.type(await screen.findByLabelText("安装令牌"), "setup-token");
     await user.click(within(dialog).getByRole("button", { name: "提交认证材料" }));
 

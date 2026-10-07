@@ -6,7 +6,6 @@ import { useToast } from "./feedback";
 import { MessageKey, useI18n } from "./i18n";
 import { RowActionDef, postLifecycle, rowActionError } from "./row-actions";
 import { CredentialDetailDialog } from "./credential-detail";
-import { GroupDetailDialog } from "./group-detail";
 import { SelectField } from "./select-field";
 
 /* ============================================================
@@ -35,7 +34,7 @@ async function runWithStepUp(purpose: string, password: string | undefined, acti
   return action(grant.id);
 }
 
-type DialogState = { kind: "edit-user" | "edit-proxy" | "replace-secret" | "credential-detail" | "group-detail" | "rename-group"; row: Row } | null;
+type DialogState = { kind: "edit-user" | "edit-proxy" | "replace-secret" | "credential-detail"; row: Row } | null;
 
 function buildActions(path: string, principal: Principal, openDialog: (state: DialogState) => void): RowActionDef<Row>[] | undefined {
   switch (path) {
@@ -86,38 +85,6 @@ function buildActions(path: string, principal: Principal, openDialog: (state: Di
           confirm: { titleKey: "rowaction.confirm.archive.title", bodyKey: "rowaction.confirm.archive.body" },
           run: (row, reason) => postLifecycle(endpoint, row, "archive", reason),
           invalidate: endpoint,
-        },
-      ];
-    }
-    case "/groups": {
-      const endpoint = "/admin/v1/groups";
-      return [
-        {
-          key: "detail", labelKey: "rowaction.detail", icon: "eye", primary: true,
-          custom: (row) => openDialog({ kind: "group-detail", row }),
-        },
-        {
-          key: "rename", labelKey: "rowaction.rename", icon: "edit",
-          when: (row) => isStatus(row, "status", "active"),
-          custom: (row) => openDialog({ kind: "rename-group", row }),
-        },
-        {
-          key: "disable", labelKey: "rowaction.disable", icon: "pause", danger: true, primary: true,
-          when: (row) => isStatus(row, "status", "active"),
-          confirm: { titleKey: "rowaction.confirm.disable.title", bodyKey: "rowaction.confirm.disable.body", withReason: true },
-          run: (row, reason) => postLifecycle(endpoint, row, "disable", reason), invalidate: endpoint,
-        },
-        {
-          key: "reactivate", labelKey: "rowaction.reactivate", icon: "play", primary: true,
-          when: (row) => isStatus(row, "status", "disabled"),
-          confirm: { titleKey: "rowaction.confirm.reactivate.title", bodyKey: "rowaction.confirm.reactivate.body", withReason: true },
-          run: (row, reason) => postLifecycle(endpoint, row, "reactivate", reason), invalidate: endpoint,
-        },
-        {
-          key: "archive", labelKey: "rowaction.archive", icon: "package", danger: true, primary: true,
-          when: (row) => isStatus(row, "status", "disabled"),
-          confirm: { titleKey: "rowaction.confirm.archive.title", bodyKey: "rowaction.confirm.archive.body", withReason: true },
-          run: (row, reason) => postLifecycle(endpoint, row, "archive", reason), invalidate: endpoint,
         },
       ];
     }
@@ -342,8 +309,6 @@ export function useResourceRowActions(path: string, principal: Principal): { row
   else if (dialog?.kind === "edit-proxy") rowDialogs = <ProxyEditDialog row={dialog.row} onClose={() => setDialog(null)} />;
   else if (dialog?.kind === "replace-secret") rowDialogs = <ProxySecretDialog row={dialog.row} onClose={() => setDialog(null)} />;
   else if (dialog?.kind === "credential-detail") rowDialogs = <CredentialDetailDialog row={dialog.row} onClose={() => setDialog(null)} />;
-  else if (dialog?.kind === "group-detail") rowDialogs = <GroupDetailDialog row={dialog.row} onClose={() => setDialog(null)} />;
-  else if (dialog?.kind === "rename-group") rowDialogs = <GroupRenameDialog row={dialog.row} onClose={() => setDialog(null)} />;
   return { rowActions, rowDialogs };
 }
 
@@ -464,29 +429,6 @@ function UserEditDialog({ row, onClose }: { row: Row; onClose(): void }) {
           method: "PATCH",
           headers: { "If-Match": `"rev-${Number(row.revision)}"` },
           body: JSON.stringify({ display_name: displayName, email, role, max_concurrency: maxConcurrency, rpm, balance_amount: balance || null }),
-        });
-        await invalidate();
-      }}
-      onClose={onClose}
-    />
-  );
-}
-
-function GroupRenameDialog({ row, onClose }: { row: Row; onClose(): void }) {
-  const invalidate = useInvalidate("/admin/v1/groups");
-  return (
-    <RowFormDialog
-      titleKey="edit.group.title"
-      subtitle={text(row, "name")}
-      fields={[
-        { name: "name", labelKey: "action.group.name", required: true, maxLength: 256, defaultValue: text(row, "name"), autoFocus: true },
-      ]}
-      onSubmit={async (form) => {
-        const name = String(form.get("name") ?? "").trim();
-        await api(`/admin/v1/groups/${encodeURIComponent(String(row.id))}`, {
-          method: "PATCH",
-          headers: { "If-Match": `"rev-${Number(row.revision)}"` },
-          body: JSON.stringify({ name }),
         });
         await invalidate();
       }}

@@ -53,7 +53,16 @@ pub enum PriceSyncError {
 }
 
 /// Parse only the bounded top-level `LiteLLM` object and retain Anthropic entries.
+#[cfg(test)]
 pub fn parse_litellm_prices(bytes: &[u8]) -> Result<Vec<SourcePrice>, PriceSyncError> {
+    let prices = parse_provider_prices(bytes, "anthropic")?;
+    if prices.is_empty() {
+        return Err(PriceSyncError::InvalidEntry);
+    }
+    Ok(prices)
+}
+
+fn parse_provider_prices(bytes: &[u8], provider: &str) -> Result<Vec<SourcePrice>, PriceSyncError> {
     if bytes.is_empty() || bytes.len() > MAX_SOURCE_BYTES {
         return Err(PriceSyncError::TooLarge);
     }
@@ -65,13 +74,17 @@ pub fn parse_litellm_prices(bytes: &[u8]) -> Result<Vec<SourcePrice>, PriceSyncE
     let mut output = Vec::new();
     for (model_id, value) in object {
         let Some(entry) = value.as_object() else { continue };
-        if entry.get("litellm_provider").and_then(Value::as_str) != Some("anthropic") {
+        if entry.get("litellm_provider").and_then(Value::as_str) != Some(provider) {
             continue;
         }
         let input = scaled_cost(entry.get("input_cost_per_token").ok_or(PriceSyncError::InvalidEntry)?)?;
         let output_cost = scaled_cost(entry.get("output_cost_per_token").ok_or(PriceSyncError::InvalidEntry)?)?;
         let cache_write = scaled_cost(entry.get("cache_creation_input_token_cost").unwrap_or(&Value::from(0)))?;
-        let cache_read = scaled_cost(entry.get("cache_read_input_token_cost").unwrap_or(&Value::from(0)))?;
+        let cache_read = if provider == "openai" && !entry.contains_key("cache_read_input_token_cost") {
+            input.clone()
+        } else {
+            scaled_cost(entry.get("cache_read_input_token_cost").unwrap_or(&Value::from(0)))?
+        };
         output.push(SourcePrice {
             model_id: model_id.clone(),
             input_per_million: input,
@@ -79,9 +92,6 @@ pub fn parse_litellm_prices(bytes: &[u8]) -> Result<Vec<SourcePrice>, PriceSyncE
             cache_write_per_million: cache_write,
             cache_read_per_million: cache_read,
         });
-    }
-    if output.is_empty() {
-        return Err(PriceSyncError::InvalidEntry);
     }
     Ok(output)
 }
@@ -225,9 +235,9 @@ pub async fn commit_prices(
     source_bytes: &[u8],
     source_uri: &str,
 ) -> Result<(i64, usize, Vec<String>, String), PriceSyncError> {
-    let source = parse_litellm_prices(source_bytes)?;
+    let source = parse_provider_prices(source_bytes, "anthropic")?;
     let catalog_rows = sqlx::query(
-        "SELECT id,upstream_model_id FROM catalog.model_definition WHERE lifecycle_code IN ('published','deprecated')",
+        "SELECT id,upstream_model_id FROM catalog.model_definition WHERE provider_code='anthropic' AND lifecycle_code IN ('published','deprecated')",
     )
     .fetch_all(&storage.pool())
     .await
@@ -241,7 +251,28 @@ pub async fn commit_prices(
             )
         })
         .collect::<Vec<(Uuid, String)>>();
-    let (mapped, missing) = map_prices(&source, &catalog)?;
+    let (mut mapped, mut missing) = map_prices(&source, &catalog)?;
+    let openai_prices = parse_provider_prices(source_bytes, "openai")?;
+    let openai_models=sqlx::query("SELECT id,upstream_model_id FROM catalog.model_definition WHERE provider_code='openai' AND lifecycle_code IN ('published','deprecated')").fetch_all(&storage.pool()).await.map_err(|_|PriceSyncError::Database)?;
+    for row in openai_models {
+        let id: Uuid = row.try_get("id").map_err(|_| PriceSyncError::Database)?;
+        let name: String = row.try_get("upstream_model_id").map_err(|_| PriceSyncError::Database)?;
+        if let Some(price) = openai_prices
+            .iter()
+            .find(|p| p.model_id.strip_prefix("openai/").unwrap_or(&p.model_id) == name)
+        {
+            mapped.push(MappedPrice {
+                model_id: id,
+                source_model_id: price.model_id.clone(),
+                input_per_million: price.input_per_million.clone(),
+                output_per_million: price.output_per_million.clone(),
+                cache_write_per_million: price.cache_write_per_million.clone(),
+                cache_read_per_million: price.cache_read_per_million.clone(),
+            });
+        } else {
+            missing.push(name);
+        }
+    }
     if mapped.is_empty() {
         return Err(PriceSyncError::InvalidEntry);
     }

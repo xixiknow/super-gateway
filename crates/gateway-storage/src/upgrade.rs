@@ -1,11 +1,11 @@
 //! Durable upgrade-preflight projections.
 #![allow(missing_docs, clippy::missing_errors_doc)]
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::Row as _;
 use uuid::Uuid;
 
-use crate::{AuditOutboxRecord, PgStorage, StorageError};
+use crate::{PgStorage, StorageError};
 
 #[derive(Clone, Debug)]
 pub struct UpgradePreflightWork {
@@ -116,7 +116,7 @@ impl PgStorage {
             .await
             .map_err(map_sqlx)?;
         }
-        let revision: i64 = sqlx::query_scalar(
+        let _revision: i64 = sqlx::query_scalar(
             "UPDATE ops.upgrade_run SET preflight_state_code=$2,preflight_result=$3, \
                preflight_completed_at=clock_timestamp(),preflight_valid_until=clock_timestamp()+interval '30 minutes', \
                error_code=NULL,revision=revision+1 WHERE id=$1 RETURNING revision",
@@ -134,11 +134,7 @@ impl PgStorage {
             &format!("upgrade_preflight_{}", commit.state),
         )
         .await?;
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &system_audit("upgrade_preflight_completed", commit.run_id, revision, &commit.state),
-        )
-        .await?;
+
         transaction.commit().await.map_err(map_sqlx)
     }
 
@@ -150,7 +146,7 @@ impl PgStorage {
         error_code: &str,
     ) -> Result<(), StorageError> {
         let mut transaction = self.pool().begin().await.map_err(map_sqlx)?;
-        let revision: i64 = sqlx::query_scalar(
+        let _revision: i64 = sqlx::query_scalar(
             "UPDATE ops.upgrade_run run SET preflight_state_code='failed',error_code=$4, \
                preflight_completed_at=clock_timestamp(),preflight_valid_until=NULL,revision=revision+1 \
              FROM ops.durable_job job WHERE run.id=$1 AND run.durable_job_id=job.id AND job.id=$2 \
@@ -166,28 +162,8 @@ impl PgStorage {
         .map_err(map_sqlx)?
         .ok_or(StorageError::RevisionConflict)?;
         fail_job_in(&mut transaction, job_id, generation, error_code).await?;
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &system_audit("upgrade_preflight_failed", run_id, revision, "failed"),
-        )
-        .await?;
-        transaction.commit().await.map_err(map_sqlx)
-    }
-}
 
-fn system_audit(action: &str, object_id: Uuid, revision: i64, state: &str) -> AuditOutboxRecord {
-    AuditOutboxRecord {
-        actor_type: "system".to_owned(),
-        actor_id: None,
-        action: action.to_owned(),
-        object_type: "upgrade_check".to_owned(),
-        object_id: Some(object_id.to_string()),
-        outcome: "success".to_owned(),
-        redacted_detail: json!({"state":state}),
-        topic: action.replace('_', "."),
-        aggregate_id: object_id,
-        aggregate_revision: revision,
-        payload: json!({"upgrade_check_id":object_id,"state":state}),
+        transaction.commit().await.map_err(map_sqlx)
     }
 }
 

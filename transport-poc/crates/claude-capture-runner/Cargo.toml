@@ -23,6 +23,8 @@ clap.workspace = true
 controlled-h2-capture = { path = "../controlled-h2-capture" }
 hex.workspace = true
 percent-encoding.workspace = true
+portable-pty = "0.9"
+vt100 = "0.15"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

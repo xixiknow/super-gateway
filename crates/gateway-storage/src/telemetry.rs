@@ -52,6 +52,33 @@ impl Default for BodyCaptureConfig {
     }
 }
 
+impl BodyCaptureConfig {
+    /// Each capture stage has its own byte limit; oversized stages do not hide others.
+    #[must_use]
+    pub fn request_json(self, body: &[u8]) -> Option<Value> {
+        if !self.enabled || body.len() > self.max_bytes {
+            return None;
+        }
+        serde_json::from_slice(body).ok()
+    }
+}
+
+fn request_reasoning_effort(body: &[u8]) -> Option<String> {
+    let body: Value = serde_json::from_slice(body).ok()?;
+    for path in ["/reasoning/effort", "/reasoning_effort", "/output_config/effort"] {
+        if let Some(effort) = body.pointer(path).and_then(Value::as_str) {
+            return Some(effort.chars().take(64).collect());
+        }
+    }
+    let thinking = body.pointer("/thinking/type")?.as_str()?;
+    if thinking == "enabled"
+        && let Some(budget) = body.pointer("/thinking/budget_tokens").and_then(Value::as_u64)
+    {
+        return Some(format!("budget:{budget}"));
+    }
+    Some(thinking.chars().take(64).collect())
+}
+
 /// Operator-tunable runtime thresholds stored in `ops.system_setting`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RuntimeSettings {
@@ -94,6 +121,9 @@ impl RuntimeSettings {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestBodyCapture {
     pub request_id: Uuid,
+    pub original_headers: Option<Value>,
+    pub final_upstream_headers: Option<Value>,
+    pub upstream_response_headers: Option<Value>,
     pub original_request: Option<Value>,
     pub policy_request: Option<Value>,
     pub final_upstream_request: Option<Value>,
@@ -201,6 +231,50 @@ pub struct QuotaCurrentProjection {
 }
 
 impl PgStorage {
+    /// Lightweight request metadata survives body/header retention cleanup.
+    pub async fn record_request_client(
+        &self,
+        request_id: Uuid,
+        identity: &gateway_domain::ClientIdentity,
+        request_type: &str,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            "UPDATE telemetry.request_record SET client_name=$2,client_version=$3,request_type=$4 WHERE request_id=$1",
+        )
+        .bind(request_id)
+        .bind(&identity.name)
+        .bind(&identity.version)
+        .bind(request_type)
+        .execute(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        Ok(())
+    }
+
+    /// First output and completion arrive independently; neither may erase the other.
+    pub async fn record_request_timing(
+        &self,
+        request_id: Uuid,
+        first_content_ms: Option<i64>,
+        duration_ms: Option<i64>,
+    ) -> Result<(), StorageError> {
+        sqlx::query("UPDATE telemetry.request_record SET first_content_ms=COALESCE(first_content_ms,$2),duration_ms=COALESCE(duration_ms,$3) WHERE request_id=$1")
+            .bind(request_id).bind(first_content_ms).bind(duration_ms)
+            .execute(&self.pool()).await.map_err(transaction_error)?;
+        Ok(())
+    }
+
+    /// Store the effective reasoning setting independently of optional body retention.
+    pub async fn record_request_reasoning(&self, request_id: Uuid, body: &[u8]) -> Result<(), StorageError> {
+        sqlx::query("UPDATE telemetry.request_record SET reasoning_effort=$2 WHERE request_id=$1")
+            .bind(request_id)
+            .bind(request_reasoning_effort(body))
+            .execute(&self.pool())
+            .await
+            .map_err(transaction_error)?;
+        Ok(())
+    }
+
     pub async fn body_capture_config(&self) -> Result<BodyCaptureConfig, StorageError> {
         let rows = sqlx::query("SELECT key,value FROM ops.system_setting WHERE key LIKE 'body_capture.%'")
             .fetch_all(&self.pool())
@@ -339,6 +413,51 @@ impl PgStorage {
         transaction.commit().await.map_err(transaction_error)
     }
 
+    pub async fn capture_original_headers(
+        &self,
+        request_id: Uuid,
+        headers: &gateway_domain::HeaderSnapshot,
+    ) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            "INSERT INTO telemetry.request_body(request_month,request_id,original_headers) \
+             SELECT request_month,$1,$2 FROM telemetry.request_record WHERE request_id=$1 \
+             ON CONFLICT(request_month,request_id) DO UPDATE SET original_headers=EXCLUDED.original_headers,captured_at=clock_timestamp()",
+        ).bind(request_id).bind(serde_json::to_value(headers).map_err(|_| StorageError::TransactionFailed)?)
+            .execute(&self.pool()).await.map_err(transaction_error)?;
+        require_single(result.rows_affected())
+    }
+
+    /// Reset both upstream snapshots together before preparing a new attempt.
+    pub async fn begin_header_attempt(&self, request_id: Uuid, ordinal: u32) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            "INSERT INTO telemetry.request_body(request_month,request_id,header_attempt_ordinal) \
+             SELECT request_month,$1,$2 FROM telemetry.request_record WHERE request_id=$1 \
+             ON CONFLICT(request_month,request_id) DO UPDATE SET header_attempt_ordinal=EXCLUDED.header_attempt_ordinal, \
+               final_upstream_headers=NULL,upstream_response_headers=NULL,captured_at=clock_timestamp()",
+        ).bind(request_id).bind(i32::try_from(ordinal).map_err(|_| StorageError::TransactionFailed)?)
+            .execute(&self.pool()).await.map_err(transaction_error)?;
+        require_single(result.rows_affected())
+    }
+
+    /// The ordinal fence rejects stale capture events from an older attempt.
+    pub async fn capture_upstream_headers(
+        &self,
+        request_id: Uuid,
+        response: bool,
+        headers: &gateway_domain::HeaderSnapshot,
+    ) -> Result<(), StorageError> {
+        let ordinal = headers.attempt_ordinal.ok_or(StorageError::TransactionFailed)?;
+        let result = sqlx::query(
+            "UPDATE telemetry.request_body SET \
+               final_upstream_headers=CASE WHEN $3 THEN final_upstream_headers ELSE $4 END, \
+               upstream_response_headers=CASE WHEN $3 THEN $4 ELSE upstream_response_headers END,captured_at=clock_timestamp() \
+             WHERE request_id=$1 AND header_attempt_ordinal=$2",
+        ).bind(request_id).bind(i32::try_from(ordinal).map_err(|_| StorageError::TransactionFailed)?)
+            .bind(response).bind(serde_json::to_value(headers).map_err(|_| StorageError::TransactionFailed)?)
+            .execute(&self.pool()).await.map_err(transaction_error)?;
+        require_single(result.rows_affected())
+    }
+
     pub async fn capture_request_body(
         &self,
         request_id: Uuid,
@@ -359,6 +478,23 @@ impl PgStorage {
         .bind(original_request)
         .bind(policy_request)
         .bind(final_upstream_request)
+        .execute(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        require_single(result.rows_affected())
+    }
+
+    /// Replace this stage even when an attempt exceeds the capture limit, so a
+    /// previous attempt's final body is never presented as the current one.
+    pub async fn capture_final_request_body(&self, request_id: Uuid, body: Option<Value>) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            "INSERT INTO telemetry.request_body(request_month,request_id,final_upstream_request) \
+             SELECT request_month,$1,$2 FROM telemetry.request_record WHERE request_id=$1 \
+             ON CONFLICT(request_month,request_id) DO UPDATE SET \
+               final_upstream_request=EXCLUDED.final_upstream_request,body_digest_mismatch=false,captured_at=clock_timestamp()",
+        )
+        .bind(request_id)
+        .bind(body)
         .execute(&self.pool())
         .await
         .map_err(transaction_error)?;
@@ -414,7 +550,7 @@ impl PgStorage {
 
     pub async fn get_request_body(&self, request_id: Uuid) -> Result<Option<RequestBodyCapture>, StorageError> {
         let row = sqlx::query(
-            "SELECT rb.request_id,rb.original_request,rb.policy_request,rb.final_upstream_request,rb.upstream_response,rb.upstream_response_final,rb.captured_at::text AS captured_at,rb.body_digest_mismatch \
+            "SELECT rb.request_id,rb.original_headers,rb.final_upstream_headers,rb.upstream_response_headers,rb.original_request,rb.policy_request,rb.final_upstream_request,rb.upstream_response,rb.upstream_response_final,rb.captured_at::text AS captured_at,rb.body_digest_mismatch \
              FROM telemetry.request_body rb WHERE rb.request_id=$1 ORDER BY rb.request_month DESC LIMIT 1",
         )
         .bind(request_id)
@@ -424,6 +560,11 @@ impl PgStorage {
         row.map(|row| {
             Ok(RequestBodyCapture {
                 request_id: sqlx::Row::try_get(&row, "request_id").map_err(transaction_error)?,
+                original_headers: sqlx::Row::try_get(&row, "original_headers").map_err(transaction_error)?,
+                final_upstream_headers: sqlx::Row::try_get(&row, "final_upstream_headers")
+                    .map_err(transaction_error)?,
+                upstream_response_headers: sqlx::Row::try_get(&row, "upstream_response_headers")
+                    .map_err(transaction_error)?,
                 original_request: sqlx::Row::try_get(&row, "original_request").map_err(transaction_error)?,
                 policy_request: sqlx::Row::try_get(&row, "policy_request").map_err(transaction_error)?,
                 final_upstream_request: sqlx::Row::try_get(&row, "final_upstream_request")
@@ -549,11 +690,13 @@ impl PgStorage {
 
     /// Resolve the immutable model row selected by the validated request.
     pub async fn resolve_model_id(&self, upstream_model_id: &str) -> Result<Option<Uuid>, StorageError> {
-        sqlx::query_scalar("SELECT id FROM catalog.model_definition WHERE upstream_model_id=$1")
-            .bind(upstream_model_id)
-            .fetch_optional(&self.pool())
-            .await
-            .map_err(transaction_error)
+        sqlx::query_scalar(
+            "SELECT id FROM catalog.model_definition WHERE upstream_model_id=$1 AND provider_code='anthropic'",
+        )
+        .bind(upstream_model_id)
+        .fetch_optional(&self.pool())
+        .await
+        .map_err(transaction_error)
     }
 
     /// Load the price that was effective when the request was accepted.
@@ -1017,6 +1160,46 @@ impl PgStorage {
                 .ok_or(StorageError::RevisionConflict)?;
         }
         let counts = record.observation.counts;
+        // A lost commit acknowledgement may replay the same official observation ID.
+        // Validate its contents before accepting the retry; never append another cost basis.
+        if record.observation.source == UsageSource::Official {
+            let existing = sqlx::query("SELECT is_final_basis,attempt_id,model_id,source_code,completeness_code,input_tokens,output_tokens,cache_creation_input_tokens,cache_read_input_tokens FROM telemetry.usage_observation WHERE id=$1 AND request_id=$2")
+                .bind(record.observation_id).bind(record.request_id).fetch_optional(&mut *transaction).await.map_err(transaction_error)?;
+            if let Some(row) = existing {
+                use sqlx::Row as _;
+                let same = row
+                    .try_get::<Option<Uuid>, _>("attempt_id")
+                    .map_err(transaction_error)?
+                    == record.attempt_id
+                    && row.try_get::<Option<Uuid>, _>("model_id").map_err(transaction_error)? == record.model_id
+                    && row.try_get::<String, _>("source_code").map_err(transaction_error)? == "official"
+                    && row
+                        .try_get::<String, _>("completeness_code")
+                        .map_err(transaction_error)?
+                        == usage_completeness_code(record.observation.completeness);
+                let same_counts = [
+                    ("input_tokens", counts.input_tokens),
+                    ("output_tokens", counts.output_tokens),
+                    ("cache_creation_input_tokens", counts.cache_creation_input_tokens),
+                    ("cache_read_input_tokens", counts.cache_read_input_tokens),
+                ]
+                .into_iter()
+                .all(|(name, value)| {
+                    row.try_get::<Option<i64>, _>(name).ok() == Some(value.and_then(|v| i64::try_from(v).ok()))
+                });
+                if !same || !same_counts {
+                    return Err(StorageError::RevisionConflict);
+                }
+                let selected: bool = row.try_get("is_final_basis").map_err(transaction_error)?;
+                if let Some(cost) = cost {
+                    persist_cost(&mut transaction, record, cost, selected).await?;
+                }
+                if selected {
+                    refresh_usage_aggregates(&mut transaction, record, cost).await?;
+                }
+                return transaction.commit().await.map_err(transaction_error);
+            }
+        }
         let cancel = record.cancel_evidence.as_ref();
         let usage_row = sqlx::query(
             "INSERT INTO telemetry.usage_observation \
@@ -1768,6 +1951,44 @@ mod tests {
     use gateway_domain::{UsageCompleteness, UsageSource};
 
     use super::{aggregate_sse_message, decimal_usd_to_pico, quota_nanos_decimal, usage_basis_rank};
+
+    #[test]
+    fn reasoning_metadata_supports_both_providers_without_body_capture() {
+        for (body, expected) in [
+            (r#"{"reasoning":{"effort":"high"}}"#, Some("high")),
+            (r#"{"reasoning_effort":"low"}"#, Some("low")),
+            (
+                r#"{"output_config":{"effort":"max"},"thinking":{"type":"adaptive"}}"#,
+                Some("max"),
+            ),
+            (r#"{"thinking":{"type":"adaptive"}}"#, Some("adaptive")),
+            (
+                r#"{"thinking":{"type":"enabled","budget_tokens":4096}}"#,
+                Some("budget:4096"),
+            ),
+            (r#"{"thinking":{"type":"disabled"}}"#, Some("disabled")),
+            (r#"{"messages":[]}"#, None),
+            (r#"{"reasoning":{"effort":42}}"#, None),
+        ] {
+            assert_eq!(super::request_reasoning_effort(body.as_bytes()).as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn request_capture_is_opt_in_and_bounded_per_stage() {
+        let small = br#"{"model":"test"}"#;
+        assert!(super::BodyCaptureConfig::default().request_json(small).is_none());
+        let config = super::BodyCaptureConfig {
+            enabled: true,
+            max_bytes: small.len(),
+            ..Default::default()
+        };
+        assert!(config.request_json(small).is_some());
+        assert!(config.request_json(br#"{"model":"oversized"}"#).is_none());
+        assert!(config.request_json(b"invalid").is_none());
+        // A skipped stage must not prevent a later smaller stage from being captured.
+        assert!(config.request_json(small).is_some());
+    }
 
     #[test]
     fn catalog_prices_convert_to_pico_usd_exactly() {

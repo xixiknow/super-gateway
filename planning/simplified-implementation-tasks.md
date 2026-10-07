@@ -247,6 +247,12 @@ flowchart LR
 
 ### T4.1 采集三 OS Archetype + Bundle(含 Windows 重采集;外部依赖)
 
+**两项问题已解决（2026-09-18）**：新增真正交互 PTY 采集并断言实际 UA 为 `cli`；TLS 重放改为完整 ClientHello 到达后返回，解除等双向 EOF 的超时。`transport-poc/var/real-capture/windows-2.1.245-cli-20260918` 已完成 20/20 配对采集、20/20 稳定性与 TLS/H1 重放、零 blocker 审计和正式签名/验签，29 项相关单测通过。尚未导入或激活；真实 OAuth beta 基线、模板导入和其他 OS 仍待完成，因此 T4.1 不标记完成。
+
+**Windows 实采进展（2026-09-18）**：`transport-poc/var/real-capture/windows-2.1.245-20260918-v2` 已完成 2.1.245 的 20/20 组配对证据与静态模板导出，20 轮模板哈希一致。发现并适配同块静态/动态分段；正式 TLS 重放首轮超时，尚未签名或激活。实际 UA 仍为 `sdk-cli`，且采用合成认证，尚未满足下列真实 `cli`/OAuth 基线条件。详见产物目录 `CAPTURE-REPORT.md`。
+
+**工具准备进展（2026-09-17，未开始新采集）**：已补可配置版本、本机平台检查、离线 `--preflight`、`--evidence-only`、绑定身份的续跑检查及静态 system 模板独立导出。正式签名/自动导入仍为 Windows x64 H1；合成认证证据与真实 OAuth 基线分开记录，模板仍需单独写入原型。以下三 OS 真实采集、签名、导入及激活完成标准尚未达成。
+
 **目标**(蓝图 §6.2):三 OS 各一套原型 + 签名 Bundle + 静态 system 模板 + 真实抓包样例。
 
 **为什么 Windows 也要重采**:现有 `crates/super-gatewayd/assets/windows-claude-code-2.1.241-h1.signed.json` 有三处与规范不符——`:93` UA 为 `claude-cli/2.1.241 (external, sdk-cli)`,真实 CLI entrypoint 是 `cli`;`:143` `anthropic-beta` 是字面量且缺 `oauth-2025-04-20`、`extended-cache-ttl-2025-04-11`(应改为 `{anthropic_beta}` 占位,值由原型固定集填充,见 T4.3);资产不含静态 system 模板。它是签名工件,改值必须走采集工具重签。

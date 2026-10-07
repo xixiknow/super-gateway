@@ -29,14 +29,20 @@ cargo test --workspace
 
 真实服务配置从 `GATEWAY_` 前缀环境变量、`.env` 和 secret file reference 加载。示例见 [`.env.example`](.env.example)，示例文件只含占位值。
 
-> **仓库路径含非 ASCII 字符时**（例如中文目录）：BoringSSL 的 Windows NASM 构建无法处理非 ASCII 中间路径，`cargo build` 会失败。请把 Cargo 中间产物放到 ASCII 路径——设环境变量 `CARGO_TARGET_DIR=C:/some-ascii-path`，或在仓库根自建 `.cargo/config.toml`（已被 `.gitignore` 忽略，不要提交）：
->
-> ```toml
-> [build]
-> target-dir = "C:/codex-targets/super-gateway-runtime"
-> ```
+> Windows 推荐使用下方启动脚本。脚本将 Cargo 产物固定在项目 `target/` 内；中文路径使用本地 CMake 配置关闭 BoringSSL 汇编，避开 NASM 路径问题。已有自定义 `CMAKE_TOOLCHAIN_FILE` 时保留该配置。
+> 开发构建仅对 `boring-sys` 启用一级优化，使其 CMake 构建使用 `RelWithDebInfo` 和非调试版 MSVC 运行库，避免自定义 toolchain 下的 `MSVCRTD` / `__imp__CrtDbgReport` 链接冲突；网关本身仍使用 dev 配置。
 
 ## Windows 本机运行
+
+双击根目录的 [`start-windows.cmd`](start-windows.cmd)，或在终端运行：
+
+```powershell
+.\start-windows.cmd
+.\start-windows.cmd -Check       # 只检查依赖路径，不启动或迁移数据库
+.\start-windows.cmd -SkipBuild   # 复用已构建程序；更新代码后请使用默认启动
+```
+
+默认启动会先构建管理前端到 `web/admin-console/dist`，再编译并嵌入最新页面；任何构建失败均停止启动。首次构建需要 Rust MSVC、Visual Studio C++ Build Tools、CMake、LLVM/libclang、Node.js 20.19+ 或 22.12+，以及 PostgreSQL 16+。按 Ctrl+C 正常停止网关。脚本固定使用项目内 `.super-gateway-local/` 保存本地数据，支持通过 `GATEWAY_LOCAL_POSTGRES_BIN` 指定 PostgreSQL 工具目录。
 
 本机开发模式不依赖 Docker。它使用已安装的 PostgreSQL 16+ 工具创建隔离的
 `.super-gateway-local/` 数据集群，不修改 Windows 中已有的 PostgreSQL 服务或数据库。
@@ -51,7 +57,7 @@ cargo run --locked -p super-gatewayd -- local
 2. 首次运行初始化私有 cluster，并自动选择一个空闲回环端口；
 3. 创建缺失的 `super_gateway` 数据库；
 4. 执行当前二进制内嵌的全部 SQLx migration，后续版本新增 migration 也在启动时自动应用；
-5. 生成本地 digest/audit key 和首次管理员密码；
+5. 生成本地 digest key 和首次管理员密码；
 6. 验签、编译并幂等登记内置的 Windows Claude Code 2.1.241 Bundle；
 7. 启动数据面 `127.0.0.1:8080` 与管理面 `127.0.0.1:8081`。
 

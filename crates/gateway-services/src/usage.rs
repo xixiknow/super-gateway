@@ -18,6 +18,7 @@ const TOKENS_PER_MILLION: u128 = 1_000_000;
 /// Parses complete SSE events beside the byte relay. Input bytes are never mutated or returned from this type.
 #[derive(Clone, Debug, Default)]
 pub struct UsageObserver {
+    first_content_at: Option<std::time::Instant>,
     line_buffer: Vec<u8>,
     event_data: Vec<u8>,
     non_stream_scanner: JsonUsageScanner,
@@ -50,6 +51,8 @@ pub struct SseUsageEvidence {
 /// Official observation plus cancellation-safe side-channel evidence.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObservedResponseUsage {
+    /// First nonempty generated content, sampled before persistence or buffering.
+    pub first_content_at: Option<std::time::Instant>,
     pub official: UsageObservation,
     pub sse: Option<SseUsageEvidence>,
     pub upstream_bytes_received: u64,
@@ -238,6 +241,7 @@ impl UsageObserver {
             self.saw_message_stop = true;
         }
         ObservedResponseUsage {
+            first_content_at: self.first_content_at,
             official: self.finish(body_complete),
             sse: None,
             upstream_bytes_received: 0,
@@ -281,6 +285,7 @@ impl UsageObserver {
             gap: self.output_gap || self.observer_overflowed,
         };
         ObservedResponseUsage {
+            first_content_at: self.first_content_at,
             official: self.finish(body_complete),
             sse: Some(evidence),
             upstream_bytes_received: 0,
@@ -371,7 +376,13 @@ impl UsageObserver {
                 continue;
             };
             self.output_content_seen = true;
-            match self.output_content_bytes.checked_add(fragment.len() as u64) {
+            if !fragment.is_empty() && self.first_content_at.is_none() {
+                self.first_content_at = Some(std::time::Instant::now());
+            }
+            match self
+                .output_content_bytes
+                .checked_add(u64::try_from(fragment.len()).unwrap_or(u64::MAX))
+            {
                 Some(total) => self.output_content_bytes = total,
                 None => self.output_gap = true,
             }
@@ -561,6 +572,7 @@ fn unreachable_usage() -> UsageObservation {
 
 fn unreachable_observed(streaming: bool) -> ObservedResponseUsage {
     ObservedResponseUsage {
+        first_content_at: None,
         official: unreachable_usage(),
         sse: streaming.then_some(SseUsageEvidence {
             complete_event_ordinal: 0,
@@ -665,6 +677,35 @@ mod tests {
     use gateway_domain::{PriceSnapshot, TokenCounts, UsageCompleteness, UsageObservation, UsageSource};
 
     use super::{EncodedUsageObserver, UsageObserver, calculate_cost, select_final_basis};
+
+    #[test]
+    fn first_output_ignores_metadata_empty_deltas_and_signatures() {
+        let mut observer = EncodedUsageObserver::new(None, true);
+        for event in [
+            serde_json::json!({"type":"message_start"}),
+            serde_json::json!({"type":"content_block_delta","delta":{"type":"text_delta","text":""}}),
+            serde_json::json!({"type":"content_block_delta","delta":{"type":"signature_delta","signature":"ignored"}}),
+        ] {
+            observer.observe(format!("data: {event}\n\n").as_bytes());
+        }
+        assert!(observer.finish(false).first_content_at.is_none());
+        for (kind, field) in [
+            ("text_delta", "text"),
+            ("thinking_delta", "thinking"),
+            ("input_json_delta", "partial_json"),
+        ] {
+            let mut observer = UsageObserver::default();
+            let event = serde_json::json!({"type":"content_block_delta","delta":{"type":kind,field:"output"}});
+            let wire = format!("data: {event}\n\n");
+            for byte in wire.bytes() {
+                observer.observe_sse_bytes(&[byte]);
+            }
+            let first = observer.first_content_at;
+            assert!(first.is_some());
+            observer.observe_sse_bytes(wire.as_bytes());
+            assert_eq!(observer.finish_observed(true).first_content_at, first);
+        }
+    }
 
     #[test]
     fn arbitrary_sse_chunks_are_observed_without_reassembly_assumptions() {

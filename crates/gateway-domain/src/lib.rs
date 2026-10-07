@@ -1,16 +1,20 @@
 #![forbid(unsafe_code)]
 //! Pure domain types shared by the gateway adapters.
 
+mod client_identity;
 mod clock;
 mod credential;
 mod error;
+mod header_capture;
 mod ids;
+mod provider;
 mod readiness;
 mod request;
 mod response;
 mod secret;
 mod transport;
 
+pub use client_identity::ClientIdentity;
 pub use clock::{Clock, SystemClock, TimePoint};
 pub use credential::{
     AnthropicAccountUuid, ArchetypeCandidate, AttachmentState, AuthKind, AuthState, BrowserChallenge,
@@ -22,12 +26,14 @@ pub use credential::{
     RefreshPolicy, SubmittedAuthMaterial, TransportState, choose_archetype, choose_egress,
 };
 pub use error::{DomainError, DomainResult};
+pub use header_capture::{CapturedHeader, HeaderSnapshot, HeaderTransport};
 pub use ids::{
     AgentId, ArchetypeVersionId, AttemptPlanId, AuthVersionId, AutoReauthStrategyId, BrowserMaterialVersionId,
     ConnectionAttemptId, CredentialId, CredentialProfileId, DeviceIdentityId, EgressBindingId, EnrollmentId, GroupId,
     LeaseId, MaintenanceOperationId, PlatformKeyId, ProxyEndpointId, RequestId, SecretId, SessionId, TicketId,
     TransportBundleId, TypedId, UserId,
 };
+pub use provider::{OpenAiAuthKind, OpenAiEndpoint, Provider};
 pub use readiness::{ApplicationLifecycle, InternalReadiness, PublicReadiness, ReadinessBlocker};
 pub use request::{
     AppliedChange, ChangeRisk, ClientClass, ClientOs, Digest, FieldPresence, GenericAdjustedRequest, OsResolution,

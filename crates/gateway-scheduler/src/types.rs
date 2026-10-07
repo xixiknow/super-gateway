@@ -209,6 +209,8 @@ pub struct CredentialConfig {
     pub attribution_optional: bool,
     pub session_capacity: SessionCapacityConfig,
     pub token_version: u64,
+    /// Standard OpenAI transport projection; mutually exclusive with Claude profiles.
+    pub openai_transport: Option<OpenAiTransportConfig>,
     pub profiles: BTreeMap<ClientOs, CredentialProfileConfig>,
     pub quota_observation_version: Option<u128>,
     pub state: CredentialState,
@@ -227,6 +229,20 @@ pub struct CredentialProfileConfig {
     pub egress_binding_id: EgressBindingId,
     pub egress_epoch: u64,
     pub bundle_epoch: u64,
+}
+
+/// Frozen standard transport configuration; no Claude Bundle is involved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenAiTransportConfig {
+    pub revision: u64,
+    pub egress_epoch: u64,
+}
+
+/// Provider-specific execution identity carried by a common scheduler Lease.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CredentialExecution {
+    Anthropic(CredentialProfileConfig),
+    OpenAi(OpenAiTransportConfig),
 }
 
 #[derive(Clone, Debug)]
@@ -323,18 +339,19 @@ pub struct CredentialLease {
     pub client_os: ClientOs,
     pub owner_generation: OwnerGeneration,
     pub token_version: u64,
-    pub profile_id: CredentialProfileId,
-    pub profile_epoch: u64,
-    pub device_identity_id: DeviceIdentityId,
-    pub device_epoch: u64,
-    pub archetype_version_id: ArchetypeVersionId,
-    pub bundle_id: TransportBundleId,
-    pub bundle_version: u64,
-    pub bundle_hash: Digest,
-    pub egress_binding_id: EgressBindingId,
-    pub egress_epoch: u64,
-    pub bundle_epoch: u64,
+    pub execution: CredentialExecution,
     pub half_open: bool,
+}
+
+impl CredentialLease {
+    /// Obtain an Anthropic profile only after checking the execution variant.
+    #[must_use]
+    pub const fn anthropic_profile(&self) -> Option<&CredentialProfileConfig> {
+        match &self.execution {
+            CredentialExecution::Anthropic(profile) => Some(profile),
+            CredentialExecution::OpenAi(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

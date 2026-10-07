@@ -15,7 +15,7 @@ use sqlx::{Postgres, Row, Transaction};
 use subtle::ConstantTimeEq as _;
 use uuid::Uuid;
 
-use crate::{AuditOutboxRecord, PgStorage, StorageError};
+use crate::{PgStorage, StorageError};
 
 const EGRESS_ALLOCATION_LOCK: i64 = 0x4757_4547_5245_5353;
 
@@ -1986,7 +1986,7 @@ impl PgStorage {
             .await
             .map_err(transaction_error)?
         };
-        append_credential_event_with_outcome(
+        append_credential_event(
             &mut transaction,
             update.credential_id,
             None,
@@ -1995,7 +1995,6 @@ impl PgStorage {
             next_revision,
             json!({"operation_generation": update.operation_generation, "state": update.state,
                    "outcome": update.outcome, "error_category": update.error_category}),
-            "failed",
         )
         .await?;
         transaction.commit().await.map_err(transaction_error)
@@ -2658,21 +2657,12 @@ impl PgStorage {
         &self,
         command: &ProfileCohortUpgrade,
     ) -> Result<ProfileContinuityCommit, StorageError> {
-        self.upgrade_profile_cohort_internal(command, None).await
-    }
-
-    pub async fn upgrade_profile_cohort_with_audit(
-        &self,
-        command: &ProfileCohortUpgrade,
-        audit: &AuditOutboxRecord,
-    ) -> Result<ProfileContinuityCommit, StorageError> {
-        self.upgrade_profile_cohort_internal(command, Some(audit)).await
+        self.upgrade_profile_cohort_internal(command).await
     }
 
     async fn upgrade_profile_cohort_internal(
         &self,
         command: &ProfileCohortUpgrade,
-        audit: Option<&AuditOutboxRecord>,
     ) -> Result<ProfileContinuityCommit, StorageError> {
         if command.target_capture_cohort.trim().is_empty() || command.reason_code.trim().is_empty() {
             return Err(StorageError::InvalidLifecycle);
@@ -2805,9 +2795,6 @@ impl PgStorage {
                    "egress_epoch": egress_epoch, "pool_action": "drain"}),
         )
         .await?;
-        if let Some(audit) = audit {
-            self.append_audit_outbox_in(&mut transaction, audit).await?;
-        }
         transaction.commit().await.map_err(transaction_error)?;
         Ok(ProfileContinuityCommit {
             credential_revision: next_credential_revision,
@@ -2837,7 +2824,7 @@ impl PgStorage {
             return Err(StorageError::InvalidLifecycle);
         }
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
-        let result = self.rebuild_device_identity_in(&mut transaction, command, None).await;
+        let result = self.rebuild_device_identity_in(&mut transaction, command).await;
         match result {
             Ok(commit) => {
                 transaction.commit().await.map_err(transaction_error)?;
@@ -2856,7 +2843,6 @@ impl PgStorage {
         &self,
         transaction: &mut Transaction<'_, Postgres>,
         command: &DeviceIdentityRebuild,
-        audit: Option<&AuditOutboxRecord>,
     ) -> Result<ProfileContinuityCommit, StorageError> {
         if command.requested_by == command.approved_by
             || command.reason_code.trim().is_empty()
@@ -2976,9 +2962,6 @@ impl PgStorage {
                    "affinity_action": "clear", "pool_action": "drain"}),
         )
         .await?;
-        if let Some(audit) = audit {
-            self.append_audit_outbox_in(transaction, audit).await?;
-        }
         Ok(ProfileContinuityCommit {
             credential_revision: next_credential_revision,
             profile_epoch: next_profile_epoch,
@@ -3001,22 +2984,10 @@ impl PgStorage {
     }
 
     pub async fn disable_credential(&self, command: &CredentialLifecycleCommand) -> Result<i64, StorageError> {
-        self.disable_credential_internal(command, None).await
+        self.disable_credential_internal(command).await
     }
 
-    pub async fn disable_credential_with_audit(
-        &self,
-        command: &CredentialLifecycleCommand,
-        audit: &AuditOutboxRecord,
-    ) -> Result<i64, StorageError> {
-        self.disable_credential_internal(command, Some(audit)).await
-    }
-
-    async fn disable_credential_internal(
-        &self,
-        command: &CredentialLifecycleCommand,
-        audit: Option<&AuditOutboxRecord>,
-    ) -> Result<i64, StorageError> {
+    async fn disable_credential_internal(&self, command: &CredentialLifecycleCommand) -> Result<i64, StorageError> {
         validate_lifecycle_command(command)?;
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
         let next_revision: Option<i64> = sqlx::query_scalar(
@@ -3040,30 +3011,15 @@ impl PgStorage {
             json!({"actor_id": command.actor_id, "reason_code": command.reason_code}),
         )
         .await?;
-        if let Some(audit) = audit {
-            self.append_audit_outbox_in(&mut transaction, audit).await?;
-        }
         transaction.commit().await.map_err(transaction_error)?;
         Ok(next_revision)
     }
 
     pub async fn reactivate_credential(&self, command: &CredentialLifecycleCommand) -> Result<i64, StorageError> {
-        self.reactivate_credential_internal(command, None).await
+        self.reactivate_credential_internal(command).await
     }
 
-    pub async fn reactivate_credential_with_audit(
-        &self,
-        command: &CredentialLifecycleCommand,
-        audit: &AuditOutboxRecord,
-    ) -> Result<i64, StorageError> {
-        self.reactivate_credential_internal(command, Some(audit)).await
-    }
-
-    async fn reactivate_credential_internal(
-        &self,
-        command: &CredentialLifecycleCommand,
-        audit: Option<&AuditOutboxRecord>,
-    ) -> Result<i64, StorageError> {
+    async fn reactivate_credential_internal(&self, command: &CredentialLifecycleCommand) -> Result<i64, StorageError> {
         validate_lifecycle_command(command)?;
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
         let row = sqlx::query(
@@ -3128,30 +3084,15 @@ impl PgStorage {
             json!({"actor_id": command.actor_id, "reason_code": command.reason_code}),
         )
         .await?;
-        if let Some(audit) = audit {
-            self.append_audit_outbox_in(&mut transaction, audit).await?;
-        }
         transaction.commit().await.map_err(transaction_error)?;
         Ok(next_revision)
     }
 
     pub async fn revoke_credential(&self, command: &CredentialLifecycleCommand) -> Result<i64, StorageError> {
-        self.revoke_credential_internal(command, None).await
+        self.revoke_credential_internal(command).await
     }
 
-    pub async fn revoke_credential_with_audit(
-        &self,
-        command: &CredentialLifecycleCommand,
-        audit: &AuditOutboxRecord,
-    ) -> Result<i64, StorageError> {
-        self.revoke_credential_internal(command, Some(audit)).await
-    }
-
-    async fn revoke_credential_internal(
-        &self,
-        command: &CredentialLifecycleCommand,
-        audit: Option<&AuditOutboxRecord>,
-    ) -> Result<i64, StorageError> {
+    async fn revoke_credential_internal(&self, command: &CredentialLifecycleCommand) -> Result<i64, StorageError> {
         validate_lifecycle_command(command)?;
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
         let next_revision: Option<i64> = sqlx::query_scalar(
@@ -3178,9 +3119,6 @@ impl PgStorage {
                    "secret_cleanup": "after_lease_and_maintenance_drain"}),
         )
         .await?;
-        if let Some(audit) = audit {
-            self.append_audit_outbox_in(&mut transaction, audit).await?;
-        }
         transaction.commit().await.map_err(transaction_error)?;
         Ok(next_revision)
     }
@@ -3250,24 +3188,13 @@ impl PgStorage {
         command: &CredentialLifecycleCommand,
         active_leases: u32,
     ) -> Result<i64, StorageError> {
-        self.archive_credential_internal(command, active_leases, None).await
-    }
-
-    pub async fn archive_credential_with_audit(
-        &self,
-        command: &CredentialLifecycleCommand,
-        active_leases: u32,
-        audit: &AuditOutboxRecord,
-    ) -> Result<i64, StorageError> {
-        self.archive_credential_internal(command, active_leases, Some(audit))
-            .await
+        self.archive_credential_internal(command, active_leases).await
     }
 
     async fn archive_credential_internal(
         &self,
         command: &CredentialLifecycleCommand,
         active_leases: u32,
-        audit: Option<&AuditOutboxRecord>,
     ) -> Result<i64, StorageError> {
         validate_lifecycle_command(command)?;
         if active_leases != 0 {
@@ -3320,9 +3247,6 @@ impl PgStorage {
                    "account_uuid_tombstone": "retained"}),
         )
         .await?;
-        if let Some(audit) = audit {
-            self.append_audit_outbox_in(&mut transaction, audit).await?;
-        }
         transaction.commit().await.map_err(transaction_error)?;
         Ok(next_revision)
     }
@@ -3930,37 +3854,9 @@ pub(crate) async fn append_credential_event(
     revision: i64,
     detail: Value,
 ) -> Result<(), StorageError> {
-    append_credential_event_with_outcome(
-        transaction,
-        credential_id,
-        enrollment_id,
-        operation_id,
-        action,
-        revision,
-        detail,
-        "success",
-    )
-    .await
-}
-
-async fn append_credential_event_with_outcome(
-    transaction: &mut Transaction<'_, Postgres>,
-    credential_id: Uuid,
-    enrollment_id: Option<Uuid>,
-    operation_id: Option<Uuid>,
-    action: &str,
-    revision: i64,
-    detail: Value,
-    outcome: &str,
-) -> Result<(), StorageError> {
-    if !matches!(outcome, "success" | "denied" | "failed") {
-        return Err(StorageError::InvalidLifecycle);
-    }
     let lifecycle_event_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO gateway.credential_lifecycle_event \
-         (id,credential_id,enrollment_id,operation_id,event_kind_code,aggregate_revision,redacted_detail,occurred_at) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,clock_timestamp())",
+        "INSERT INTO gateway.credential_lifecycle_event          (id,credential_id,enrollment_id,operation_id,event_kind_code,aggregate_revision,redacted_detail,occurred_at)          VALUES ($1,$2,$3,$4,$5,$6,$7,clock_timestamp())",
     )
     .bind(lifecycle_event_id)
     .bind(credential_id)
@@ -3969,85 +3865,6 @@ async fn append_credential_event_with_outcome(
     .bind(action)
     .bind(revision)
     .bind(&detail)
-    .execute(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    let audit_id = Uuid::now_v7();
-    let canonical = json!({
-        "action": action,
-        "actor": "system",
-        "credential_id": credential_id,
-        "detail": detail,
-        "outcome": outcome,
-        "revision": revision
-    });
-    let event_day: String = sqlx::query_scalar("SELECT CURRENT_DATE::text")
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(transaction_error)?;
-    sqlx::query(
-        "INSERT INTO security.audit_chain_head (event_day,event_count,last_sequence,updated_at) \
-         VALUES ($1::date,0,0,clock_timestamp()) ON CONFLICT (event_day) DO NOTHING",
-    )
-    .bind(&event_day)
-    .execute(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    let head = sqlx::query(
-        "SELECT last_sequence,last_event_hash FROM security.audit_chain_head WHERE event_day=$1::date FOR UPDATE",
-    )
-    .bind(&event_day)
-    .fetch_one(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    let sequence: i64 = head
-        .try_get::<i64, _>("last_sequence")
-        .map_err(transaction_error)?
-        .checked_add(1)
-        .ok_or(StorageError::TransactionFailed)?;
-    let previous: Option<Vec<u8>> = head.try_get("last_event_hash").map_err(transaction_error)?;
-    let bytes = canonical_json_bytes(&canonical)?;
-    let hash = audit_hash(&event_day, sequence, &bytes, previous.as_deref());
-    sqlx::query(
-        "INSERT INTO security.audit_event \
-         (event_day,event_id,daily_sequence,actor_type_code,action_code,object_type_code,object_id,outcome_code, \
-          canonical_redacted_event,previous_hash,event_hash,occurred_at) \
-         VALUES ($1::date,$2,$3,'system',$4,'anthropic_credential',$5,$6,$7,$8,$9,clock_timestamp())",
-    )
-    .bind(&event_day)
-    .bind(audit_id)
-    .bind(sequence)
-    .bind(action)
-    .bind(credential_id.to_string())
-    .bind(outcome)
-    .bind(&canonical)
-    .bind(&previous)
-    .bind(hash.as_slice())
-    .execute(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    sqlx::query(
-        "UPDATE security.audit_chain_head SET event_count=$2,last_sequence=$2,last_event_hash=$3,updated_at=clock_timestamp() \
-         WHERE event_day=$1::date",
-    )
-    .bind(&event_day)
-    .bind(sequence)
-    .bind(hash.as_slice())
-    .execute(&mut **transaction)
-    .await
-    .map_err(transaction_error)?;
-    sqlx::query(
-        "INSERT INTO ops.outbox_message \
-         (id,event_id,topic_code,aggregate_type,aggregate_id,aggregate_revision,payload_schema_version,payload,state_code, \
-          lease_generation,attempt_count,available_at,created_at) \
-         VALUES ($1,$2,$3,'anthropic_credential',$4,$5,1,$6,'pending',0,0,clock_timestamp(),clock_timestamp())",
-    )
-    .bind(Uuid::now_v7())
-    .bind(audit_id)
-    .bind(format!("credential.{action}"))
-    .bind(credential_id)
-    .bind(revision)
-    .bind(json!({"credential_id": credential_id, "event": action, "revision": revision}))
     .execute(&mut **transaction)
     .await
     .map_err(transaction_error)?;
@@ -4067,18 +3884,6 @@ fn canonical_json_bytes(value: &Value) -> Result<Vec<u8>, StorageError> {
         }
     }
     serde_json::to_vec(&sort(value)).map_err(|_| StorageError::TransactionFailed)
-}
-
-fn audit_hash(day: &str, sequence: i64, canonical: &[u8], previous: Option<&[u8]>) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    digest.update(b"gateway-audit-event-v1");
-    digest.update(day.as_bytes());
-    digest.update(sequence.to_be_bytes());
-    digest.update(canonical);
-    if let Some(previous) = previous {
-        digest.update(previous);
-    }
-    digest.finalize().into()
 }
 
 fn masked_account(account: Uuid) -> String {

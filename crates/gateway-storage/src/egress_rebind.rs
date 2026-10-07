@@ -5,7 +5,7 @@ use serde_json::json;
 use sqlx::Row as _;
 use uuid::Uuid;
 
-use crate::{AuditOutboxRecord, PgStorage, ProfileContinuityCommit, StorageError};
+use crate::{PgStorage, ProfileContinuityCommit, StorageError};
 
 #[derive(Clone, Debug)]
 pub struct EgressRebindCommit {
@@ -235,11 +235,7 @@ impl PgStorage {
         if changed.rows_affected() != 1 {
             return Err(StorageError::RevisionConflict);
         }
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &system_audit(commit, next_revision, next_profile_epoch, next_egress_epoch),
-        )
-        .await?;
+
         transaction.commit().await.map_err(map_sqlx)?;
         Ok(ProfileContinuityCommit {
             credential_revision: next_revision,
@@ -247,29 +243,6 @@ impl PgStorage {
             device_epoch,
             egress_epoch: next_egress_epoch,
         })
-    }
-}
-
-fn system_audit(
-    commit: &EgressRebindCommit,
-    revision: i64,
-    profile_epoch: i64,
-    egress_epoch: i64,
-) -> AuditOutboxRecord {
-    AuditOutboxRecord {
-        actor_type: "system".to_owned(),
-        actor_id: None,
-        action: "credential_egress_rebound".to_owned(),
-        object_type: "credential".to_owned(),
-        object_id: Some(commit.credential_id.to_string()),
-        outcome: "success".to_owned(),
-        redacted_detail: json!({"mode":commit.mode,"proxy_id":commit.proxy_id,
-          "profile_epoch":profile_epoch,"egress_epoch":egress_epoch}),
-        topic: "credential.egress.rebound".to_owned(),
-        aggregate_id: commit.credential_id,
-        aggregate_revision: revision,
-        payload: json!({"credential_id":commit.credential_id,"revision":revision,
-          "profile_epoch":profile_epoch,"egress_epoch":egress_epoch}),
     }
 }
 

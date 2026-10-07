@@ -12,6 +12,7 @@ export interface Principal {
 interface Envelope<T> {
   data: T;
   meta: Record<string, unknown>;
+  page?: { next_cursor?: string | null };
 }
 
 interface ApiErrorEnvelope {
@@ -35,6 +36,10 @@ export function setCsrfToken(token: string): void {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return (await apiEnvelope<T>(path, init)).data;
+}
+
+export async function apiEnvelope<T>(path: string, init: RequestInit = {}): Promise<Envelope<T>> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
@@ -50,13 +55,13 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     credentials: "include",
     cache: "no-store",
   });
-  if (response.status === 204) return undefined as T;
+  if (response.status === 204) return { data: undefined as T, meta: {} };
   const payload = (await response.json().catch(() => ({}))) as ApiErrorEnvelope | Envelope<T>;
   if (!response.ok) {
     const error = (payload as ApiErrorEnvelope).error;
     throw new ApiError(response.status, error?.message ?? "request_failed", error?.code ?? error?.type);
   }
-  return (payload as Envelope<T>).data;
+  return payload as Envelope<T>;
 }
 
 export async function login(username: string, password: string): Promise<{ next_action: string; csrf_token: string }> {

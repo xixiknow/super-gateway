@@ -5,7 +5,7 @@ use serde_json::Value;
 use sqlx::Row as _;
 use uuid::Uuid;
 
-use crate::{AuditOutboxRecord, PgStorage, StorageError};
+use crate::{PgStorage, StorageError};
 
 /// Secret-free evidence produced by one full-path Proxy probe.
 pub struct ProxyProbeCommit {
@@ -215,23 +215,7 @@ impl PgStorage {
         .execute(&mut *transaction)
         .await
         .map_err(|_| StorageError::TransactionFailed)?;
-        self.append_audit_outbox_in(
-            &mut transaction,
-            &AuditOutboxRecord {
-                actor_type: "system".to_owned(),
-                actor_id: None,
-                action: "proxy_probe_completed".to_owned(),
-                object_type: "proxy".to_owned(),
-                object_id: Some(commit.proxy_id.to_string()),
-                outcome: if healthy { "success" } else { "failed" }.to_owned(),
-                redacted_detail: serde_json::json!({"result":result_code,"probe_generation":commit.probe_generation}),
-                topic: "proxy.probe.completed".to_owned(),
-                aggregate_id: commit.proxy_id,
-                aggregate_revision: revision,
-                payload: serde_json::json!({"proxy_id":commit.proxy_id,"result":result_code,"revision":revision}),
-            },
-        )
-        .await?;
+
         transaction.commit().await.map_err(|_| StorageError::TransactionFailed)
     }
 }

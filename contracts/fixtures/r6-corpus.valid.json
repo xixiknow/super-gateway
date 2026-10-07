@@ -121,7 +121,7 @@
       "Cargo.lock"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/tls.rs": "e4fa3fc29af95f2a5386b76d6336274e010ea47586f99947b192618f617810ac",
+      "crates/gateway-transport/src/tls.rs": "1812fddbb6535a1a35a08189d298b1bd0942f18b9a42038541c16e15f29af586",
       "Cargo.lock": "2f2cf8664a7904f4510a92a664b9608ca6dcc37b0dd81720a529f51e9351ede6"
     },
     "privacy_canaries": [

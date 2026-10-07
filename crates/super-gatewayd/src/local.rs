@@ -361,6 +361,7 @@ fn discover_postgres_bin(data_dir: &Path) -> anyhow::Result<PathBuf> {
         validate_postgres_bin(&configured)?;
         return Ok(configured);
     }
+    #[cfg(target_os = "windows")]
     let required_major = std::fs::read_to_string(data_dir.join("PG_VERSION"))
         .ok()
         .and_then(|value| value.trim().parse::<u32>().ok());

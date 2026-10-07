@@ -125,7 +125,7 @@
     "scenario": "transport_production_07",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-transport-r6-v1",
-    "content_sha256": "8a145578a56b193d10451a651fde68bae728711c1a8c3c10bf0cb64ece82667c",
+    "content_sha256": "8597554b6ab58e95affd61f038b935c4159f350cc7dab1cf5f4fb80d47905790",
     "privacy_scan": "builtin-r6:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [

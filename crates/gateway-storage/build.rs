@@ -1,3 +1,5 @@
+//! Build script for the storage crate.
+
 fn main() {
     // `sqlx::migrate!` embeds the migrations directory at compile time but does
     // not register the directory as a change trigger; without this, a newly

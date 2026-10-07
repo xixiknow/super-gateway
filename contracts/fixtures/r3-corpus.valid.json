@@ -6,7 +6,7 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/edge.rs": "4498b9496ccbfe19a97fbbd498006bf4146faed34a81850029e7bb290e6a8edf"
+      "crates/gateway-api/src/edge.rs": "76d7b8de0eb7374560a029f5bf2942dc26229f9dee7e2e83d2a21301f66a74c5"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -23,7 +23,7 @@
     ],
     "source_sha256": {
       "crates/gateway-api/src/data.rs": "a9f4ea3975900d91da0f0e18db4da1c427e7f568812933d35bc101eb4ca5aaca",
-      "crates/gateway-api/src/edge.rs": "4498b9496ccbfe19a97fbbd498006bf4146faed34a81850029e7bb290e6a8edf"
+      "crates/gateway-api/src/edge.rs": "76d7b8de0eb7374560a029f5bf2942dc26229f9dee7e2e83d2a21301f66a74c5"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -40,7 +40,7 @@
     ],
     "source_sha256": {
       "crates/gateway-policy/src/parser.rs": "38e73073e208a6fc5d92753f8be0bf06c159143b90cf78342ae22f288042a522",
-      "crates/gateway-api/src/edge.rs": "4498b9496ccbfe19a97fbbd498006bf4146faed34a81850029e7bb290e6a8edf"
+      "crates/gateway-api/src/edge.rs": "76d7b8de0eb7374560a029f5bf2942dc26229f9dee7e2e83d2a21301f66a74c5"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -55,7 +55,7 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/edge.rs": "4498b9496ccbfe19a97fbbd498006bf4146faed34a81850029e7bb290e6a8edf"
+      "crates/gateway-api/src/edge.rs": "76d7b8de0eb7374560a029f5bf2942dc26229f9dee7e2e83d2a21301f66a74c5"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -149,7 +149,7 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/edge.rs": "4498b9496ccbfe19a97fbbd498006bf4146faed34a81850029e7bb290e6a8edf"
+      "crates/gateway-api/src/edge.rs": "76d7b8de0eb7374560a029f5bf2942dc26229f9dee7e2e83d2a21301f66a74c5"
     },
     "privacy_canaries": [
       "synthetic-platform-key",
@@ -183,7 +183,7 @@
     ],
     "source_sha256": {
       "crates/gateway-api/src/data.rs": "a9f4ea3975900d91da0f0e18db4da1c427e7f568812933d35bc101eb4ca5aaca",
-      "crates/gateway-api/src/edge.rs": "4498b9496ccbfe19a97fbbd498006bf4146faed34a81850029e7bb290e6a8edf"
+      "crates/gateway-api/src/edge.rs": "76d7b8de0eb7374560a029f5bf2942dc26229f9dee7e2e83d2a21301f66a74c5"
     },
     "privacy_canaries": [
       "synthetic-platform-key",

@@ -518,7 +518,7 @@ async fn openai_websocket(state: DataPlaneState, request: Request, headers: Head
                         let Ok(frame)=frame else {good=false;break;};
                         let Ok(bytes)=frame.into_data() else {continue;};
                         let Ok(events)=decoder.push(&bytes) else {good=false;break;};
-                        for event in events {terminal_sent |= matches!(event.get("type").and_then(Value::as_str),Some("response.completed"|"response.failed"|"response.incomplete"));let payload=event.to_string();let delivered=payload.len() as u64;if !matches!(tokio::time::timeout(idle,socket.send(Message::Text(payload.into()))).await,Ok(Ok(()))){good=false;break;}if let Some(delivery)=&delivery {let mut delivery=delivery.lock().unwrap_or_else(std::sync::PoisonError::into_inner);delivery.bytes_delivered=delivery.bytes_delivered.saturating_add(delivered);}}
+                        for event in events {terminal_sent |= matches!(event.get("type").and_then(Value::as_str),Some("response.completed"|"response.failed"|"response.incomplete"));let payload=event.to_string();let delivered=payload.len() as u64;if !matches!(tokio::time::timeout(idle,socket.send(Message::Text(payload.into()))).await,Ok(Ok(()))){good=false;break;}else if let Some(delivery)=&delivery {let mut delivery=delivery.lock().unwrap_or_else(std::sync::PoisonError::into_inner);delivery.bytes_delivered=delivery.bytes_delivered.saturating_add(delivered);}}
                         if !good {break;}
                     }
                 }
@@ -1484,7 +1484,10 @@ mod tests {
             Ok(())
         }
         async fn completed(&self, report: gateway_services::response::DeliveryReport) {
-            self.0.lock().unwrap_or_else(|e| e.into_inner()).push(report);
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(report);
         }
     }
 
@@ -1497,26 +1500,37 @@ mod tests {
         let limiter = KeyConcurrencyLimiter::default();
         let key = gateway_domain::PlatformKeyId::new("key-timing")?;
         let permit = limiter.try_acquire(&key, 1).ok_or("permit")?;
-        let mut response = super::upstream_response(prepared, permit, Default::default(), true)
-            .await
-            .map_err(|()| "response")?;
+        let mut response = super::upstream_response(
+            prepared,
+            permit,
+            gateway_services::observability::DataPlaneObservability::default(),
+            true,
+        )
+        .await
+        .map_err(|()| "response")?;
         let delivery = response
             .extensions_mut()
             .remove::<Arc<Mutex<super::WebSocketDelivery>>>()
             .ok_or("completion")?;
         response.into_body().collect().await?;
         tokio::task::yield_now().await;
-        assert!(completion.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
+        assert!(
+            completion
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty()
+        );
         let socket_finished = std::time::Instant::now();
         {
-            let mut delivery = delivery.lock().unwrap_or_else(|e| e.into_inner());
+            let mut delivery = delivery.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             delivery.bytes_delivered = 42;
             delivery.finish(gateway_domain::DeliveryOutcome::Complete);
             delivery.finish(gateway_domain::DeliveryOutcome::ClientDisconnected);
         }
         drop(delivery);
         tokio::task::yield_now().await;
-        let reports = completion.0.lock().unwrap_or_else(|e| e.into_inner());
+        let reports = completion.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].bytes_delivered, 42);
         assert!(reports[0].finished_at >= socket_finished);
@@ -1539,7 +1553,10 @@ mod tests {
             )
             .await?;
         assert_eq!(response.status(), 200);
-        let captured = dispatcher.captured.lock().unwrap_or_else(|e| e.into_inner());
+        let captured = dispatcher
+            .captured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(captured[0].client_identity.version.as_deref(), Some("2.1.245"));
         assert!(captured[0].started_at >= started);
         Ok(())

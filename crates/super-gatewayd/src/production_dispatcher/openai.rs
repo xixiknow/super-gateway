@@ -158,7 +158,7 @@ impl ProductionDispatcher {
         }
         let capture = self.storage.body_capture_config().await.unwrap_or_else(|_| {
             tracing::warn!(%request_id, "body capture settings unavailable");
-            Default::default()
+            gateway_storage::BodyCaptureConfig::default()
         });
         if capture.enabled
             && let Some(headers) = &request.original_headers

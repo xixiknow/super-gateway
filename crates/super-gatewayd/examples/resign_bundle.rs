@@ -28,7 +28,7 @@ fn runtime_target() -> &'static str {
 
 fn decode_hex(value: &str) -> anyhow::Result<Vec<u8>> {
     let trimmed = value.trim();
-    if trimmed.len() % 2 != 0 {
+    if !trimmed.len().is_multiple_of(2) {
         anyhow::bail!("hex value has an odd length");
     }
     (0..trimmed.len())

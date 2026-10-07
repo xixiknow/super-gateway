@@ -13193,6 +13193,7 @@ fn request_preview_data(
     })
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn request_tps(
     kind: Option<&str>,
     tokens: Option<i64>,

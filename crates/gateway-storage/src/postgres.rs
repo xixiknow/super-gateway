@@ -30,7 +30,7 @@ use crate::{StorageError, StorageHealth, StorageState};
 /// First schema version accepted by this binary.
 pub const MINIMUM_SCHEMA_VERSION: i64 = 20_260_824_000_100;
 /// Latest schema version understood by this binary.
-pub const CURRENT_SCHEMA_VERSION: i64 = 20_260_929_000_400;
+pub const CURRENT_SCHEMA_VERSION: i64 = 20_261_004_000_100;
 const BOOTSTRAP_ADVISORY_LOCK: i64 = 0x4757_4254_5354_5250;
 const BUSINESS_KEY_ADVISORY_LOCK: i64 = 0x4757_4255_534b_4559;
 

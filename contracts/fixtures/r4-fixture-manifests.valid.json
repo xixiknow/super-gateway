@@ -25,7 +25,7 @@
     "scenario": "scheduler_scenario_02",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-scheduler-r4-v1",
-    "content_sha256": "8dc299c433dbb8c77b860efbb7a15f2aadc8a239bbb1f4a7dcfa2b3faa630d26",
+    "content_sha256": "da9b73768607bd3c7af6bef2f6e2c64f71976285ab99cd90a4d0b0e5296ba6fd",
     "privacy_scan": "builtin-r4:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [

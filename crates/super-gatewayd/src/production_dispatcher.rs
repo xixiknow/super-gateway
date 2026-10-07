@@ -1070,7 +1070,7 @@ impl MessageDispatcher for ProductionDispatcher {
         }
         let body_capture = self.storage.body_capture_config().await.unwrap_or_else(|_| {
             tracing::warn!(request_id = %request_uuid, "body capture settings unavailable");
-            Default::default()
+            gateway_storage::BodyCaptureConfig::default()
         });
         if body_capture.enabled {
             if let Some(headers) = &request.original_headers
@@ -1434,15 +1434,14 @@ impl MessageDispatcher for ProductionDispatcher {
                                 cooldown_until: Some(self.clock.now().monotonic.saturating_add(cooldown)),
                             })
                             .await?;
-                    } else if let Some((error_code, error_message)) = account_rejection {
-                        if let Some(group_uuid) =
+                    } else if let Some((error_code, error_message)) = account_rejection
+                        && let Some(group_uuid) =
                             persist_account_rejection(&self.storage, &attempt_telemetry, error_code, &error_message)
                                 .await?
-                        {
-                            let _ = self
-                                .fence_credential_for_admin(group_uuid, attempt_telemetry.credential_id)
-                                .await;
-                        }
+                    {
+                        let _ = self
+                            .fence_credential_for_admin(group_uuid, attempt_telemetry.credential_id)
+                            .await;
                     }
                     if raw.status != 429
                         && raw.status != 529
@@ -3804,14 +3803,16 @@ fn build_final_request(
         };
         let value = render_template(
             value_template,
-            &engine.authority,
-            &authorization,
-            session_id,
-            anthropic_version,
-            &anthropic_beta,
-            body.len(),
-            retry_count,
-            &client_request_id,
+            &HeaderTemplateFields {
+                authority: &engine.authority,
+                authorization: &authorization,
+                session_id,
+                anthropic_version,
+                anthropic_beta: &anthropic_beta,
+                content_length: body.len(),
+                retry_count,
+                client_request_id: &client_request_id,
+            },
         )?;
         if canonical == "authorization" || canonical == "x-api-key" {
             let expected = if selected.auth_kind.as_ref() == "console_api_key" {
@@ -4066,30 +4067,32 @@ fn downgrade_cache_ttl(value: &mut serde_json::Value) {
     }
 }
 
-fn render_template(
-    template: &str,
-    authority: &str,
-    authorization: &str,
-    session_id: &str,
-    anthropic_version: &str,
-    anthropic_beta: &str,
+/// Substitution inputs for outbound header templates.
+struct HeaderTemplateFields<'a> {
+    authority: &'a str,
+    authorization: &'a str,
+    session_id: &'a str,
+    anthropic_version: &'a str,
+    anthropic_beta: &'a str,
     content_length: usize,
     retry_count: u32,
-    client_request_id: &str,
-) -> Result<String, DispatchError> {
-    let content_length = content_length.to_string();
-    let retry_count = retry_count.to_string();
+    client_request_id: &'a str,
+}
+
+fn render_template(template: &str, fields: &HeaderTemplateFields<'_>) -> Result<String, DispatchError> {
+    let content_length = fields.content_length.to_string();
+    let retry_count = fields.retry_count.to_string();
     let mut rendered = template.to_owned();
     for (token, value) in [
-        ("{authority}", authority),
-        ("{authorization}", authorization),
-        ("{session_id}", session_id),
-        ("{anthropic_version}", anthropic_version),
-        ("{anthropic_beta}", anthropic_beta),
+        ("{authority}", fields.authority),
+        ("{authorization}", fields.authorization),
+        ("{session_id}", fields.session_id),
+        ("{anthropic_version}", fields.anthropic_version),
+        ("{anthropic_beta}", fields.anthropic_beta),
         ("{content_type}", "application/json"),
         ("{content_length}", content_length.as_str()),
         ("{retry_count}", retry_count.as_str()),
-        ("{client_request_id}", client_request_id),
+        ("{client_request_id}", fields.client_request_id),
     ] {
         rendered = rendered.replace(token, value);
     }
@@ -4844,10 +4847,10 @@ fn account_error_message(body_preview: Option<&[u8]>) -> String {
     let Some(body) = body_preview else {
         return String::new();
     };
-    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) {
-        if let Some(message) = value.pointer("/error/message").and_then(|message| message.as_str()) {
-            return message.chars().take(300).collect();
-        }
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body)
+        && let Some(message) = value.pointer("/error/message").and_then(|message| message.as_str())
+    {
+        return message.chars().take(300).collect();
     }
     String::from_utf8_lossy(&body[..body.len().min(512)])
         .trim()
@@ -5036,9 +5039,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        ProductionDispatcher, apply_beta_body_symmetry, apply_system_template, classify_and_replay_response,
-        decimal_usd_to_pico_text, derive_device_id, derive_session_id, is_third_party_rejection, normalize_client_app,
-        normalize_user_identity, parse_user_id_string, render_template, retry_backoff, trusted_retry_after_headers,
+        HeaderTemplateFields, ProductionDispatcher, apply_beta_body_symmetry, apply_system_template,
+        classify_and_replay_response, decimal_usd_to_pico_text, derive_device_id, derive_session_id,
+        is_third_party_rejection, normalize_client_app, normalize_user_identity, parse_user_id_string, render_template,
+        retry_backoff, trusted_retry_after_headers,
     };
 
     #[test]
@@ -5245,7 +5249,22 @@ mod tests {
 
     #[test]
     fn unknown_header_template_fails_closed() {
-        assert!(render_template("{unknown}", "a", "b", "c", "d", "e", 0, 0, "f").is_err());
+        assert!(
+            render_template(
+                "{unknown}",
+                &HeaderTemplateFields {
+                    authority: "a",
+                    authorization: "b",
+                    session_id: "c",
+                    anthropic_version: "d",
+                    anthropic_beta: "e",
+                    content_length: 0,
+                    retry_count: 0,
+                    client_request_id: "f",
+                },
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -5420,7 +5439,7 @@ mod tests {
 
     /// Create the target database when the admin URL points at the server's
     /// maintenance database, so the regression can run locally against the live
-    /// local PostgreSQL cluster without pre-provisioning. CI passes an existing
+    /// local `PostgreSQL` cluster without pre-provisioning. CI passes an existing
     /// disposable database, in which case this is a no-op.
     async fn ensure_quarantine_database(database_url: &str) -> String {
         let (base, query) = match database_url.split_once('?') {
@@ -5429,9 +5448,8 @@ mod tests {
         };
         let database_name = base.rsplit('/').next().unwrap_or("postgres").to_owned();
         let maintenance = format!("{}/postgres{query}", &base[..base.len() - database_name.len()]);
-        let mut connection = match sqlx::PgConnection::connect(&maintenance).await {
-            Ok(connection) => connection,
-            Err(_) => return database_url.to_owned(),
+        let Ok(mut connection) = sqlx::PgConnection::connect(&maintenance).await else {
+            return database_url.to_owned();
         };
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)")
             .bind(&database_name)

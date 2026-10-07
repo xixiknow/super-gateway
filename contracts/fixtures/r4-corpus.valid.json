@@ -21,7 +21,7 @@
       "crates/gateway-api/src/edge.rs"
     ],
     "source_sha256": {
-      "crates/gateway-api/src/edge.rs": "4498b9496ccbfe19a97fbbd498006bf4146faed34a81850029e7bb290e6a8edf"
+      "crates/gateway-api/src/edge.rs": "76d7b8de0eb7374560a029f5bf2942dc26229f9dee7e2e83d2a21301f66a74c5"
     },
     "privacy_canaries": [
       "synthetic-platform-key",

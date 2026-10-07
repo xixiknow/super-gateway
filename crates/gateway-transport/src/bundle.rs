@@ -13,6 +13,7 @@ const ENVELOPE_VERSION: &str = "1.0.0";
 const SCHEMA_VERSION: &str = "1.1.0";
 
 /// Current payload schema version, exposed for Bundle maintenance tooling.
+#[must_use]
 pub fn current_payload_schema_version() -> &'static str {
     SCHEMA_VERSION
 }
@@ -649,7 +650,7 @@ mod tests {
             resumption_cache_scope: "disabled".into(),
         };
         let payload = TransportBundlePayload {
-            schema_version: "1.0.0".into(),
+            schema_version: super::SCHEMA_VERSION.into(),
             engine_abi_version: "1.0".into(),
             bundle_id: "bundle_test".into(),
             artifact_version: 1,

@@ -27,7 +27,7 @@
       "contracts/schemas/transport-bundle-manifest.schema.json"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/bundle.rs": "37311ac0b91e54e3a85791f1b4ff04e40245280db6ee9ce543b4992a26dbb34c",
+      "crates/gateway-transport/src/bundle.rs": "14c7c5818660b8c4882a1d961daa1bf7cd0e3a6277e28bf968528571acb56a9c",
       "contracts/schemas/transport-bundle-manifest.schema.json": "e8d0bd8d060640f962d950d2614273b882f52c0a92b46d4a0a83a78b62500bb2"
     },
     "privacy_canaries": [
@@ -121,7 +121,7 @@
       "Cargo.lock"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/tls.rs": "fc3693fba7b6eac58155898f397ea21eeb8a7082a1c086243913100abe6d5489",
+      "crates/gateway-transport/src/tls.rs": "e4fa3fc29af95f2a5386b76d6336274e010ea47586f99947b192618f617810ac",
       "Cargo.lock": "2f2cf8664a7904f4510a92a664b9608ca6dcc37b0dd81720a529f51e9351ede6"
     },
     "privacy_canaries": [

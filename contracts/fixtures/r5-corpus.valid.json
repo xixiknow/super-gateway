@@ -330,7 +330,7 @@
     ],
     "source_sha256": {
       "crates/gateway-services/src/operations.rs": "7fa21fcb05d5b65b44aeb3cfdf4588651d526969a8b44f79d2d84656a05d5257",
-      "crates/gateway-storage/src/postgres.rs": "6e0d2bca2888ee0896e5f5c29c8ac8f731906e6f0c5a17ff4923d80a59a4346e"
+      "crates/gateway-storage/src/postgres.rs": "230165567a3ea43b0a791805f533f6e2235401ef4c49bccfb098d8ae38e84bf9"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",

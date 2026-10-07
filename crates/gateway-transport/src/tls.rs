@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use boring::{
     hash::MessageDigest,
-    ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslVerifyMode},
+    ssl::{ConnectConfiguration, SslConnector, SslConnectorBuilder, SslMethod, SslRef, SslVerifyMode},
     x509::X509,
 };
 use tokio_boring::SslStream;
@@ -69,153 +69,16 @@ impl BoringTlsConnector {
         proxied: bool,
     ) -> Result<TlsConnection, TransportError> {
         if authority != "api.anthropic.com" || timeout.is_zero() || profile.session_resumption {
-            return Err(tls_error(
-                TransportErrorCode::InternalInvariant,
-                "tls_configuration",
-                proxied,
-                HealthEffect::QuarantineBundle,
-            ));
+            return Err(tls_invariant_violation(proxied));
         }
-        let connector = build_connector(profile, proxied)?;
-        let configuration = connector.configure().map_err(|_| {
-            tls_error(
-                TransportErrorCode::TlsHandshake,
-                "tls_configuration",
-                proxied,
-                HealthEffect::QuarantineBundle,
-            )
-        })?;
+        let configuration = configure_connector(profile, proxied)?;
         let started = Instant::now();
-        let stream = tokio::select! {
-            () = cancellation.cancelled() => return Err(cancelled()),
-            result = tokio::time::timeout(timeout, tokio_boring::connect(configuration, authority, io)) => {
-                match result {
-                    Ok(Ok(stream)) => stream,
-                    Ok(Err(_)) => return Err(tls_error(TransportErrorCode::TlsHandshake, if proxied { "unhealthy_tls_passthrough" } else { "tls_handshake" }, proxied, if proxied { HealthEffect::QuarantineEgress } else { HealthEffect::TransientFailure })),
-                    Err(_) => return Err(tls_error(TransportErrorCode::Timeout, "tls_handshake_timeout", proxied, HealthEffect::TransientFailure)),
-                }
-            }
-        };
+        let stream = perform_handshake(configuration, authority, io, timeout, cancellation, proxied).await?;
         let ssl = stream.ssl();
-        if ssl.verify_result().is_err() || ssl.peer_certificate().is_none() {
-            return Err(tls_error(
-                TransportErrorCode::TlsCertificate,
-                if proxied {
-                    "unhealthy_tls_passthrough"
-                } else {
-                    "tls_certificate"
-                },
-                proxied,
-                if proxied {
-                    HealthEffect::QuarantineEgress
-                } else {
-                    HealthEffect::TransientFailure
-                },
-            ));
-        }
-        let expected_alpn = profile.alpn.first().map(AsRef::as_ref);
-        let selected_alpn = ssl.selected_alpn_protocol();
-        if expected_alpn.map(str::as_bytes) != selected_alpn {
-            return Err(tls_error(
-                TransportErrorCode::AlpnMismatch,
-                "alpn_mismatch",
-                proxied,
-                if proxied {
-                    HealthEffect::QuarantineEgress
-                } else {
-                    HealthEffect::QuarantineBundle
-                },
-            ));
-        }
-        let certificate = ssl.peer_certificate().ok_or_else(|| {
-            tls_error(
-                TransportErrorCode::TlsCertificate,
-                "tls_peer_certificate_missing",
-                proxied,
-                HealthEffect::TransientFailure,
-            )
-        })?;
-        let certificate_digest = certificate.digest(MessageDigest::sha256()).map_err(|_| {
-            tls_error(
-                TransportErrorCode::TlsCertificate,
-                "tls_certificate_digest",
-                proxied,
-                HealthEffect::None,
-            )
-        })?;
-        let cipher = ssl
-            .current_cipher()
-            .ok_or_else(|| {
-                tls_error(
-                    TransportErrorCode::TlsHandshake,
-                    "tls_cipher_missing",
-                    proxied,
-                    HealthEffect::TransientFailure,
-                )
-            })?
-            .name();
-
-        // Verify the negotiated cipher is in the Bundle's allowed list
-        let cipher_suite_id = ssl
-            .current_cipher()
-            .ok_or_else(|| {
-                tls_error(
-                    TransportErrorCode::TlsHandshake,
-                    "tls_cipher_missing",
-                    proxied,
-                    HealthEffect::TransientFailure,
-                )
-            })?
-            .protocol_id();
-        if !profile.cipher_suite_ids.contains(&cipher_suite_id) {
-            return Err(tls_error(
-                TransportErrorCode::CipherMismatch,
-                "cipher_mismatch",
-                proxied,
-                if proxied {
-                    HealthEffect::QuarantineEgress
-                } else {
-                    HealthEffect::QuarantineBundle
-                },
-            ));
-        }
-
-        // Verify TLS version is within allowed range
-        let negotiated_version = ssl.version_str();
-
-        if let Some(min_ver) = &profile.min_tls_version {
-            if !version_satisfies(negotiated_version, min_ver.as_ref()) {
-                return Err(tls_error(
-                    TransportErrorCode::TlsHandshake,
-                    "tls_version_below_minimum",
-                    proxied,
-                    if proxied {
-                        HealthEffect::QuarantineEgress
-                    } else {
-                        HealthEffect::QuarantineBundle
-                    },
-                ));
-            }
-        }
-
-        if let Some(max_ver) = &profile.max_tls_version {
-            let negotiated_code = version_to_num(negotiated_version);
-            let max_code = version_to_num(max_ver.as_ref());
-            // If either is unknown, conservatively pass
-            if negotiated_code != 0 && max_code != 0 && negotiated_code > max_code {
-                return Err(tls_error(
-                    TransportErrorCode::TlsHandshake,
-                    "tls_version_above_maximum",
-                    proxied,
-                    if proxied {
-                        HealthEffect::QuarantineEgress
-                    } else {
-                        HealthEffect::QuarantineBundle
-                    },
-                ));
-            }
-        }
-
+        let selected_alpn = verify_peer_and_alpn(ssl, profile, proxied)?;
+        let certificate_digest = peer_certificate_digest(ssl, proxied)?;
+        let cipher = verify_cipher_suite(ssl, profile, proxied)?;
+        validate_negotiated_version(ssl.version_str(), profile, proxied)?;
         let observation = TlsObservation {
             negotiated_alpn: selected_alpn.map_or_else(
                 || "none".into(),
@@ -314,6 +177,185 @@ impl BoringTlsConnector {
         }
         Ok(stream)
     }
+}
+
+fn tls_invariant_violation(proxied: bool) -> TransportError {
+    tls_error(
+        TransportErrorCode::InternalInvariant,
+        "tls_configuration",
+        proxied,
+        HealthEffect::QuarantineBundle,
+    )
+}
+
+fn configure_connector(profile: &TlsProfile, proxied: bool) -> Result<ConnectConfiguration, TransportError> {
+    build_connector(profile, proxied)?.configure().map_err(|_| {
+        tls_error(
+            TransportErrorCode::TlsHandshake,
+            "tls_configuration",
+            proxied,
+            HealthEffect::QuarantineBundle,
+        )
+    })
+}
+
+async fn perform_handshake(
+    configuration: ConnectConfiguration,
+    authority: &str,
+    io: BoxedIo,
+    timeout: Duration,
+    cancellation: &CancellationToken,
+    proxied: bool,
+) -> Result<SslStream<BoxedIo>, TransportError> {
+    tokio::select! {
+        () = cancellation.cancelled() => Err(cancelled()),
+        result = tokio::time::timeout(timeout, tokio_boring::connect(configuration, authority, io)) => {
+            match result {
+                Ok(Ok(stream)) => Ok(stream),
+                Ok(Err(_)) => Err(tls_error(
+                    TransportErrorCode::TlsHandshake,
+                    if proxied { "unhealthy_tls_passthrough" } else { "tls_handshake" },
+                    proxied,
+                    if proxied {
+                        HealthEffect::QuarantineEgress
+                    } else {
+                        HealthEffect::TransientFailure
+                    },
+                )),
+                Err(_) => Err(tls_error(
+                    TransportErrorCode::Timeout,
+                    "tls_handshake_timeout",
+                    proxied,
+                    HealthEffect::TransientFailure,
+                )),
+            }
+        }
+    }
+}
+
+fn verify_peer_and_alpn<'a>(
+    ssl: &'a SslRef,
+    profile: &'a TlsProfile,
+    proxied: bool,
+) -> Result<Option<&'a [u8]>, TransportError> {
+    if ssl.verify_result().is_err() || ssl.peer_certificate().is_none() {
+        return Err(tls_error(
+            TransportErrorCode::TlsCertificate,
+            if proxied {
+                "unhealthy_tls_passthrough"
+            } else {
+                "tls_certificate"
+            },
+            proxied,
+            if proxied {
+                HealthEffect::QuarantineEgress
+            } else {
+                HealthEffect::TransientFailure
+            },
+        ));
+    }
+    let expected_alpn = profile.alpn.first().map(AsRef::as_ref);
+    let selected_alpn = ssl.selected_alpn_protocol();
+    if expected_alpn.map(str::as_bytes) != selected_alpn {
+        return Err(tls_error(
+            TransportErrorCode::AlpnMismatch,
+            "alpn_mismatch",
+            proxied,
+            if proxied {
+                HealthEffect::QuarantineEgress
+            } else {
+                HealthEffect::QuarantineBundle
+            },
+        ));
+    }
+    Ok(selected_alpn)
+}
+
+fn peer_certificate_digest(ssl: &SslRef, proxied: bool) -> Result<Vec<u8>, TransportError> {
+    let certificate = ssl.peer_certificate().ok_or_else(|| {
+        tls_error(
+            TransportErrorCode::TlsCertificate,
+            "tls_peer_certificate_missing",
+            proxied,
+            HealthEffect::TransientFailure,
+        )
+    })?;
+    certificate
+        .digest(MessageDigest::sha256())
+        .map(|digest| digest.to_vec())
+        .map_err(|_| {
+            tls_error(
+                TransportErrorCode::TlsCertificate,
+                "tls_certificate_digest",
+                proxied,
+                HealthEffect::None,
+            )
+        })
+}
+
+fn verify_cipher_suite(ssl: &SslRef, profile: &TlsProfile, proxied: bool) -> Result<&'static str, TransportError> {
+    let cipher = ssl.current_cipher().ok_or_else(|| {
+        tls_error(
+            TransportErrorCode::TlsHandshake,
+            "tls_cipher_missing",
+            proxied,
+            HealthEffect::TransientFailure,
+        )
+    })?;
+    let name = cipher.name();
+    if !profile.cipher_suite_ids.contains(&cipher.protocol_id()) {
+        return Err(tls_error(
+            TransportErrorCode::CipherMismatch,
+            "cipher_mismatch",
+            proxied,
+            if proxied {
+                HealthEffect::QuarantineEgress
+            } else {
+                HealthEffect::QuarantineBundle
+            },
+        ));
+    }
+    Ok(name)
+}
+
+fn validate_negotiated_version(
+    negotiated_version: &str,
+    profile: &TlsProfile,
+    proxied: bool,
+) -> Result<(), TransportError> {
+    if let Some(min_ver) = &profile.min_tls_version
+        && !version_satisfies(negotiated_version, min_ver.as_ref())
+    {
+        return Err(tls_error(
+            TransportErrorCode::TlsHandshake,
+            "tls_version_below_minimum",
+            proxied,
+            if proxied {
+                HealthEffect::QuarantineEgress
+            } else {
+                HealthEffect::QuarantineBundle
+            },
+        ));
+    }
+    let Some(max_ver) = &profile.max_tls_version else {
+        return Ok(());
+    };
+    let negotiated_code = version_to_num(negotiated_version);
+    let max_code = version_to_num(max_ver.as_ref());
+    // If either is unknown, conservatively pass
+    if negotiated_code != 0 && max_code != 0 && negotiated_code > max_code {
+        return Err(tls_error(
+            TransportErrorCode::TlsHandshake,
+            "tls_version_above_maximum",
+            proxied,
+            if proxied {
+                HealthEffect::QuarantineEgress
+            } else {
+                HealthEffect::QuarantineBundle
+            },
+        ));
+    }
+    Ok(())
 }
 
 fn build_connector(profile: &TlsProfile, proxied: bool) -> Result<SslConnector, TransportError> {

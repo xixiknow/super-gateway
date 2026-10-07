@@ -18,6 +18,7 @@ async fn account_error_state_columns_and_overload_reason_contract() -> Result<()
     let report = PgStorage::migrate(&database_url).await?;
     assert_eq!(report.applied_count, embedded_migration_count());
     let storage = PgStorage::connect(&database_url, RuntimeRolePolicy::AllowPrivilegedTest).await?;
+    storage.ensure_database_business_key().await?;
     let pool = storage.pool();
 
     let user_id = Uuid::now_v7();
@@ -145,7 +146,8 @@ async fn account_error_state_columns_and_overload_reason_contract() -> Result<()
             "INSERT INTO security.encrypted_secret \
              (id,secret_kind_code,provider_role_code,ciphertext,nonce,wrapped_dek,key_version,aad_schema_version, \
               owner_type_code,owner_id,purpose_code,created_at) \
-             VALUES ($1,'platform_key','business',$2,$3,$4,1,1,'platform_key',$5,'authentication',clock_timestamp())",
+             SELECT $1,'platform_key','business',$2,$3,$4,key_version,1,'platform_key',$5,'authentication',clock_timestamp() \
+             FROM security.business_key_material WHERE state_code='active'",
         )
         .bind(secret)
         .bind(vec![1_u8; 32])

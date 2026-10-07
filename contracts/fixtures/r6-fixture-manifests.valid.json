@@ -25,7 +25,7 @@
     "scenario": "transport_production_02",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-transport-r6-v1",
-    "content_sha256": "f3d512e3809bbb0a0733922ffdc64753202d4672690a0ecf3ffa55162931ca8f",
+    "content_sha256": "889d2409fb8bad541118d843d08f5f9e52760cd0772360b482df43a66772a014",
     "privacy_scan": "builtin-r6:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [
@@ -125,7 +125,7 @@
     "scenario": "transport_production_07",
     "schema_version": "1.0.0",
     "normalizer_version": "gateway-transport-r6-v1",
-    "content_sha256": "5b39ab95170f8ccacd545438badf369b1bdf3cffd67429176ecc2c7689a0026c",
+    "content_sha256": "8a145578a56b193d10451a651fde68bae728711c1a8c3c10bf0cb64ece82667c",
     "privacy_scan": "builtin-r6:passed",
     "generation_command": "python -B tools/generate_contracts.py",
     "compatibility": [

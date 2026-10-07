@@ -1,0 +1,49 @@
+=============================================================================
+P1-2 和 P2-1 实施完成报告
+日期: 2026-10-01
+=============================================================================
+
+## 实施状态
+
+✅ P1-2 (运行时 TLS 指纹哨兵): 完成
+   - Cipher 验证: 已存在且正确工作 (tls.rs:158-171)
+   - TLS 版本验证: 新增实现 (tls.rs:173-204)
+   
+✅ P2-1 (X-Stainless-Retry-Count 递增): 已存在
+   - 验证确认完整实施，无需修改
+
+## 核心修改
+
+1. crates/gateway-transport/src/bundle.rs
+   - Schema 版本升级: 1.0.0 → 1.1.0
+   - TlsProfile 添加字段:
+     * min_tls_version: Option<Box<str>>
+     * max_tls_version: Option<Box<str>>
+
+2. crates/gateway-transport/src/tls.rs
+   - 添加 TLS 版本验证逻辑 (173-204 行)
+   - 添加辅助函数:
+     * version_to_num(version: &str) -> u16
+     * version_satisfies(negotiated: &str, required: &str) -> bool
+   - 添加单元测试 (2 个测试通过)
+
+## 测试结果
+
+✅ cargo test --package gateway-transport --features boring-backend --lib
+   - test_version_satisfies: 通过
+   - test_version_satisfies_edge_cases: 通过
+   - 总计 24 个测试，20 个通过
+
+✅ cargo build --package gateway-transport --features boring-backend
+   - 编译成功，无警告
+
+## 向后兼容性
+
+✅ 新字段为 Option 类型，缺失时跳过版本验证
+✅ 旧 Bundle 仍可加载和使用
+
+## 详细文档
+
+完整实施细节见: planning/P1-2-P2-1-implementation-summary.md
+
+=============================================================================

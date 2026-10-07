@@ -2,10 +2,11 @@
 
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "windows")]
+use boring::x509::X509;
 use boring::{
     hash::MessageDigest,
     ssl::{ConnectConfiguration, SslConnector, SslConnectorBuilder, SslMethod, SslRef, SslVerifyMode},
-    x509::X509,
 };
 use tokio_boring::SslStream;
 use tokio_util::sync::CancellationToken;

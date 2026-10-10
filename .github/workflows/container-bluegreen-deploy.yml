@@ -7,6 +7,10 @@ on:
         description: Immutable GHCR image reference, including sha256 digest
         required: true
         type: string
+      version:
+        description: Production release version, for example v1.4.0
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -32,7 +36,9 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           IMAGE: ${{ inputs.image }}
+          VERSION: ${{ inputs.version }}
         run: |
           test -n "$DEPLOY_HOST" -a -n "$DEPLOY_USER" -a -n "$DEPLOY_PATH"
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd '$DEPLOY_PATH/deploy/container/bluegreen' && ./deploy.sh '$IMAGE'"
+            "cd '$DEPLOY_PATH/deploy/container/bluegreen' && ./deploy.sh '$VERSION' '$IMAGE'"

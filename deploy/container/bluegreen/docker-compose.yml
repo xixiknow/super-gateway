@@ -24,6 +24,7 @@ services:
       GATEWAY_BUNDLE_TRUST_STORE: /etc/super-gateway/bundle-trust-store.json
       GATEWAY_BUNDLE_DIR: /var/lib/super-gateway/bundles
       GATEWAY_RESPONSE_TMP_DIR: /var/lib/super-gateway/response-tmp
+      GATEWAY_UPDATE_LATEST_VERSION: ${GATEWAY_UPDATE_LATEST_VERSION:-}
     secrets: [runtime_database_url, digest_key]
     volumes:
       - ./config/bundle-trust-store.json:/etc/super-gateway/bundle-trust-store.json:ro
@@ -46,6 +47,7 @@ services:
       GATEWAY_BUNDLE_TRUST_STORE: /etc/super-gateway/bundle-trust-store.json
       GATEWAY_BUNDLE_DIR: /var/lib/super-gateway/bundles
       GATEWAY_RESPONSE_TMP_DIR: /var/lib/super-gateway/response-tmp
+      GATEWAY_UPDATE_LATEST_VERSION: ${GATEWAY_UPDATE_LATEST_VERSION:-}
     secrets: [runtime_database_url, digest_key]
     volumes:
       - ./config/bundle-trust-store.json:/etc/super-gateway/bundle-trust-store.json:ro

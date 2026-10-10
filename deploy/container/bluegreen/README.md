@@ -10,7 +10,9 @@
 
 ## 发布流程
 
-1. 固定 `GREEN_IMAGE` 为候选多架构 manifest digest，保存当前 `BLUE_IMAGE` 和 release evidence。
+生产版本规则固定为 SemVer Git tag：`vMAJOR.MINOR.PATCH`，例如 `v1.4.0`。预发布版本如需使用，必须另行定义并接入校验；当前生产入口只接受三段正式版本。提交 SHA 仅用于 OCI provenance、审计和源码追踪，不得作为发布版本、镜像发布 tag 或蓝绿部署参数。
+
+1. 从 `vMAJOR.MINOR.PATCH` tag 构建镜像，固定 `GREEN_IMAGE` 为候选多架构 manifest digest，保存当前 `BLUE_IMAGE` 和 release evidence。
 2. 只运行一次候选迁移，且必须满足 expand-only、旧/新二进制都能通过 schema check。Schema 只前进，回滚只回应用镜像。
 3. 启动绿环境，连续 60 秒通过 `/readyz`，再执行一次无副作用数据面 smoke 和一条流式首字节探测。
 4. 执行 `./switch-color.sh green`。代理停止把新请求送到蓝环境，已有连接继续由蓝环境处理。
@@ -30,7 +32,7 @@ PUBLIC_ADMIN_PORT=8081
 
 ```bash
 docker compose -f docker-compose.yml --env-file runtime.env up -d proxy gateway_blue
-./switch-color.sh green
+./deploy.sh v1.4.0 ghcr.io/xixiknow/super-gateway@sha256:CANDIDATE_DIGEST
 ```
 
 `switch-color.sh` 会先启动候选、验证 readiness、执行 Nginx 配置检查，再 reload 代理。HAProxy 用户应使用 `haproxy.cfg`，通过 runtime socket enable/disable 对应 server；不要把两个颜色同时设为 active。

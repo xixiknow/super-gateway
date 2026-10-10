@@ -86,6 +86,8 @@ curl --fail http://127.0.0.1:8080/readyz
 
 ## 4. 升级与回滚
 
+生产无感升级使用 [`bluegreen/README.md`](bluegreen/README.md) 中的双颜色 Compose 拓扑和外置 Nginx/HAProxy。单个 `gateway` 服务的 `pull && up -d` 会产生重启窗口，只适合维护窗口。
+
 修改 `SUPER_GATEWAY_IMAGE` 为不可变版本或 digest，随后执行：
 
 ```bash

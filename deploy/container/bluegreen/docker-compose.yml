@@ -1,0 +1,81 @@
+name: super-gateway-bluegreen
+
+services:
+  migrate:
+    image: ${GREEN_IMAGE:?set GREEN_IMAGE to an immutable digest}
+    command: ["migrate"]
+    env_file: [./runtime.env]
+    environment:
+      GATEWAY_MIGRATOR_DATABASE_URL_FILE: /run/secrets/migrator_database_url
+    secrets: [migrator_database_url]
+    networks: [gateway]
+    restart: "no"
+
+  gateway_blue:
+    image: ${BLUE_IMAGE:?set BLUE_IMAGE to an immutable digest}
+    command: ["serve"]
+    env_file: [./runtime.env]
+    environment:
+      GATEWAY_DATA_BIND: 0.0.0.0:8080
+      GATEWAY_ADMIN_BIND: 0.0.0.0:8081
+      GATEWAY_DATABASE_URL_FILE: /run/secrets/runtime_database_url
+      GATEWAY_BUSINESS_KEY_PROVIDER: database
+      GATEWAY_DIGEST_KEY_FILE: /run/secrets/digest_key
+      GATEWAY_BUNDLE_TRUST_STORE: /etc/super-gateway/bundle-trust-store.json
+      GATEWAY_BUNDLE_DIR: /var/lib/super-gateway/bundles
+      GATEWAY_RESPONSE_TMP_DIR: /var/lib/super-gateway/response-tmp
+    secrets: [runtime_database_url, digest_key]
+    volumes:
+      - ./config/bundle-trust-store.json:/etc/super-gateway/bundle-trust-store.json:ro
+      - ./bundles:/var/lib/super-gateway/bundles:rw
+      - blue_response_tmp:/var/lib/super-gateway/response-tmp
+    networks: [gateway]
+    restart: unless-stopped
+    stop_grace_period: 330s
+
+  gateway_green:
+    image: ${GREEN_IMAGE:?set GREEN_IMAGE to an immutable digest}
+    command: ["serve"]
+    env_file: [./runtime.env]
+    environment:
+      GATEWAY_DATA_BIND: 0.0.0.0:8080
+      GATEWAY_ADMIN_BIND: 0.0.0.0:8081
+      GATEWAY_DATABASE_URL_FILE: /run/secrets/runtime_database_url
+      GATEWAY_BUSINESS_KEY_PROVIDER: database
+      GATEWAY_DIGEST_KEY_FILE: /run/secrets/digest_key
+      GATEWAY_BUNDLE_TRUST_STORE: /etc/super-gateway/bundle-trust-store.json
+      GATEWAY_BUNDLE_DIR: /var/lib/super-gateway/bundles
+      GATEWAY_RESPONSE_TMP_DIR: /var/lib/super-gateway/response-tmp
+    secrets: [runtime_database_url, digest_key]
+    volumes:
+      - ./config/bundle-trust-store.json:/etc/super-gateway/bundle-trust-store.json:ro
+      - ./bundles:/var/lib/super-gateway/bundles:rw
+      - green_response_tmp:/var/lib/super-gateway/response-tmp
+    networks: [gateway]
+    restart: unless-stopped
+    stop_grace_period: 330s
+
+  proxy:
+    image: nginx:1.27-bookworm
+    ports:
+      - "${PUBLIC_DATA_PORT:-8080}:8080"
+      - "${PUBLIC_ADMIN_PORT:-8081}:8081"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks: [gateway]
+    restart: unless-stopped
+
+networks:
+  gateway:
+
+volumes:
+  blue_response_tmp:
+  green_response_tmp:
+
+secrets:
+  migrator_database_url:
+    file: ../secrets/migrator-database-url
+  runtime_database_url:
+    file: ../secrets/runtime-database-url
+  digest_key:
+    file: ../secrets/digest-key

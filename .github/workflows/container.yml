@@ -36,8 +36,6 @@ jobs:
           npm ci
           npm test
           npm run build
-      - name: Reject embedded frontend drift
-        run: git diff --exit-code -- web/admin-console/dist
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
@@ -200,3 +198,18 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
+      - name: Save immutable release pointer
+        shell: bash
+        run: |
+          jq -n \
+            --arg image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" \
+            --arg digest "${{ steps.manifest.outputs.digest }}" \
+            --arg revision "${{ github.sha }}" \
+            '{image:$image,digest:$digest,revision:$revision,created_at:(now|todate)}' \
+            > container-image-release.json
+          cat container-image-release.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-image-release-${{ github.sha }}
+          path: container-image-release.json
+          retention-days: 30

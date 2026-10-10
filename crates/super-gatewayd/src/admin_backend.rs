@@ -11143,9 +11143,25 @@ impl PgManagementBackend {
     fn system_status(&self) -> ManagementBackendResponse {
         let readiness = self.readiness.internal_snapshot();
         let metrics = self.data_metrics.snapshot();
+        let latest_version = std::env::var("GATEWAY_UPDATE_LATEST_VERSION").ok();
+        let latest_digest = std::env::var("GATEWAY_UPDATE_IMAGE_DIGEST").ok();
+        let release_url = std::env::var("GATEWAY_UPDATE_RELEASE_URL").ok();
+        let updates_enabled = std::env::var("GATEWAY_UPDATE_ENABLED")
+            .map(|value| value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         ManagementBackendResponse::ok(json!({
             "data": {
                 "id": "local-instance",
+                "release_version": env!("CARGO_PKG_VERSION"),
+                "runtime_target": crate::app::runtime_target(),
+                "schema_version": std::env::var("GATEWAY_SCHEMA_VERSION").unwrap_or_else(|_| "unknown".into()),
+                "updates": {
+                    "enabled": updates_enabled,
+                    "latest_version": latest_version,
+                    "image_digest": latest_digest,
+                    "release_url": release_url,
+                    "can_update": updates_enabled && latest_version.as_deref().is_some_and(|version| version != env!("CARGO_PKG_VERSION"))
+                },
                 "readiness": readiness,
                 "metrics": {
                     "accepted": metrics.accepted,

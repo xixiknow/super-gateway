@@ -1,0 +1,38 @@
+name: container-blue-green-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Immutable GHCR image reference, including sha256 digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-container-blue-green
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy candidate with blue-green cutover
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Run remote blue-green deployment
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          test -n "$DEPLOY_HOST" -a -n "$DEPLOY_USER" -a -n "$DEPLOY_PATH"
+          ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH/deploy/container/bluegreen' && ./deploy.sh '$IMAGE'"

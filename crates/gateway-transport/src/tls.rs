@@ -180,6 +180,36 @@ impl BoringTlsConnector {
     }
 }
 
+/// Failure while establishing the TLS session with an HTTPS proxy endpoint itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProxyTlsFailure {
+    /// Connector or trust store could not be prepared.
+    Configuration,
+    /// TLS handshake with the proxy failed.
+    Handshake,
+    /// The proxy certificate did not validate against the platform trust store.
+    Certificate,
+}
+
+/// Open a certificate-validating TLS session to an HTTPS proxy. The deadline is owned by the caller.
+pub(crate) async fn connect_proxy_tls(io: BoxedIo, proxy_host: &str) -> Result<SslStream<BoxedIo>, ProxyTlsFailure> {
+    let mut builder = SslConnector::builder(SslMethod::tls()).map_err(|_| ProxyTlsFailure::Configuration)?;
+    configure_platform_trust(&mut builder, true, "proxy_tls_trust_store")
+        .map_err(|_| ProxyTlsFailure::Configuration)?;
+    let configuration = builder
+        .build()
+        .configure()
+        .map_err(|_| ProxyTlsFailure::Configuration)?;
+    let stream = tokio_boring::connect(configuration, proxy_host, io)
+        .await
+        .map_err(|_| ProxyTlsFailure::Handshake)?;
+    let ssl = stream.ssl();
+    if ssl.verify_result().is_err() || ssl.peer_certificate().is_none() {
+        return Err(ProxyTlsFailure::Certificate);
+    }
+    Ok(stream)
+}
+
 fn tls_invariant_violation(proxied: bool) -> TransportError {
     tls_error(
         TransportErrorCode::InternalInvariant,

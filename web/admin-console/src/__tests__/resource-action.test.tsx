@@ -178,6 +178,73 @@ describe("resource create actions", () => {
     expect(screen.getByText("group-1", { selector: "dd" })).toBeInTheDocument();
   });
 
+  it("creates a SOCKS5 proxy by default with a computed validity window and expiry policy", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ data: { id: "proxy-1", name: "出口-东京" }, meta: {} }), {
+      status: 201,
+      headers: { "content-type": "application/json" },
+    }));
+    const user = userEvent.setup();
+    renderAction("proxy");
+
+    await user.click(screen.getByRole("button", { name: "创建" }));
+    const dialog = screen.getByRole("dialog", { name: "创建代理" });
+    expect(within(dialog).getByRole("combobox", { name: "协议" })).toHaveTextContent("SOCKS5");
+    await user.click(within(dialog).getByRole("combobox", { name: "协议" }));
+    expect(screen.getByRole("option", { name: "HTTP" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "HTTPS" })).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: "SOCKS5" }));
+
+    await user.type(within(dialog).getByLabelText("名称"), "出口-东京");
+    await user.type(within(dialog).getByLabelText("主机"), "proxy.example.com");
+    await user.type(within(dialog).getByLabelText("端口"), "1080");
+    const startsAt = within(dialog).getByLabelText("开始时间");
+    await user.clear(startsAt);
+    await user.type(startsAt, "2026-10-07T08:00");
+    expect(within(dialog).queryByLabelText("自定义天数")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("combobox", { name: "有效期" }));
+    await user.click(screen.getByRole("option", { name: "自定义" }));
+    await user.type(within(dialog).getByLabelText("自定义天数"), "45");
+    expect(within(dialog).getByRole("status")).toHaveTextContent("到期时间：");
+    await user.click(within(dialog).getByRole("combobox", { name: /到期策略/ }));
+    await user.click(screen.getByRole("option", { name: "回退直连" }));
+    await user.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    expect(await screen.findByText("操作成功", { selector: ".at" })).toBeInTheDocument();
+    const [path, init] = fetchMock.mock.calls.find(([, options]) => options?.method === "POST") ?? [];
+    expect(path).toBe("/admin/v1/proxies");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      name: "出口-东京", type: "socks5", host: "proxy.example.com", port: 1080, username: null, password: null,
+      stability: "static", max_active_credentials: 5, upstream_proxy_id: null,
+      starts_at: new Date("2026-10-07T08:00").toISOString(), validity_days: 45,
+      expiry_policy: "fallback_direct", remind_before_hours: 72,
+    });
+  });
+
+  it("sends a null validity period for proxies that never expire", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ data: { id: "proxy-2" }, meta: {} }), { status: 201 }));
+    const user = userEvent.setup();
+    renderAction("proxy");
+
+    await user.click(screen.getByRole("button", { name: "创建" }));
+    const dialog = screen.getByRole("dialog", { name: "创建代理" });
+    await user.type(within(dialog).getByLabelText("名称"), "permanent");
+    await user.type(within(dialog).getByLabelText("主机"), "10.0.0.8");
+    await user.type(within(dialog).getByLabelText("端口"), "443");
+    await user.click(within(dialog).getByRole("combobox", { name: "协议" }));
+    await user.click(screen.getByRole("option", { name: "HTTPS" }));
+    await user.click(within(dialog).getByRole("combobox", { name: "有效期" }));
+    await user.click(screen.getByRole("option", { name: "永不过期" }));
+    expect(within(dialog).getByRole("status")).toHaveTextContent("到期时间：永不过期");
+    await user.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    expect(await screen.findByText("操作成功", { selector: ".at" })).toBeInTheDocument();
+    const postCall = fetchMock.mock.calls.find(([, options]) => options?.method === "POST");
+    const body = JSON.parse(String(postCall?.[1]?.body));
+    expect(body.type).toBe("https_connect");
+    expect(body.validity_days).toBeNull();
+    expect(body.expiry_policy).toBe("none");
+  });
+
   it("reports malformed nested JSON before sending a request", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const user = userEvent.setup();

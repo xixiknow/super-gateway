@@ -10,6 +10,7 @@ mod model_discovery;
 mod openai;
 mod postgres;
 mod proxy;
+mod proxy_expiry;
 mod telemetry;
 mod upgrade;
 
@@ -34,6 +35,9 @@ pub use postgres::{
     embedded_migration_count,
 };
 pub use proxy::ProxyProbeCommit;
+pub use proxy_expiry::{
+    EgressRebindRequest, ProxyExpirySweep, enqueue_credential_egress_rebind, resolve_proxy_expiry_alerts,
+};
 pub use telemetry::{
     BodyCaptureConfig, CancelEstimateEvidencePersist, CostPersist, DeliveryComplete, DeliveryStart, PriceBasis,
     QuotaCurrentProjection, QuotaObservationPersist, RequestBodyCapture, RequestCreate, RequestLifecycleComplete,

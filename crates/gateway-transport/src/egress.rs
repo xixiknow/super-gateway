@@ -1,9 +1,9 @@
-//! Direct, HTTP CONNECT and SOCKS5 TLS pass-through TCP establishment.
+//! Direct, HTTP CONNECT, HTTPS CONNECT and SOCKS5 TLS pass-through TCP establishment.
 
 use std::{io, net::IpAddr, time::Duration};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use gateway_domain::{EgressRouteSnapshot, ProxyCredentials, Socks5DnsMode};
+use gateway_domain::{EgressRouteSnapshot, ProxyCredentials, ProxyHop, Socks5DnsMode};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpStream, lookup_host},
@@ -61,13 +61,9 @@ impl EgressDialer {
         deadline: Duration,
         cancellation: &CancellationToken,
     ) -> Result<BoxedIo, TransportError> {
-        validate_target(target_host, target_port)
-            .map_err(|error| egress_error(error, !matches!(route, EgressRouteSnapshot::Direct)))?;
+        validate_target(target_host, target_port).map_err(|error| egress_error(error, route.is_proxied()))?;
         if deadline.is_zero() {
-            return Err(egress_error(
-                EgressFailure::InvalidConfig,
-                !matches!(route, EgressRouteSnapshot::Direct),
-            ));
+            return Err(egress_error(EgressFailure::InvalidConfig, route.is_proxied()));
         }
         self.dial_validated(route, target_host, target_port, deadline, cancellation)
             .await
@@ -83,11 +79,11 @@ impl EgressDialer {
     ) -> Result<BoxedIo, TransportError> {
         tokio::select! {
             () = cancellation.cancelled() => Err(cancelled()),
-            result = tokio::time::timeout(deadline, dial_inner(route, target_host, target_port)) => {
+            result = tokio::time::timeout(deadline, dial_inner(route, target_host, target_port, deadline)) => {
                 match result {
-                    Ok(Ok(stream)) => Ok(Box::new(stream)),
-                    Ok(Err(error)) => Err(egress_error(error, !matches!(route, EgressRouteSnapshot::Direct))),
-                    Err(_) => Err(egress_error(EgressFailure::Timeout, !matches!(route, EgressRouteSnapshot::Direct))),
+                    Ok(Ok(stream)) => Ok(stream),
+                    Ok(Err(error)) => Err(egress_error(error, route.is_proxied())),
+                    Err(_) => Err(egress_error(EgressFailure::Timeout, route.is_proxied())),
                 }
             }
         }
@@ -98,12 +94,87 @@ async fn dial_inner(
     route: &EgressRouteSnapshot,
     target_host: &str,
     target_port: u16,
-) -> Result<TcpStream, EgressFailure> {
+    deadline: Duration,
+) -> Result<BoxedIo, EgressFailure> {
     match route {
-        EgressRouteSnapshot::Direct => TcpStream::connect((target_host, target_port))
-            .await
-            .map_err(EgressFailure::Io),
+        EgressRouteSnapshot::Direct => Ok(Box::new(
+            TcpStream::connect((target_host, target_port))
+                .await
+                .map_err(EgressFailure::Io)?,
+        )),
         EgressRouteSnapshot::HttpConnect {
+            host,
+            port,
+            credentials,
+        } => dial_http_connect(host, *port, credentials.as_deref(), target_host, target_port).await,
+        EgressRouteSnapshot::HttpsConnect {
+            host,
+            port,
+            credentials,
+        } => dial_https_connect(host, *port, credentials.as_deref(), target_host, target_port).await,
+        EgressRouteSnapshot::Socks5 {
+            host,
+            port,
+            dns,
+            credentials,
+        } => dial_socks5(host, *port, *dns, credentials.as_deref(), target_host, target_port).await,
+        EgressRouteSnapshot::WithRelay { primary, relay } => {
+            // The direct path is tried first; the relay chain is the fallback
+            // for unreachable-class failures only (TCP/DNS/timeout), never for
+            // rejected authentication or proxy protocol errors.
+            let primary = primary.as_ref();
+            let direct = tokio::time::timeout(deadline / 2, async {
+                match primary {
+                    ProxyHop::HttpConnect {
+                        host,
+                        port,
+                        credentials,
+                    } => dial_http_connect(host, *port, credentials.as_deref(), target_host, target_port).await,
+                    ProxyHop::HttpsConnect {
+                        host,
+                        port,
+                        credentials,
+                    } => dial_https_connect(host, *port, credentials.as_deref(), target_host, target_port).await,
+                    ProxyHop::Socks5 {
+                        host,
+                        port,
+                        dns,
+                        credentials,
+                    } => dial_socks5(host, *port, *dns, credentials.as_deref(), target_host, target_port).await,
+                }
+            })
+            .await;
+            match direct {
+                Ok(Ok(stream)) => Ok(stream),
+                Ok(Err(failure)) if relay_eligible(&failure) => {
+                    dial_via_relay(relay, primary, target_host, target_port).await
+                }
+                Ok(Err(failure)) => Err(failure),
+                Err(_elapsed) => dial_via_relay(relay, primary, target_host, target_port).await,
+            }
+        }
+    }
+}
+
+/// Whether the direct attempt failed in a way a relay could plausibly fix.
+/// Authentication rejections and proxy protocol errors are never retried
+/// through the relay because the primary endpoint was clearly reachable.
+fn relay_eligible(failure: &EgressFailure) -> bool {
+    matches!(
+        failure,
+        EgressFailure::Io(_) | EgressFailure::Timeout | EgressFailure::DnsEmpty
+    )
+}
+
+async fn dial_via_relay(
+    relay: &ProxyHop,
+    primary: &ProxyHop,
+    target_host: &str,
+    target_port: u16,
+) -> Result<BoxedIo, EgressFailure> {
+    let (primary_host, primary_port) = primary.endpoint();
+    let mut io: BoxedIo = match relay {
+        ProxyHop::HttpConnect {
             host,
             port,
             credentials,
@@ -112,10 +183,23 @@ async fn dial_inner(
             let mut stream = TcpStream::connect((host.as_ref(), *port))
                 .await
                 .map_err(EgressFailure::Io)?;
-            http_connect(&mut stream, target_host, target_port, credentials.as_deref()).await?;
-            Ok(stream)
+            http_connect(&mut stream, primary_host, primary_port, credentials.as_deref()).await?;
+            Box::new(stream)
         }
-        EgressRouteSnapshot::Socks5 {
+        ProxyHop::HttpsConnect {
+            host,
+            port,
+            credentials,
+        } => {
+            validate_endpoint(host, *port)?;
+            let stream = TcpStream::connect((host.as_ref(), *port))
+                .await
+                .map_err(EgressFailure::Io)?;
+            let mut stream = proxy_tls(Box::new(stream), host).await?;
+            http_connect(&mut stream, primary_host, primary_port, credentials.as_deref()).await?;
+            stream
+        }
+        ProxyHop::Socks5 {
             host,
             port,
             dns,
@@ -125,10 +209,80 @@ async fn dial_inner(
             let mut stream = TcpStream::connect((host.as_ref(), *port))
                 .await
                 .map_err(EgressFailure::Io)?;
-            socks5_connect(&mut stream, target_host, target_port, *dns, credentials.as_deref()).await?;
-            Ok(stream)
+            socks5_connect(&mut stream, primary_host, primary_port, *dns, credentials.as_deref()).await?;
+            Box::new(stream)
+        }
+    };
+    if matches!(primary, ProxyHop::HttpsConnect { .. }) {
+        io = proxy_tls(io, primary_host).await?;
+    }
+    match primary {
+        ProxyHop::HttpConnect { credentials, .. } | ProxyHop::HttpsConnect { credentials, .. } => {
+            http_connect(io.as_mut(), target_host, target_port, credentials.as_deref()).await?;
+        }
+        ProxyHop::Socks5 { dns, credentials, .. } => {
+            socks5_connect(io.as_mut(), target_host, target_port, *dns, credentials.as_deref()).await?;
         }
     }
+    Ok(io)
+}
+
+async fn dial_http_connect(
+    host: &str,
+    port: u16,
+    credentials: Option<&ProxyCredentials>,
+    target_host: &str,
+    target_port: u16,
+) -> Result<BoxedIo, EgressFailure> {
+    validate_endpoint(host, port)?;
+    let mut stream = TcpStream::connect((host, port)).await.map_err(EgressFailure::Io)?;
+    http_connect(&mut stream, target_host, target_port, credentials).await?;
+    Ok(Box::new(stream))
+}
+
+async fn dial_https_connect(
+    host: &str,
+    port: u16,
+    credentials: Option<&ProxyCredentials>,
+    target_host: &str,
+    target_port: u16,
+) -> Result<BoxedIo, EgressFailure> {
+    validate_endpoint(host, port)?;
+    let stream = TcpStream::connect((host, port)).await.map_err(EgressFailure::Io)?;
+    let mut stream = proxy_tls(Box::new(stream), host).await?;
+    http_connect(&mut stream, target_host, target_port, credentials).await?;
+    Ok(stream)
+}
+
+async fn dial_socks5(
+    host: &str,
+    port: u16,
+    dns: Socks5DnsMode,
+    credentials: Option<&ProxyCredentials>,
+    target_host: &str,
+    target_port: u16,
+) -> Result<BoxedIo, EgressFailure> {
+    validate_endpoint(host, port)?;
+    let mut stream = TcpStream::connect((host, port)).await.map_err(EgressFailure::Io)?;
+    socks5_connect(&mut stream, target_host, target_port, dns, credentials).await?;
+    Ok(Box::new(stream))
+}
+
+#[cfg(feature = "boring-backend")]
+async fn proxy_tls(io: BoxedIo, proxy_host: &str) -> Result<BoxedIo, EgressFailure> {
+    crate::tls::connect_proxy_tls(io, proxy_host)
+        .await
+        .map(|stream| Box::new(stream) as BoxedIo)
+        .map_err(|failure| match failure {
+            crate::tls::ProxyTlsFailure::Configuration => EgressFailure::InvalidConfig,
+            crate::tls::ProxyTlsFailure::Handshake => EgressFailure::ProxyTlsHandshake,
+            crate::tls::ProxyTlsFailure::Certificate => EgressFailure::ProxyTlsCertificate,
+        })
+}
+
+#[cfg(not(feature = "boring-backend"))]
+async fn proxy_tls(_io: BoxedIo, _proxy_host: &str) -> Result<BoxedIo, EgressFailure> {
+    Err(EgressFailure::InvalidConfig)
 }
 
 fn validate_endpoint(host: &str, port: u16) -> Result<(), EgressFailure> {
@@ -156,8 +310,8 @@ fn validate_target(host: &str, port: u16) -> Result<(), EgressFailure> {
     Ok(())
 }
 
-async fn http_connect(
-    stream: &mut TcpStream,
+async fn http_connect<S: AsyncIo + ?Sized>(
+    stream: &mut S,
     host: &str,
     port: u16,
     credentials: Option<&ProxyCredentials>,
@@ -186,7 +340,7 @@ async fn http_connect(
     }
 }
 
-async fn read_http_head(stream: &mut TcpStream, limit: usize) -> Result<Vec<u8>, EgressFailure> {
+async fn read_http_head<S: AsyncIo + ?Sized>(stream: &mut S, limit: usize) -> Result<Vec<u8>, EgressFailure> {
     let mut response = Vec::with_capacity(512);
     while response.len() < limit {
         let byte = stream.read_u8().await.map_err(EgressFailure::Io)?;
@@ -217,8 +371,8 @@ fn parse_http_status(response: &[u8]) -> Result<u16, EgressFailure> {
     Ok(status)
 }
 
-async fn socks5_connect(
-    stream: &mut TcpStream,
+async fn socks5_connect<S: AsyncIo + ?Sized>(
+    stream: &mut S,
     host: &str,
     port: u16,
     dns: Socks5DnsMode,
@@ -257,7 +411,10 @@ async fn socks5_connect(
     consume_socks5_address(stream, head[3]).await
 }
 
-async fn authenticate_socks5(stream: &mut TcpStream, credentials: &ProxyCredentials) -> Result<(), EgressFailure> {
+async fn authenticate_socks5<S: AsyncIo + ?Sized>(
+    stream: &mut S,
+    credentials: &ProxyCredentials,
+) -> Result<(), EgressFailure> {
     let username = credentials.username.expose().as_bytes();
     let password = credentials.password.expose().as_bytes();
     if username.is_empty() || username.len() > usize::from(u8::MAX) || password.len() > usize::from(u8::MAX) {
@@ -315,7 +472,7 @@ async fn append_socks5_address(
     Ok(())
 }
 
-async fn consume_socks5_address(stream: &mut TcpStream, kind: u8) -> Result<(), EgressFailure> {
+async fn consume_socks5_address<S: AsyncIo + ?Sized>(stream: &mut S, kind: u8) -> Result<(), EgressFailure> {
     let address_bytes = match kind {
         1 => 4,
         4 => 16,
@@ -344,6 +501,8 @@ enum EgressFailure {
     MalformedResponse,
     Socks5Reply,
     DnsEmpty,
+    ProxyTlsHandshake,
+    ProxyTlsCertificate,
     Io(io::Error),
 }
 
@@ -358,6 +517,16 @@ fn egress_error(failure: EgressFailure, proxy: bool) -> TransportError {
             TransportErrorCode::ProxyProtocol,
             "proxy_protocol",
             HealthEffect::TransientFailure,
+        ),
+        EgressFailure::ProxyTlsHandshake => (
+            TransportErrorCode::TlsHandshake,
+            "proxy_tls_handshake",
+            HealthEffect::TransientFailure,
+        ),
+        EgressFailure::ProxyTlsCertificate => (
+            TransportErrorCode::TlsCertificate,
+            "proxy_tls_certificate",
+            HealthEffect::QuarantineEgress,
         ),
         EgressFailure::DnsEmpty => (
             TransportErrorCode::ResolverFailure,
@@ -484,5 +653,138 @@ mod tests {
         };
         assert!(stream.write_all(b"ping").await.is_ok());
         assert!(server.await.is_ok());
+    }
+
+    #[cfg(feature = "boring-backend")]
+    #[tokio::test]
+    async fn https_proxy_never_sends_connect_before_proxy_tls() {
+        let proxy = match TcpListener::bind(("127.0.0.1", 0)).await {
+            Ok(proxy) => proxy,
+            Err(error) => std::panic::panic_any(error),
+        };
+        let address = match proxy.local_addr() {
+            Ok(address) => address,
+            Err(error) => std::panic::panic_any(error),
+        };
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = match proxy.accept().await {
+                Ok(value) => value,
+                Err(error) => std::panic::panic_any(error),
+            };
+            let mut hello = [0_u8; 5];
+            assert!(stream.read_exact(&mut hello).await.is_ok());
+            // A TLS handshake record, never a plaintext CONNECT carrying credentials.
+            assert_eq!(hello[0], 0x16);
+            assert!(!hello.starts_with(b"CONNE"));
+            assert!(stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await.is_ok());
+        });
+        let route = EgressRouteSnapshot::HttpsConnect {
+            host: "localhost".into(),
+            port: address.port(),
+            credentials: Some(Arc::new(ProxyCredentials {
+                username: SecretValue::new("user".to_owned()),
+                password: SecretValue::new("pass".to_owned()),
+            })),
+        };
+        let Err(error) = EgressDialer
+            .dial(
+                &route,
+                "api.anthropic.com",
+                443,
+                std::time::Duration::from_secs(5),
+                &CancellationToken::new(),
+            )
+            .await
+        else {
+            std::panic::panic_any("plaintext proxy must not complete an HTTPS proxy handshake");
+        };
+        assert_eq!(error.code, crate::TransportErrorCode::TlsHandshake);
+        assert_eq!(error.diagnostic.as_ref(), "proxy_tls_handshake");
+        assert!(server.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn direct_failure_falls_back_to_relay_chain() {
+        // 主代理端口拒绝所有连接,模拟直连不可达;中继为 SOCKS5 服务器,
+        // 拨号器应自动经中继建立到主代理的隧道并完成第二跳 CONNECT。
+        let primary = match TcpListener::bind(("127.0.0.1", 0)).await {
+            Ok(primary) => primary,
+            Err(error) => std::panic::panic_any(error),
+        };
+        let primary_address = match primary.local_addr() {
+            Ok(address) => address,
+            Err(error) => std::panic::panic_any(error),
+        };
+        let relay = match TcpListener::bind(("127.0.0.1", 0)).await {
+            Ok(relay) => relay,
+            Err(error) => std::panic::panic_any(error),
+        };
+        let relay_address = match relay.local_addr() {
+            Ok(address) => address,
+            Err(error) => std::panic::panic_any(error),
+        };
+        // 中继期望对端发起 CONNECT primary_address:port,完成后允许第二跳写入。
+        let relay_server = tokio::spawn(async move {
+            let (mut stream, _) = match relay.accept().await {
+                Ok(value) => value,
+                Err(error) => std::panic::panic_any(error),
+            };
+            let head = super::read_http_head(&mut stream, 16 * 1024).await.unwrap_or_default();
+            let request = String::from_utf8_lossy(&head);
+            let authority = format!("{primary_address}");
+            assert!(
+                request.starts_with(&format!("CONNECT {authority} ")),
+                "relay must receive CONNECT to the primary endpoint, got {request}"
+            );
+            assert!(
+                stream
+                    .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                    .await
+                    .is_ok()
+            );
+            // 第二跳:主代理在隧道内发起 SOCKS5 握手到 api.anthropic.com:443。
+            let mut greeting = [0_u8; 3];
+            assert!(stream.read_exact(&mut greeting).await.is_ok());
+            assert_eq!(&greeting, &[5, 1, 0]);
+            let mut destination = [0_u8; 24];
+            assert!(stream.read_exact(&mut destination).await.is_ok());
+            assert_eq!(&destination[..7], &[5, 1, 0, 3, 16]);
+            assert_eq!(&destination[7..23], b"api.anthropic.com");
+            assert!(stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.is_ok());
+            let mut payload = [0_u8; 4];
+            assert!(stream.read_exact(&mut payload).await.is_ok());
+            assert_eq!(&payload, b"pong");
+        });
+        let _primary_guard = primary; // 保持主端口监听以稳定拒绝连接
+        let route = EgressRouteSnapshot::WithRelay {
+            primary: Box::new(
+                ProxyHop::from_row(
+                    "http_connect",
+                    format!("127.0.0.1").into_boxed_str(),
+                    primary_address.port(),
+                    None,
+                )
+                .unwrap_or_else(|| std::process::abort()),
+            ),
+            relay: Box::new(
+                ProxyHop::from_row("socks5", "127.0.0.1".into(), relay_address.port(), None)
+                    .unwrap_or_else(|| std::process::abort()),
+            ),
+        };
+        let stream = EgressDialer
+            .dial(
+                &route,
+                "api.anthropic.com",
+                443,
+                std::time::Duration::from_secs(5),
+                &CancellationToken::new(),
+            )
+            .await;
+        let mut stream = match stream {
+            Ok(stream) => stream,
+            Err(error) => std::panic::panic_any(error),
+        };
+        assert!(stream.write_all(b"pong").await.is_ok());
+        assert!(relay_server.await.is_ok());
     }
 }

@@ -1069,7 +1069,8 @@ impl PgStorage {
             sqlx::query(
                 "SELECT proxy.id FROM gateway.proxy_endpoint proxy \
                  WHERE proxy.lifecycle_code='active' AND proxy.health_code='healthy' \
-                   AND proxy.stability_code='static' \
+                   AND proxy.stability_code='static' AND proxy.starts_at<=clock_timestamp() \
+                   AND (proxy.expires_at IS NULL OR proxy.expires_at>clock_timestamp()) \
                    AND (SELECT count(*) FROM gateway.credential_egress_binding binding \
                         WHERE binding.proxy_id=proxy.id AND binding.lifecycle_code IN ('pending','active','transport_unavailable','rebinding')) \
                        < proxy.max_active_bindings \
@@ -1081,7 +1082,10 @@ impl PgStorage {
             .await
             .map_err(transaction_error)?
         };
-        if proxy.is_none() && policy == "proxy_required" {
+        // `auto` and `proxy_required` both require a healthy static proxy; only
+        // the explicit `direct` group policy allocates a direct binding. Waiting
+        // enrollments are retried by the enrollment sweep (wait_for_egress).
+        if proxy.is_none() && policy != "direct" {
             sqlx::query(
                 "UPDATE gateway.credential_enrollment SET state_code='resolving_egress',next_action_code='wait_for_egress', \
                  revision=revision+1,updated_at=clock_timestamp() WHERE id=$1",

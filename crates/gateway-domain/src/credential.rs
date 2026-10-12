@@ -525,6 +525,8 @@ pub struct ProxyCandidate {
     pub stability: ProxyStability,
     pub active_bindings: u32,
     pub max_active_bindings: u32,
+    /// The proxy's start time has passed and its validity period has not ended.
+    pub within_validity_window: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -545,13 +547,15 @@ pub fn choose_egress(policy: EgressPolicy, proxies: &[ProxyCandidate]) -> Egress
             proxy.lifecycle == ProxyLifecycle::Active
                 && proxy.health == ProxyHealth::Healthy
                 && proxy.stability == ProxyStability::Static
+                && proxy.within_validity_window
                 && proxy.active_bindings < proxy.max_active_bindings
                 && proxy.max_active_bindings > 0
         })
         .min_by(|left, right| proxy_load_order(left, right));
     match selected {
         Some(proxy) => EgressDecision::Proxy(proxy.id.clone()),
-        None if policy == EgressPolicy::Auto => EgressDecision::Direct,
+        // Auto and ProxyRequired both require a healthy static proxy; only the
+        // explicit Direct policy bypasses proxy selection.
         None => EgressDecision::WaitForEgress,
     }
 }
@@ -858,6 +862,7 @@ mod tests {
                 stability: ProxyStability::Static,
                 active_bindings: 2,
                 max_active_bindings: 5,
+                within_validity_window: true,
             },
             ProxyCandidate {
                 id: typed(ProxyEndpointId::new("proxy_a")),
@@ -866,6 +871,7 @@ mod tests {
                 stability: ProxyStability::Static,
                 active_bindings: 1,
                 max_active_bindings: 5,
+                within_validity_window: true,
             },
         ];
         assert_eq!(
@@ -875,12 +881,29 @@ mod tests {
     }
 
     #[test]
-    fn proxy_required_waits_while_auto_has_stable_direct_fallback() {
+    fn proxy_outside_validity_window_is_never_selected() {
+        let pending = ProxyCandidate {
+            id: typed(ProxyEndpointId::new("not_started_or_expired")),
+            lifecycle: ProxyLifecycle::Active,
+            health: ProxyHealth::Healthy,
+            stability: ProxyStability::Static,
+            active_bindings: 0,
+            max_active_bindings: 5,
+            within_validity_window: false,
+        };
+        assert_eq!(
+            choose_egress(EgressPolicy::Auto, &[pending]),
+            EgressDecision::WaitForEgress
+        );
+    }
+
+    #[test]
+    fn proxy_policies_wait_without_a_healthy_static_proxy() {
         assert_eq!(
             choose_egress(EgressPolicy::ProxyRequired, &[]),
             EgressDecision::WaitForEgress
         );
-        assert_eq!(choose_egress(EgressPolicy::Auto, &[]), EgressDecision::Direct);
+        assert_eq!(choose_egress(EgressPolicy::Auto, &[]), EgressDecision::WaitForEgress);
     }
 
     #[test]
@@ -892,10 +915,11 @@ mod tests {
             stability: ProxyStability::Dynamic,
             active_bindings: 0,
             max_active_bindings: 5,
+            within_validity_window: true,
         };
         assert_eq!(
             choose_egress(EgressPolicy::Auto, std::slice::from_ref(&dynamic)),
-            EgressDecision::Direct
+            EgressDecision::WaitForEgress
         );
         assert_eq!(
             choose_egress(EgressPolicy::ProxyRequired, &[dynamic]),

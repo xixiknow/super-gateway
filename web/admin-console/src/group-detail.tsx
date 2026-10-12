@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useConfirm, useToast } from "./feedback";
+import { formatDateTime } from "./format";
 import { MessageKey, useI18n } from "./i18n";
 import { postLifecycle, rowActionError } from "./row-actions";
 import { SelectField } from "./select-field";
@@ -253,7 +254,7 @@ function configEntries(config: Row, tab: ConfigTab | "all", t: Translate, locale
 function ConfigPane({ config, tab, onAdjust }: { config: Row; tab: ConfigTab; onAdjust(): void }) {
   const { locale, t } = useI18n();
   const entries = configEntries(config, tab, t, locale);
-  const when = (value: unknown) => (typeof value === "string" && value ? new Date(value).toLocaleString(locale) : "—");
+  const when = (value: unknown) => formatDateTime(value);
   const meta: [string, ReactNode][] = tab === "governance"
     ? [[t("group.config.validatedAt"), when(config.validated_at)], [t("group.config.publishedAt"), when(config.published_at)]]
     : [];

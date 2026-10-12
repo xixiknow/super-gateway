@@ -3798,6 +3798,7 @@ impl PgManagementBackend {
             "SELECT sc.id,sc.config_version,sc.max_concurrency,sc.rpm_limit,sc.rpm_burst,sc.priority_layer, \
                     GREATEST(1,ROUND(sc.weight*1000))::bigint AS weight_scaled,sc.enabled, \
                     sc.session_capacity_enabled,sc.max_active_sessions,sc.session_idle_ttl_ms,sc.new_session_wait_ms, \
+                    sc.min_request_interval_ms, \
                     active.revision AS pointer_revision \
              FROM gateway.credential_active_scheduling_config active \
              JOIN gateway.credential_scheduling_config sc ON sc.id=active.config_id \
@@ -3850,10 +3851,19 @@ impl PgManagementBackend {
         let enabled = current
             .as_ref()
             .map_or(Ok(true), |row| required::<bool>(row, "enabled"))?;
+        let min_request_interval_ms = match command.min_request_interval_ms {
+            PatchField::Missing => current
+                .as_ref()
+                .map_or(Ok(None), |row| required::<Option<i64>>(row, "min_request_interval_ms"))?,
+            PatchField::Null => None,
+            PatchField::Value(value) if value >= 0 => Some(value),
+            PatchField::Value(_) => return Err(ManagementBackendError::InvalidInput),
+        };
         let normalized = json!({
             "enabled":enabled,
             "max_concurrency":concurrency,
             "max_active_sessions":max_active_sessions,
+            "min_request_interval_ms":min_request_interval_ms,
             "new_session_wait_ms":new_session_wait_ms,
             "priority_layer":priority,
             "rpm_burst":current_burst,
@@ -3904,8 +3914,9 @@ impl PgManagementBackend {
                 sqlx::query(
                     "INSERT INTO gateway.credential_scheduling_config \
                      (id,credential_id,config_version,max_concurrency,rpm_limit,rpm_burst,priority_layer,weight,enabled, \
-                      session_capacity_enabled,max_active_sessions,session_idle_ttl_ms,new_session_wait_ms,content_hash,created_at) \
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::numeric/1000,$9,$10,$11,$12,$13,$14,clock_timestamp())",
+                      session_capacity_enabled,max_active_sessions,session_idle_ttl_ms,new_session_wait_ms, \
+                      min_request_interval_ms,content_hash,created_at) \
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::numeric/1000,$9,$10,$11,$12,$13,$14,$15,clock_timestamp())",
                 )
                 .bind(config_id)
                 .bind(credential_id)
@@ -3920,6 +3931,7 @@ impl PgManagementBackend {
                 .bind(max_active_sessions)
                 .bind(session_idle_ttl_ms)
                 .bind(new_session_wait_ms)
+                .bind(min_request_interval_ms)
                 .bind(&content_hash)
                 .execute(&mut *transaction)
                 .await
@@ -3998,6 +4010,7 @@ impl PgManagementBackend {
                 "max_active_sessions":max_active_sessions,
                 "session_idle_ttl_ms":session_idle_ttl_ms,
                 "new_session_wait_ms":new_session_wait_ms,
+                "min_request_interval_ms":min_request_interval_ms,
                 "runtime_projection_applied":runtime_projection_applied,
                 "credential_revision":credential_revision
             }),
@@ -4099,7 +4112,6 @@ impl PgManagementBackend {
             EgressRebindTarget::Direct => ("direct", None),
             EgressRebindTarget::Proxy { proxy_id } => ("proxy", Some(proxy_id)),
         };
-        let job_id = Uuid::now_v7();
         let mut transaction = self
             .storage
             .pool()
@@ -4144,7 +4156,8 @@ impl PgManagementBackend {
             let eligible: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM gateway.proxy_endpoint proxy \
                  WHERE proxy.id=$1 AND proxy.lifecycle_code='active' AND proxy.health_code='healthy' \
-                   AND proxy.stability_code='static' AND \
+                   AND proxy.stability_code='static' AND proxy.starts_at<=clock_timestamp() \
+                   AND (proxy.expires_at IS NULL OR proxy.expires_at>clock_timestamp()) AND \
                      (SELECT count(*) FROM gateway.credential_egress_binding binding \
                       WHERE binding.proxy_id=proxy.id AND binding.credential_id<>$2 \
                         AND binding.lifecycle_code IN ('pending','active','transport_unavailable','rebinding')) \
@@ -4159,20 +4172,21 @@ impl PgManagementBackend {
                 return Err(ManagementBackendError::Precondition);
             }
         }
-        let created_at: String = sqlx::query_scalar(
-            "INSERT INTO ops.durable_job \
-             (id,kind_code,idempotency_key,state_code,payload_schema_version,payload,run_after,lease_generation,attempt_count,max_attempts,created_at,updated_at) \
-             VALUES ($1,'credential_egress_rebind_v1',$2,'scheduled',1,$3,clock_timestamp(),0,0,200,clock_timestamp(),clock_timestamp()) \
-             RETURNING created_at::text",
+        let (job_id, created_at) = gateway_storage::enqueue_credential_egress_rebind(
+            &mut transaction,
+            &gateway_storage::EgressRebindRequest {
+                credential_id,
+                group_id,
+                credential_revision: expected_revision,
+                profile_epoch,
+                egress_epoch,
+                proxy_id,
+                reason: reason.to_owned(),
+            },
         )
-        .bind(job_id)
-        .bind(format!("credential-egress-rebind:{credential_id}:{expected_revision}:{profile_epoch}:{egress_epoch}"))
-        .bind(json!({"credential_id":credential_id,"group_id":group_id,"credential_revision":expected_revision,
-          "profile_epoch":profile_epoch,"egress_epoch":egress_epoch,"mode":mode,"proxy_id":proxy_id,"reason":reason}))
-        .fetch_one(&mut *transaction)
         .await
-        .map_err(|_| ManagementBackendError::Precondition)?;
-        insert_job_created_history(&mut transaction, job_id, "credential_egress_rebind_scheduled").await?;
+        .map_err(|_| ManagementBackendError::Unavailable)?
+        .ok_or(ManagementBackendError::Precondition)?;
 
         transaction
             .commit()
@@ -7210,6 +7224,14 @@ impl PgManagementBackend {
                     p.lifecycle_code,p.health_code,p.stability_code,p.max_active_bindings,p.probe_generation, \
                     p.last_probed_at::text AS last_probed_at,p.last_success_at::text AS last_success_at, \
                     p.last_error_code,p.revision,p.created_at::text AS created_at,p.updated_at::text AS updated_at, \
+                    p.starts_at::text AS starts_at,p.validity_days,p.expires_at::text AS expires_at, \
+                    p.expiry_policy_code,p.remind_before_hours,p.expired_at::text AS expired_at,p.upstream_proxy_id, \
+                    CASE WHEN p.expired_at IS NOT NULL OR p.expires_at<=clock_timestamp() THEN 'expired' \
+                         WHEN p.starts_at>clock_timestamp() THEN 'not_started' \
+                         WHEN p.expires_at IS NULL THEN 'never' \
+                         WHEN p.remind_before_hours>0 \
+                          AND p.expires_at-make_interval(hours=>p.remind_before_hours)<=clock_timestamp() THEN 'expiring_soon' \
+                         ELSE 'active' END AS expiry_state, \
                     (SELECT count(*) FROM gateway.credential_egress_binding b WHERE b.proxy_id=p.id \
                       AND b.lifecycle_code IN ('pending','active','transport_unavailable','rebinding'))::bigint AS active_bindings \
              FROM gateway.proxy_endpoint p WHERE ($1::uuid IS NULL OR p.id=$1) \
@@ -7263,9 +7285,15 @@ impl PgManagementBackend {
                 .host
                 .chars()
                 .any(|character| character.is_whitespace() || matches!(character, '/' | '\\' | '@'))
-            || !matches!(command.proxy_type.as_str(), "http_connect" | "socks5")
+            || !valid_proxy_type(&command.proxy_type)
             || command.stability != "static"
             || !(1..=1_000).contains(&command.max_active_credentials)
+            || !valid_proxy_starts_at(&command.starts_at)
+            || command
+                .validity_days
+                .is_some_and(|days| !valid_proxy_validity_days(days))
+            || !valid_proxy_expiry_policy(&command.expiry_policy)
+            || !valid_proxy_remind_before_hours(command.remind_before_hours)
         {
             return Err(ManagementBackendError::InvalidInput);
         }
@@ -7285,14 +7313,19 @@ impl PgManagementBackend {
             .begin()
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
+        if let Some(upstream_proxy_id) = command.upstream_proxy_id {
+            validate_relay_candidate(&mut transaction, upstream_proxy_id, proxy_id).await?;
+        }
         if let Some((secret_id, (aad, envelope))) = &encrypted {
             insert_secret(&mut transaction, *secret_id, aad, envelope).await?;
         }
         sqlx::query(
             "INSERT INTO gateway.proxy_endpoint \
              (id,name,proxy_type_code,host,port,auth_secret_id,lifecycle_code,health_code,stability_code, \
-              max_active_bindings,probe_generation,revision,created_at,updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,'active','unknown','static',$7,0,1,clock_timestamp(),clock_timestamp())",
+              max_active_bindings,probe_generation,revision,created_at,updated_at, \
+              starts_at,validity_days,expires_at,expiry_policy_code,remind_before_hours,upstream_proxy_id) \
+             VALUES ($1,$2,$3,$4,$5,$6,'active','unknown','static',$7,0,1,clock_timestamp(),clock_timestamp(), \
+                     $8::timestamptz,$9,$8::timestamptz+make_interval(days=>$9),$10,$11,$12)",
         )
         .bind(proxy_id)
         .bind(command.name.trim())
@@ -7301,6 +7334,11 @@ impl PgManagementBackend {
         .bind(i32::from(command.port))
         .bind(secret_id)
         .bind(command.max_active_credentials)
+        .bind(&command.starts_at)
+        .bind(command.validity_days)
+        .bind(&command.expiry_policy)
+        .bind(command.remind_before_hours)
+        .bind(command.upstream_proxy_id)
         .execute(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Precondition)?;
@@ -7320,20 +7358,7 @@ impl PgManagementBackend {
         request: &ManagementRequest,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
         require_platform_admin(principal)?;
-        let command: ProxyPatchCommand = deserialize_body(request)?;
-        if command.name.is_none() && command.max_active_credentials.is_none() {
-            return Err(ManagementBackendError::InvalidInput);
-        }
-        if command
-            .name
-            .as_deref()
-            .is_some_and(|name| name.trim().is_empty() || name.len() > 128)
-            || command
-                .max_active_credentials
-                .is_some_and(|capacity| !(1..=1_000).contains(&capacity))
-        {
-            return Err(ManagementBackendError::InvalidInput);
-        }
+        let command = parse_proxy_patch(request)?;
         let proxy_id = path_uuid(request, "id")?;
         let expected_revision = request_revision(request)?;
         let mut transaction = self
@@ -7342,9 +7367,34 @@ impl PgManagementBackend {
             .begin()
             .await
             .map_err(|_| ManagementBackendError::Unavailable)?;
+        let validity_changed = command.starts_at.is_some() || command.validity_days != ValidityPatch::Unchanged;
+        let (validity_present, validity_days) = match command.validity_days {
+            ValidityPatch::Unchanged => (false, None),
+            ValidityPatch::Never => (true, None),
+            ValidityPatch::Days(days) => (true, Some(days)),
+        };
+        // Changing the window renews the proxy: reminder and expiry markers are re-armed so the
+        // background sweep evaluates the new deadline from scratch.
+        if let RelayPatch::Set(upstream_proxy_id) = command.upstream_proxy_id {
+            validate_relay_candidate(&mut transaction, upstream_proxy_id, proxy_id).await?;
+        }
+        let (relay_present, relay_value) = match command.upstream_proxy_id {
+            RelayPatch::Unchanged => (false, None),
+            RelayPatch::Clear => (true, None),
+            RelayPatch::Set(upstream_proxy_id) => (true, Some(upstream_proxy_id)),
+        };
         let row = sqlx::query(
             "UPDATE gateway.proxy_endpoint p SET \
                name=COALESCE($3,name),max_active_bindings=COALESCE($4,max_active_bindings), \
+               starts_at=COALESCE($5::timestamptz,starts_at), \
+               validity_days=CASE WHEN $6 THEN $7 ELSE validity_days END, \
+               expires_at=COALESCE($5::timestamptz,starts_at) \
+                 +make_interval(days=>CASE WHEN $6 THEN $7 ELSE validity_days END), \
+               expiry_policy_code=COALESCE($8,expiry_policy_code), \
+               remind_before_hours=COALESCE($9,remind_before_hours), \
+               expiry_reminded_at=CASE WHEN $10 THEN NULL ELSE expiry_reminded_at END, \
+               expired_at=CASE WHEN $10 THEN NULL ELSE expired_at END, \
+               upstream_proxy_id=CASE WHEN $11 THEN $12::uuid ELSE upstream_proxy_id END, \
                revision=revision+1,updated_at=clock_timestamp() \
              WHERE id=$1 AND revision=$2 AND lifecycle_code<>'archived' \
                AND ($4::integer IS NULL OR $4 >= (SELECT count(*) FROM gateway.credential_egress_binding b \
@@ -7355,11 +7405,24 @@ impl PgManagementBackend {
         .bind(expected_revision)
         .bind(command.name.as_deref().map(str::trim))
         .bind(command.max_active_credentials)
+        .bind(command.starts_at.as_deref())
+        .bind(validity_present)
+        .bind(validity_days)
+        .bind(command.expiry_policy.as_deref())
+        .bind(command.remind_before_hours)
+        .bind(validity_changed)
+        .bind(relay_present)
+        .bind(relay_value)
         .fetch_optional(&mut *transaction)
         .await
         .map_err(|_| ManagementBackendError::Precondition)?
         .ok_or(ManagementBackendError::Precondition)?;
         required::<i64>(&row, "revision")?;
+        if validity_changed {
+            gateway_storage::resolve_proxy_expiry_alerts(&mut transaction, proxy_id)
+                .await
+                .map_err(|_| ManagementBackendError::Unavailable)?;
+        }
 
         transaction
             .commit()
@@ -7550,7 +7613,8 @@ impl PgManagementBackend {
                 let row = sqlx::query(
                     "UPDATE gateway.proxy_endpoint SET lifecycle_code='active',drained_at=NULL,revision=revision+1, \
                        updated_at=clock_timestamp() WHERE id=$1 AND revision=$2 AND lifecycle_code='disabled' \
-                       AND health_code='healthy' RETURNING revision,auth_secret_id",
+                       AND health_code='healthy' AND expired_at IS NULL \
+                       AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING revision,auth_secret_id",
                 )
                 .bind(proxy_id)
                 .bind(expected_revision)
@@ -12105,6 +12169,10 @@ struct CredentialSchedulingPatchCommand {
     concurrency: PatchField<i32>,
     #[serde(default, deserialize_with = "deserialize_patch_field")]
     messages_rpm: PatchField<i32>,
+    /// Opt-in request pacing. `null` disables spacing; a number sets the
+    /// minimum spacing between consecutive grants in milliseconds.
+    #[serde(default, deserialize_with = "deserialize_patch_field")]
+    min_request_interval_ms: PatchField<i64>,
 }
 
 #[derive(Deserialize)]
@@ -12183,13 +12251,178 @@ struct ProxyCreateCommand {
     password: Option<String>,
     stability: String,
     max_active_credentials: i32,
+    /// RFC3339 instant from which the proxy may be selected.
+    starts_at: String,
+    /// Validity in days counted from `starts_at`; `None` never expires.
+    validity_days: Option<i32>,
+    expiry_policy: String,
+    remind_before_hours: i32,
+    /// Optional relay (upstream) proxy used when the gateway cannot reach this
+    /// proxy directly. The relay itself must not have an upstream.
+    upstream_proxy_id: Option<Uuid>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum ValidityPatch {
+    #[default]
+    Unchanged,
+    /// The proxy never expires.
+    Never,
+    Days(i32),
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum RelayPatch {
+    #[default]
+    Unchanged,
+    /// Remove the relay: the proxy is only reachable directly again.
+    Clear,
+    Set(Uuid),
+}
+
+#[derive(Debug, Default)]
 struct ProxyPatchCommand {
     name: Option<String>,
     max_active_credentials: Option<i32>,
+    starts_at: Option<String>,
+    validity_days: ValidityPatch,
+    expiry_policy: Option<String>,
+    remind_before_hours: Option<i32>,
+    upstream_proxy_id: RelayPatch,
+}
+
+fn valid_proxy_type(value: &str) -> bool {
+    matches!(value, "http_connect" | "https_connect" | "socks5")
+}
+
+fn valid_proxy_expiry_policy(value: &str) -> bool {
+    matches!(value, "fallback_direct" | "switch_proxy" | "none")
+}
+
+fn valid_proxy_validity_days(days: i32) -> bool {
+    (1..=3_650).contains(&days)
+}
+
+fn valid_proxy_remind_before_hours(hours: i32) -> bool {
+    (0..=8_760).contains(&hours)
+}
+
+fn valid_proxy_starts_at(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 64
+}
+
+/// A relay candidate must be an active static proxy without its own upstream:
+/// egress routes support exactly one relay hop ahead of the primary proxy.
+async fn validate_relay_candidate(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    upstream_proxy_id: Uuid,
+    proxy_id: Uuid,
+) -> Result<(), ManagementBackendError> {
+    if upstream_proxy_id == proxy_id {
+        return Err(ManagementBackendError::InvalidInput);
+    }
+    let valid: bool = sqlx::query_scalar(
+        "SELECT lifecycle_code='active' AND stability_code='static' AND upstream_proxy_id IS NULL \
+         FROM gateway.proxy_endpoint WHERE id=$1",
+    )
+    .bind(upstream_proxy_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| ManagementBackendError::Unavailable)?
+    .ok_or(ManagementBackendError::InvalidInput)?;
+    if !valid {
+        return Err(ManagementBackendError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn parse_proxy_patch(request: &ManagementRequest) -> Result<ProxyPatchCommand, ManagementBackendError> {
+    let body = request
+        .body
+        .as_ref()
+        .and_then(Value::as_object)
+        .ok_or(ManagementBackendError::InvalidInput)?;
+    if body.is_empty()
+        || body.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "name"
+                    | "max_active_credentials"
+                    | "starts_at"
+                    | "validity_days"
+                    | "expiry_policy"
+                    | "remind_before_hours"
+                    | "upstream_proxy_id"
+            )
+        })
+    {
+        return Err(ManagementBackendError::InvalidInput);
+    }
+    let text = |key: &str| -> Result<Option<String>, ManagementBackendError> {
+        body.get(key)
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or(ManagementBackendError::InvalidInput)
+            })
+            .transpose()
+    };
+    let integer = |key: &str| -> Result<Option<i32>, ManagementBackendError> {
+        body.get(key)
+            .map(|value| {
+                value
+                    .as_i64()
+                    .and_then(|value| i32::try_from(value).ok())
+                    .ok_or(ManagementBackendError::InvalidInput)
+            })
+            .transpose()
+    };
+    let command = ProxyPatchCommand {
+        name: text("name")?,
+        max_active_credentials: integer("max_active_credentials")?,
+        starts_at: text("starts_at")?,
+        validity_days: match body.get("validity_days") {
+            None => ValidityPatch::Unchanged,
+            Some(Value::Null) => ValidityPatch::Never,
+            Some(_) => ValidityPatch::Days(integer("validity_days")?.ok_or(ManagementBackendError::InvalidInput)?),
+        },
+        expiry_policy: text("expiry_policy")?,
+        remind_before_hours: integer("remind_before_hours")?,
+        upstream_proxy_id: match body.get("upstream_proxy_id") {
+            None => RelayPatch::Unchanged,
+            Some(Value::Null) => RelayPatch::Clear,
+            Some(value) => RelayPatch::Set(
+                value
+                    .as_str()
+                    .and_then(|value| Uuid::parse_str(value).ok())
+                    .ok_or(ManagementBackendError::InvalidInput)?,
+            ),
+        },
+    };
+    if command
+        .name
+        .as_deref()
+        .is_some_and(|name| name.trim().is_empty() || name.len() > 128)
+        || command
+            .max_active_credentials
+            .is_some_and(|capacity| !(1..=1_000).contains(&capacity))
+        || command
+            .starts_at
+            .as_deref()
+            .is_some_and(|value| !valid_proxy_starts_at(value))
+        || matches!(command.validity_days, ValidityPatch::Days(days) if !valid_proxy_validity_days(days))
+        || command
+            .expiry_policy
+            .as_deref()
+            .is_some_and(|value| !valid_proxy_expiry_policy(value))
+        || command
+            .remind_before_hours
+            .is_some_and(|hours| !valid_proxy_remind_before_hours(hours))
+    {
+        return Err(ManagementBackendError::InvalidInput);
+    }
+    Ok(command)
 }
 
 #[derive(Deserialize)]
@@ -13648,7 +13881,15 @@ fn proxy_projection(row: &sqlx::postgres::PgRow) -> Result<Value, ManagementBack
         "last_error":required::<Option<String>>(row,"last_error_code")?,
         "revision":required::<i64>(row,"revision")?,
         "created_at":required::<String>(row,"created_at")?,
-        "updated_at":required::<String>(row,"updated_at")?
+        "updated_at":required::<String>(row,"updated_at")?,
+        "starts_at":required::<String>(row,"starts_at")?,
+        "validity_days":required::<Option<i32>>(row,"validity_days")?,
+        "expires_at":required::<Option<String>>(row,"expires_at")?,
+        "expiry_policy":required::<String>(row,"expiry_policy_code")?,
+        "remind_before_hours":required::<i32>(row,"remind_before_hours")?,
+        "expired_at":required::<Option<String>>(row,"expired_at")?,
+        "upstream_proxy_id":required::<Option<Uuid>>(row,"upstream_proxy_id")?,
+        "expiry_state":required::<String>(row,"expiry_state")?
     }))
 }
 

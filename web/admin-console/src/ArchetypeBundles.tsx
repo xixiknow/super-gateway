@@ -5,6 +5,7 @@ import { ApiError, api } from "./api";
 import { useToast } from "./feedback";
 import { TablePager, usePagination } from "./pagination";
 import { MessageKey, useI18n } from "./i18n";
+import { formatDateTime } from "./format";
 import { SelectField } from "./select-field";
 
 type View = "archetypes" | "bundles";
@@ -210,7 +211,7 @@ function BundleTable({ result, onCreate, onAction }: {
         <td><strong>{(row.protocol || "—").toUpperCase()}</strong><small>{row.backend_id || "—"}</small></td>
         <td><div className="gate-pair"><StatusPill value={row.evidence_gate} /><StatusPill value={row.runtime_state} /></div></td>
         <td><StatusPill value={row.lifecycle} /></td>
-        <td><strong>{row.activated_at ? new Date(row.activated_at).toLocaleString(locale) : "—"}</strong><small>{row.engine_activation_generation > 0 ? t("bundle.generation", { generation: row.engine_activation_generation }) : t("bundle.notActivated")}</small></td>
+        <td><strong>{formatDateTime(row.activated_at)}</strong><small>{row.engine_activation_generation > 0 ? t("bundle.generation", { generation: row.engine_activation_generation }) : t("bundle.notActivated")}</small></td>
         <td><div className="lifecycle-actions">{next ? <button className="btn btn-outline btn-sm" type="button" onClick={() => onAction(next, row)}>{t(`bundle.action.${next}` as MessageKey)}</button> : <span className="muted">—</span>}</div></td>
       </tr>;
     })}</tbody></table></div><TablePager page={pager.page} pageCount={pager.pageCount} total={pager.total} onPage={pager.setPage} /></>}

@@ -1,6 +1,6 @@
 //! `OpenAI` authorization and bounded background renewal.
 use super::*;
-use gateway_domain::{EgressRouteSnapshot, Socks5DnsMode};
+use gateway_domain::EgressRouteSnapshot;
 use gateway_transport::{ProviderHttpsClient, ProviderHttpsHeader, ProviderHttpsRequest};
 use tokio_util::sync::CancellationToken;
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -225,20 +225,8 @@ impl PgManagementBackend {
             let host = required::<String>(&row, "host")?.into();
             let port =
                 u16::try_from(required::<i32>(&row, "port")?).map_err(|_| ManagementBackendError::Unavailable)?;
-            if required::<String>(&row, "proxy_type_code")? == "socks5" {
-                EgressRouteSnapshot::Socks5 {
-                    host,
-                    port,
-                    credentials,
-                    dns: Socks5DnsMode::Remote,
-                }
-            } else {
-                EgressRouteSnapshot::HttpConnect {
-                    host,
-                    port,
-                    credentials,
-                }
-            }
+            EgressRouteSnapshot::from_proxy_row(&required::<String>(&row, "proxy_type_code")?, host, port, credentials)
+                .ok_or(ManagementBackendError::Unavailable)?
         } else {
             EgressRouteSnapshot::Direct
         };

@@ -7,7 +7,7 @@
       "crates/gateway-transport/src/port.rs"
     ],
     "source_sha256": {
-      "crates/gateway-domain/src/transport.rs": "e64dfd824e24d17ca37685bc1f1f9892815f533260ed92395e4e239735672a9f",
+      "crates/gateway-domain/src/transport.rs": "10659837a6c0a1538152605f1be7f5f0b9253aeb8098ef627898d6c2968402a7",
       "crates/gateway-transport/src/port.rs": "f663d7af464cd4cb8a6dc78839a1dfe94154b62c30eb4da1f89970023165396a"
     },
     "privacy_canaries": [
@@ -102,7 +102,7 @@
       "crates/gateway-transport/src/egress.rs"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/egress.rs": "393747e64a2bcd72752f4d7a6c7ce642e4e74caa17e1df1b3976a4438320db3f"
+      "crates/gateway-transport/src/egress.rs": "ffffd8bcfdfff67fad902f81f967ca929e63b0c195b62940ba4e0ef5842e3465"
     },
     "privacy_canaries": [
       "synthetic-oauth-access-token",
@@ -121,7 +121,7 @@
       "Cargo.lock"
     ],
     "source_sha256": {
-      "crates/gateway-transport/src/tls.rs": "1812fddbb6535a1a35a08189d298b1bd0942f18b9a42038541c16e15f29af586",
+      "crates/gateway-transport/src/tls.rs": "ca90f9d71bddfcf14c329f71ab67a9bf8bb995425d7281478d8a1b8663082d66",
       "Cargo.lock": "2f2cf8664a7904f4510a92a664b9608ca6dcc37b0dd81720a529f51e9351ede6"
     },
     "privacy_canaries": [

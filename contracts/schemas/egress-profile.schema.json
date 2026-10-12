@@ -7,6 +7,7 @@
       "type": "string",
       "enum": [
         "http_connect",
+        "https_connect",
         "socks5"
       ],
       "x-enum-registry": "proxy_type"
@@ -20,6 +21,26 @@
         "archived"
       ],
       "x-enum-registry": "proxy_lifecycle"
+    },
+    "ProxyExpiryPolicy": {
+      "type": "string",
+      "enum": [
+        "fallback_direct",
+        "switch_proxy",
+        "none"
+      ],
+      "x-enum-registry": "proxy_expiry_policy"
+    },
+    "ProxyExpiryState": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "active",
+        "expiring_soon",
+        "expired",
+        "never"
+      ],
+      "x-enum-registry": "proxy_expiry_state"
     },
     "ProxyHealth": {
       "type": "string",
@@ -106,6 +127,36 @@
           "minimum": 1,
           "default": 5
         },
+        "starts_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "validity_days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "expiry_policy": {
+          "$ref": "#/$defs/ProxyExpiryPolicy"
+        },
+        "remind_before_hours": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8760
+        },
+        "expiry_state": {
+          "$ref": "#/$defs/ProxyExpiryState"
+        },
         "revision": {
           "type": "integer",
           "minimum": 1
@@ -122,6 +173,12 @@
         "health",
         "stability",
         "max_active_credentials",
+        "starts_at",
+        "validity_days",
+        "expires_at",
+        "expiry_policy",
+        "remind_before_hours",
+        "expiry_state",
         "revision"
       ]
     },

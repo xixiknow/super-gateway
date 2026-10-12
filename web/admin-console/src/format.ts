@@ -8,20 +8,29 @@ export function formatAmount(value: unknown): string {
   return typeof value === "string" && value ? `$${Number(value).toFixed(2)}` : "—";
 }
 
-export function formatDateTime(value: unknown, locale: Locale): string {
-  if (typeof value !== "string" || !value || Number.isNaN(Date.parse(value))) return "—";
-  return new Date(value).toLocaleString(locale);
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatRelative(value: unknown, locale: Locale): string {
-  if (typeof value !== "string" || !value || Number.isNaN(Date.parse(value))) return "—";
-  const diffMs = Date.now() - Date.parse(value);
-  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
-  const minutes = Math.round(diffMs / 60_000);
-  if (Math.abs(minutes) < 60) return formatter.format(-minutes, "minute");
-  const hours = Math.round(minutes / 60);
-  if (Math.abs(hours) < 24) return formatter.format(-hours, "hour");
-  return formatter.format(-Math.round(hours / 24), "day");
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/** 全站统一时间格式:本地时区 YYYY-MM-DD HH:MM:SS */
+export function formatDateTime(value: unknown, _locale?: Locale): string {
+  const date = toDate(value);
+  if (!date) return "—";
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/** 仅需年月日的场景:YYYY-MM-DD(由统一时间格式演变) */
+export function formatDate(value: unknown, locale?: Locale): string {
+  const formatted = formatDateTime(value, locale);
+  return formatted === "—" ? formatted : formatted.slice(0, 10);
 }
 
 /** Cooldown/resume countdown as `HH:MM:SS`-style compact text. */

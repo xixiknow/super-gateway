@@ -1,5 +1,6 @@
 import { ReactNode, useMemo, useState } from "react";
 import { Locale, useI18n } from "./i18n";
+import { formatDateTime } from "./format";
 import { RowActionDef, RowActionsCell } from "./row-actions";
 import { TablePager, usePagination } from "./pagination";
 import { SelectField } from "./select-field";
@@ -27,8 +28,8 @@ function isUserRecord(value: unknown): value is UserRecord {
     && typeof row.status === "string" && typeof row.max_concurrency === "number" && typeof row.rpm === "number";
 }
 
-function formatDate(value: string | null, locale: Locale, empty: string): string {
-  return value ? new Date(value).toLocaleString(locale) : empty;
+function formatDate(value: string | null, _locale: Locale, empty: string): string {
+  return value ? formatDateTime(value) : empty;
 }
 
 function formatMoney(value: string | null, locale: Locale, unlimited: string): string {

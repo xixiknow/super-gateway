@@ -102,7 +102,7 @@ it("opens capabilities in a right drawer and edits a system version as a new str
   expect(screen.getByText("1M")).toBeInTheDocument();
   expect(screen.getByText("128K")).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "发布时间" })).toBeInTheDocument();
-  expect(screen.getByText("2026/07/24")).toBeInTheDocument();
+  expect(screen.getByText("2026-07-24")).toBeInTheDocument();
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "查看能力 · Claude Opus Fixture" });
   await user.click(trigger);

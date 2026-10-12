@@ -402,6 +402,11 @@ select.inp option{background:var(--bg-raise);color:var(--ink)}
 .tbl tbody tr:hover .fix-l,.tbl tbody tr:hover .fix-r{background:var(--surface-2)}
 .tbl .fix-l{left:0;box-shadow:2px 0 0 -1px var(--line),4px 0 8px -6px var(--edge-shadow)}
 .tbl .fix-r{right:0;box-shadow:-2px 0 0 -1px var(--line),-4px 0 8px -6px var(--edge-shadow)}
+/* 资源表格(ResourceTable):表头与内容单行,列按内容自然展开,超出宽度由 .tbl-wrap 横向滚动 */
+.tbl th{white-space:nowrap}
+.tbl.resource-table td{white-space:nowrap}
+/* 超长字段(UUID 等)单列封顶省略,避免撑爆整表宽度 */
+.tbl.resource-table td.mono{max-width:360px;overflow:hidden;text-overflow:ellipsis}
 /* 行复选框 */
 .tbl .row-check{width:18px;height:18px;border:1.5px solid var(--line-strong);border-radius:5px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:var(--t-fast);background:var(--surface);vertical-align:middle}
 .tbl .row-check svg{width:11px;height:11px;color:var(--on-accent);stroke-width:3.5;opacity:0;transition:var(--t-fast)}

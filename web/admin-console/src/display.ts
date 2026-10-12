@@ -1,4 +1,5 @@
 import { Locale } from "./i18n";
+import { formatDateTime } from "./format";
 
 /* ============================================================
    通用资源展示工具:列名与枚举值的中文映射 + 单元格渲染
@@ -11,7 +12,7 @@ export const zhColumns: Record<string, string> = {
   cache_read_input_tokens: "读缓存 Token", cache_creation_input_tokens: "写缓存 Token", endpoint: "端点", phase: "阶段", outcome: "结果",
   id: "ID", name: "名称", username: "用户名", display_name: "显示名称", email: "邮箱", role: "角色", status: "状态", revision: "版本",
   created_at: "创建时间", updated_at: "更新时间", owner_user_id: "所有者用户", group_id: "分组", owner_executor_id: "归属执行器",
-  owner_generation: "归属代次", credential_count: "凭据数量", expires_at: "过期时间", session_id: "会话 ID", model_id: "模型 ID",
+  owner_generation: "归属代次", credential_count: "凭据数量", expires_at: "过期时间", expiry_state: "有效期状态", starts_at: "开始时间", session_id: "会话 ID", model_id: "模型 ID",
   request_id: "请求 ID", state: "状态", kind: "类型", reason: "原因", upstream_model_id: "上游模型 ID", source: "目录来源",
   capability_version: "能力版本", capability_state: "能力状态", last_seen_at: "最近发现时间",
   account_uuid: "账号", purpose: "用途", auth_kind: "认证方式", lifecycle_state: "生命周期", scheduling_state: "调度状态",
@@ -77,6 +78,11 @@ export function displayCell(value: unknown, locale: Locale): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "object") return JSON.stringify(value).slice(0, 120);
   const raw = String(value);
+  // ISO 8601 时间戳(含 PG 原始串如 "2026-10-07 07:40:44.103375+00")统一格式化,避免原始串直接展示
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) {
+    const formatted = formatDateTime(raw);
+    return formatted === "—" ? raw : formatted;
+  }
   const normalized = raw === "shadow" ? "eligible" : raw === "canary" ? "validated" : raw;
   return locale === "zh-CN" ? zhValues[normalized] ?? normalized : enValues[normalized] ?? normalized.replaceAll("_", " ");
 }

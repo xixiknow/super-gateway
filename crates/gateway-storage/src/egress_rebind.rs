@@ -85,7 +85,8 @@ impl PgStorage {
         let mut target_expected_ip = None;
         if let Some(proxy_id) = commit.proxy_id {
             let proxy = sqlx::query(
-                "SELECT max_active_bindings,host(expected_egress_ip) AS expected_ip,lifecycle_code,health_code,stability_code \
+                "SELECT max_active_bindings,host(expected_egress_ip) AS expected_ip,lifecycle_code,health_code,stability_code, \
+                        (starts_at<=clock_timestamp() AND (expires_at IS NULL OR expires_at>clock_timestamp())) AS in_window \
                  FROM gateway.proxy_endpoint WHERE id=$1 FOR UPDATE",
             )
             .bind(proxy_id)
@@ -96,6 +97,7 @@ impl PgStorage {
             if proxy.try_get::<String, _>("lifecycle_code").map_err(map_sqlx)? != "active"
                 || proxy.try_get::<String, _>("health_code").map_err(map_sqlx)? != "healthy"
                 || proxy.try_get::<String, _>("stability_code").map_err(map_sqlx)? != "static"
+                || !proxy.try_get::<bool, _>("in_window").map_err(map_sqlx)?
             {
                 return Err(StorageError::EgressUnavailable);
             }

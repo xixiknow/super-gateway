@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use gateway_domain::{EgressMode, EgressRouteSnapshot, ProxyCredentials, SecretBytes, SecretValue, Socks5DnsMode};
+use gateway_domain::{
+    EgressMode, EgressRouteSnapshot, ProxyCredentials, ProxyHop, SecretBytes, SecretValue, Socks5DnsMode,
+};
 use gateway_services::{
     credential::CredentialServiceError,
     credential_provider::{ProviderHttpPort, ProviderHttpRequest, ProviderHttpResponse},
@@ -184,14 +186,21 @@ fn parse_public_proxy(value: &str) -> Result<EgressRouteSnapshot, CredentialServ
         return Err(invalid());
     }
     let host = host.trim_start_matches('[').trim_end_matches(']').into();
-    let port = uri
-        .port_u16()
-        .unwrap_or(if uri.scheme_str() == Some("http") { 80 } else { 1080 });
+    let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+        Some("http") => 80,
+        Some("https") => 443,
+        _ => 1080,
+    });
     if port == 0 {
         return Err(invalid());
     }
     match uri.scheme_str() {
         Some("http") => Ok(EgressRouteSnapshot::HttpConnect {
+            host,
+            port,
+            credentials: None,
+        }),
+        Some("https") => Ok(EgressRouteSnapshot::HttpsConnect {
             host,
             port,
             credentials: None,
@@ -235,10 +244,14 @@ pub(crate) async fn resolve_egress(
         .map(|id| Uuid::parse_str(id.as_str()).map_err(|_| CredentialServiceError::WaitingEgress))
         .transpose()?;
     let row = sqlx::query(
-        "SELECT b.mode_code,b.proxy_id,p.proxy_type_code,p.host,p.port,p.auth_secret_id \
+        "SELECT b.mode_code,b.proxy_id,p.proxy_type_code,p.host,p.port,p.auth_secret_id, \
+                u.id AS relay_id,u.proxy_type_code AS relay_type_code,u.host AS relay_host,u.port AS relay_port, \
+                u.auth_secret_id AS relay_auth_secret_id \
          FROM gateway.credential_egress_binding b \
          LEFT JOIN gateway.proxy_endpoint p ON p.id=b.proxy_id AND p.lifecycle_code='active' \
               AND p.health_code='healthy' AND p.stability_code='static' \
+         LEFT JOIN gateway.proxy_endpoint u ON u.id=p.upstream_proxy_id AND u.lifecycle_code='active' \
+              AND u.stability_code='static' \
          WHERE b.id=$1 AND b.egress_epoch=$2 AND b.lifecycle_code='active' AND b.stability_code='stable'",
     )
     .bind(binding_id)
@@ -260,6 +273,7 @@ pub(crate) async fn resolve_egress(
     if mode == "direct" {
         return Ok(EgressRouteSnapshot::Direct);
     }
+    let proxy_id = proxy_id.ok_or(CredentialServiceError::WaitingEgress)?;
     let host = row
         .try_get::<Option<String>, _>("host")
         .map_err(|_| CredentialServiceError::Transient)?
@@ -270,42 +284,79 @@ pub(crate) async fn resolve_egress(
             .ok_or(CredentialServiceError::WaitingEgress)?,
     )
     .map_err(|_| CredentialServiceError::WaitingEgress)?;
-    let credentials = row
-        .try_get::<Option<Uuid>, _>("auth_secret_id")
-        .map_err(|_| CredentialServiceError::Transient)?
-        .map(|secret_id| async move {
-            let secret = decrypt_secret(
-                storage,
-                secret_id,
-                "proxy_endpoint",
-                &proxy_id.ok_or(CredentialServiceError::WaitingEgress)?.to_string(),
-                "proxy_authentication",
-            )
-            .await?;
-            parse_proxy_credentials(&secret).map(Arc::new)
-        });
-    let credentials = match credentials {
-        Some(future) => Some(future.await?),
-        None => None,
-    };
-    match row
+    let credentials = load_proxy_credentials(
+        storage,
+        row.try_get::<Option<Uuid>, _>("auth_secret_id")
+            .map_err(|_| CredentialServiceError::Transient)?,
+        proxy_id,
+    )
+    .await?;
+    let proxy_type_code = row
         .try_get::<Option<String>, _>("proxy_type_code")
         .map_err(|_| CredentialServiceError::Transient)?
-        .as_deref()
-    {
-        Some("http_connect") => Ok(EgressRouteSnapshot::HttpConnect {
-            host: host.into_boxed_str(),
-            port,
-            credentials,
-        }),
-        Some("socks5") => Ok(EgressRouteSnapshot::Socks5 {
-            host: host.into_boxed_str(),
-            port,
-            dns: Socks5DnsMode::Remote,
-            credentials,
-        }),
-        _ => Err(CredentialServiceError::WaitingEgress),
-    }
+        .ok_or(CredentialServiceError::WaitingEgress)?;
+    let primary = ProxyHop::from_row(&proxy_type_code, host.into_boxed_str(), port, credentials)
+        .ok_or(CredentialServiceError::WaitingEgress)?;
+    let relay = relay_hop_from_row(storage, &row).await?;
+    Ok(EgressRouteSnapshot::from_hops(primary, relay))
+}
+
+/// Load the optional relay (upstream) hop columns joined onto a proxy row.
+async fn relay_hop_from_row(
+    storage: &PgStorage,
+    row: &sqlx::postgres::PgRow,
+) -> Result<Option<ProxyHop>, CredentialServiceError> {
+    let Some(relay_id) = row
+        .try_get::<Option<Uuid>, _>("relay_id")
+        .map_err(|_| CredentialServiceError::Transient)?
+    else {
+        return Ok(None);
+    };
+    let relay_host: String = row
+        .try_get("relay_host")
+        .map_err(|_| CredentialServiceError::Transient)?;
+    let relay_port = u16::try_from(
+        row.try_get::<i32, _>("relay_port")
+            .map_err(|_| CredentialServiceError::Transient)?,
+    )
+    .map_err(|_| CredentialServiceError::WaitingEgress)?;
+    let relay_credentials = load_proxy_credentials(
+        storage,
+        row.try_get::<Option<Uuid>, _>("relay_auth_secret_id")
+            .map_err(|_| CredentialServiceError::Transient)?,
+        relay_id,
+    )
+    .await?;
+    let relay_type_code: String = row
+        .try_get("relay_type_code")
+        .map_err(|_| CredentialServiceError::Transient)?;
+    ProxyHop::from_row(
+        &relay_type_code,
+        relay_host.into_boxed_str(),
+        relay_port,
+        relay_credentials,
+    )
+    .map(Some)
+    .ok_or(CredentialServiceError::WaitingEgress)
+}
+
+async fn load_proxy_credentials(
+    storage: &PgStorage,
+    secret_id: Option<Uuid>,
+    proxy_id: Uuid,
+) -> Result<Option<Arc<ProxyCredentials>>, CredentialServiceError> {
+    let Some(secret_id) = secret_id else {
+        return Ok(None);
+    };
+    let secret = decrypt_secret(
+        storage,
+        secret_id,
+        "proxy_endpoint",
+        &proxy_id.to_string(),
+        "proxy_authentication",
+    )
+    .await?;
+    parse_proxy_credentials(&secret).map(|value| Some(Arc::new(value)))
 }
 
 async fn decrypt_secret(
@@ -402,61 +453,48 @@ async fn decrypt_secret(
         .map_err(|_| CredentialServiceError::WaitingEgress)
 }
 
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
 pub(crate) async fn resolve_proxy_route(
     storage: &PgStorage,
     proxy_id: Uuid,
 ) -> Result<EgressRouteSnapshot, CredentialServiceError> {
     let row = sqlx::query(
-        "SELECT proxy_type_code,host,port,auth_secret_id FROM gateway.proxy_endpoint \
-         WHERE id=$1 AND lifecycle_code IN ('active','disabled') AND stability_code='static'",
+        "SELECT p.proxy_type_code,p.host,p.port,p.auth_secret_id, \
+                u.id AS relay_id,u.proxy_type_code AS relay_type_code,u.host AS relay_host,u.port AS relay_port, \
+                u.auth_secret_id AS relay_auth_secret_id \
+         FROM gateway.proxy_endpoint p \
+         LEFT JOIN gateway.proxy_endpoint u ON u.id=p.upstream_proxy_id AND u.lifecycle_code='active' \
+              AND u.stability_code='static' \
+         WHERE p.id=$1 AND p.lifecycle_code IN ('active','disabled') AND p.stability_code='static'",
     )
     .bind(proxy_id)
     .fetch_optional(&storage.pool())
     .await
     .map_err(|_| CredentialServiceError::Transient)?
     .ok_or(CredentialServiceError::WaitingEgress)?;
-    let host: String = row.try_get("host").map_err(|_| CredentialServiceError::Transient)?;
-    let port = u16::try_from(
-        row.try_get::<i32, _>("port")
+    let credentials = load_proxy_credentials(
+        storage,
+        row.try_get::<Option<Uuid>, _>("auth_secret_id")
             .map_err(|_| CredentialServiceError::Transient)?,
+        proxy_id,
     )
-    .map_err(|_| CredentialServiceError::WaitingEgress)?;
-    let credentials = match row
-        .try_get::<Option<Uuid>, _>("auth_secret_id")
-        .map_err(|_| CredentialServiceError::Transient)?
-    {
-        Some(secret_id) => {
-            let secret = decrypt_secret(
-                storage,
-                secret_id,
-                "proxy_endpoint",
-                &proxy_id.to_string(),
-                "proxy_authentication",
-            )
-            .await?;
-            Some(Arc::new(parse_proxy_credentials(&secret)?))
-        }
-        None => None,
-    };
-    match row
-        .try_get::<String, _>("proxy_type_code")
-        .map_err(|_| CredentialServiceError::Transient)?
-        .as_str()
-    {
-        "http_connect" => Ok(EgressRouteSnapshot::HttpConnect {
-            host: host.into_boxed_str(),
-            port,
-            credentials,
-        }),
-        "socks5" => Ok(EgressRouteSnapshot::Socks5 {
-            host: host.into_boxed_str(),
-            port,
-            dns: Socks5DnsMode::Remote,
-            credentials,
-        }),
-        _ => Err(CredentialServiceError::WaitingEgress),
-    }
+    .await?;
+    let primary = ProxyHop::from_row(
+        &row.try_get::<String, _>("proxy_type_code")
+            .map_err(|_| CredentialServiceError::Transient)?,
+        row.try_get::<String, _>("host")
+            .map_err(|_| CredentialServiceError::Transient)?
+            .into_boxed_str(),
+        u16::try_from(
+            row.try_get::<i32, _>("port")
+                .map_err(|_| CredentialServiceError::Transient)?,
+        )
+        .map_err(|_| CredentialServiceError::WaitingEgress)?,
+        credentials,
+    )
+    .ok_or(CredentialServiceError::WaitingEgress)?;
+    let relay = relay_hop_from_row(storage, &row).await?;
+    Ok(EgressRouteSnapshot::from_hops(primary, relay))
 }
 
 #[derive(Deserialize)]
@@ -504,8 +542,17 @@ mod tests {
                 ..
             }
         ));
+        let tls_route = parse_public_proxy("https://proxy.example.com:3128")?;
+        assert!(matches!(
+            tls_route,
+            EgressRouteSnapshot::HttpsConnect {
+                host,
+                port: 3128,
+                credentials: None,
+            }
+                if host.as_ref() == "proxy.example.com"
+        ));
         for invalid in [
-            "https://localhost:7890",
             "http://user:password@localhost:7890",
             "http://localhost:7890/path",
             "http://localhost:0",

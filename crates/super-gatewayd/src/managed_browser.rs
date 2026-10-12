@@ -904,9 +904,21 @@ impl HelperEgress {
                 host,
                 port,
                 credentials,
+            }
+            | EgressRouteSnapshot::HttpsConnect {
+                host,
+                port,
+                credentials,
             } => Self {
                 mode: "proxy".to_owned(),
-                proxy_type: Some("http_connect".to_owned()),
+                proxy_type: Some(
+                    if matches!(route, EgressRouteSnapshot::HttpsConnect { .. }) {
+                        "https_connect"
+                    } else {
+                        "http_connect"
+                    }
+                    .to_owned(),
+                ),
                 host: Some(host.to_string()),
                 port: Some(*port),
                 username: credentials.as_ref().map(|value| value.username.expose().to_owned()),
@@ -927,6 +939,11 @@ impl HelperEgress {
                 password: credentials.as_ref().map(|value| value.password.expose().to_owned()),
                 remote_dns: matches!(dns, gateway_domain::Socks5DnsMode::Remote),
             },
+            // The helper process speaks to a single proxy; a relay fallback
+            // route is represented by its primary (final) hop.
+            EgressRouteSnapshot::WithRelay { primary, .. } => {
+                Self::from_route(&EgressRouteSnapshot::from_hops(primary.as_ref().clone(), None))
+            }
         }
     }
 

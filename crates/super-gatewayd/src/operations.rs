@@ -12,12 +12,12 @@
 
 use std::{collections::BTreeSet, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use axum::http::Method;
 #[cfg(target_os = "linux")]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use gateway_domain::SecretValue;
-#[cfg(target_os = "linux")]
+use gateway_domain::{ClientOs, SecretValue};
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use gateway_domain::{EgressRouteSnapshot, SecretBytes};
 use gateway_services::ReadinessCoordinator;
 use gateway_services::credential::CredentialServiceError;
@@ -36,13 +36,15 @@ use gateway_services::security::rewrap_database_business_batch;
 #[cfg(target_os = "linux")]
 use gateway_services::security::{EnvelopeAad, EnvelopeService, LocalAesKeyProvider, SecretEnvelope};
 use gateway_storage::{
-    BackupRunCommit, JobLease, OutboxLease, PgStorage, RestoreDrillCommit, RestoreValidationCommit, StorageError,
-    UpgradeGateCommit, UpgradePreflightCommit, UsageExportArtifactCommit,
+    BackupRunCommit, EgressAllocation, EgressAllocationRequest, JobLease, OutboxLease, PgStorage, RestoreDrillCommit,
+    RestoreValidationCommit, StorageError, UpgradeGateCommit, UpgradePreflightCommit, UsageExportArtifactCommit,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use gateway_storage::{EgressRebindCommit, ProxyProbeCommit};
 #[cfg(target_os = "linux")]
-use gateway_transport::{ProviderHttpsClient, ProviderHttpsHeader, ProviderHttpsRequest, TransportErrorCode};
+use gateway_transport::ProviderHttpsHeader;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use gateway_transport::{ProviderHttpsClient, ProviderHttpsRequest, TransportError, TransportErrorCode};
 #[cfg(target_os = "linux")]
 use serde::Deserialize;
 use serde_json::json;
@@ -60,7 +62,7 @@ use crate::price_sync;
 use crate::production_dispatcher::ProductionDispatcher;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::provider_http::PgProviderHttpPort;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::provider_http::resolve_proxy_route;
 pub(crate) type ManagedBrowserExecutor = crate::managed_browser::CommandManagedBrowserExecutor;
 
@@ -189,7 +191,7 @@ impl BackupOperationsExecutor for EvidenceGatedBackupExecutor {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
 pub struct ProxyProbeTarget {
     pub observer_host: String,
     pub observer_path: String,
@@ -351,6 +353,16 @@ async fn run_job_loop(
                     }
                     if let Err(error) = storage.expire_platform_keys(100).await {
                         tracing::warn!(event="platform_key_expiry_failed", error=%error);
+                    }
+                    match storage.sweep_proxy_expiry(100).await {
+                        Ok(sweep) if sweep.reminded > 0 || sweep.expired > 0 => {
+                            tracing::info!(event="proxy_expiry_swept", reminded=sweep.reminded, expired=sweep.expired);
+                        }
+                        Ok(_) => {}
+                        Err(error) => tracing::warn!(event="proxy_expiry_sweep_failed", error=%error),
+                    }
+                    if let Err(error) = retry_wait_for_egress_enrollments(&storage, 20).await {
+                        tracing::warn!(event="credential_enrollment_egress_retry_failed", error=%error);
                     }
                     next_enrollment_expiry_scan = tokio::time::Instant::now() + Duration::from_secs(30);
                 }
@@ -782,9 +794,9 @@ async fn process_job(
             process_credential_group_migration(storage, credential_runtime, &job).await;
         }
         "credential_egress_rebind_v1" => {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             process_credential_egress_rebind(storage, credential_runtime, proxy_probe_target, &job).await;
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             let _ = storage
                 .dead_letter_job(
                     job.job_id,
@@ -916,9 +928,9 @@ async fn process_job(
             process_restore_operation(storage, backup_executor, &job).await;
         }
         "proxy_full_path_probe_v1" => {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             process_proxy_probe(storage, proxy_probe_target, &job).await;
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             let _ = storage
                 .dead_letter_job(job.job_id, job.generation, "proxy_probe_requires_linux", None)
                 .await;
@@ -943,6 +955,55 @@ async fn schedule_due_price_sync(storage: &PgStorage) -> Result<(), sqlx::Error>
     .await?;
     if due {
         let _ = price_sync::enqueue_job(storage, "scheduled").await?;
+    }
+    Ok(())
+}
+
+/// Retry egress allocation for enrollments parked in `resolving_egress`.
+///
+/// Registrations wait here when the target group requires a healthy static
+/// proxy and none has capacity yet; without this sweep they would never
+/// resume. Allocation failures caused by concurrent enrollment changes
+/// (revision conflict, terminal state) are skipped until the next pass.
+async fn retry_wait_for_egress_enrollments(storage: &PgStorage, limit: u16) -> Result<(), sqlx::Error> {
+    let candidates = sqlx::query(
+        "SELECT e.id AS enrollment_id,e.revision AS enrollment_revision,e.os_family_code, \
+                c.id AS credential_id,c.revision AS credential_revision \
+         FROM gateway.credential_enrollment e JOIN gateway.anthropic_credential c ON c.id=e.pending_credential_id \
+         WHERE e.state_code='resolving_egress' AND e.expires_at>clock_timestamp() \
+         ORDER BY e.id LIMIT $1",
+    )
+    .bind(i32::from(limit))
+    .fetch_all(&storage.pool())
+    .await?;
+    for row in candidates {
+        let os_family_code: String = row.try_get("os_family_code")?;
+        let os_family = match os_family_code.as_str() {
+            "windows" => ClientOs::Windows,
+            "macos" => ClientOs::MacOs,
+            "linux" => ClientOs::Linux,
+            _ => continue,
+        };
+        let allocation = storage
+            .allocate_enrollment_egress(&EgressAllocationRequest {
+                enrollment_id: row.try_get("enrollment_id")?,
+                credential_id: row.try_get("credential_id")?,
+                binding_id: Uuid::now_v7(),
+                expected_enrollment_revision: row.try_get("enrollment_revision")?,
+                expected_credential_revision: row.try_get("credential_revision")?,
+                os_family,
+            })
+            .await;
+        match allocation {
+            Ok(EgressAllocation::Proxy { .. } | EgressAllocation::Direct { .. }) => {
+                tracing::info!(event = "credential_enrollment_egress_allocated");
+            }
+            Ok(EgressAllocation::WaitForEgress)
+            | Err(StorageError::RevisionConflict | StorageError::InvalidLifecycle) => {}
+            Err(error) => {
+                tracing::warn!(event="credential_enrollment_egress_retry_failed", error=%error);
+            }
+        }
     }
     Ok(())
 }
@@ -1300,7 +1361,7 @@ async fn retry_notification_delivery(storage: &PgStorage, job: &JobLease, error_
         .await;
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 async fn process_proxy_probe(storage: &PgStorage, target: &ProxyProbeTarget, job: &JobLease) {
     let ids = job
         .payload
@@ -1332,7 +1393,126 @@ async fn process_proxy_probe(storage: &PgStorage, target: &ProxyProbeTarget, job
             return;
         }
     };
+    // Probe the direct path first. When a relay is configured and the direct
+    // path fails in an unreachable way, retry through the relay chain; a relay
+    // success still marks the proxy healthy so allocation can select it.
+    let (has_relay, direct_route) = match &route {
+        EgressRouteSnapshot::WithRelay { primary, .. } => {
+            (true, EgressRouteSnapshot::from_hops(primary.as_ref().clone(), None))
+        }
+        other => (false, other.clone()),
+    };
     let client = ProviderHttpsClient::default();
+    let mut outcome = run_proxy_probe_sequence(target, direct_route, &client).await;
+    let mut relay_required = false;
+    if has_relay
+        && matches!(
+            outcome,
+            ProxyProbeOutcome::Transport { .. } | ProxyProbeOutcome::Failed { .. }
+        )
+        && relay_would_help(&outcome)
+    {
+        relay_required = true;
+        outcome = run_proxy_probe_sequence(target, route, &client).await;
+    }
+    match outcome {
+        ProxyProbeOutcome::Healthy {
+            observed_exit_ip,
+            http_status,
+            ..
+        } => {
+            finish_proxy_probe(
+                storage,
+                job,
+                proxy_id,
+                probe_generation,
+                "healthy",
+                Some(observed_exit_ip),
+                started,
+                json!({"phase":"anthropic_tls","http_status":http_status,"relay_required":relay_required}),
+            )
+            .await;
+        }
+        ProxyProbeOutcome::Transport {
+            error,
+            phase,
+            observed_exit_ip,
+        } => {
+            if transient_probe_error(error.code) && job.attempt < 3 {
+                let _ = storage
+                    .retry_job(job.job_id, job.generation, 60, "proxy_probe_transient", None)
+                    .await;
+                return;
+            }
+            let result = classify_proxy_probe_error(error.code);
+            finish_proxy_probe(
+                storage,
+                job,
+                proxy_id,
+                probe_generation,
+                result,
+                observed_exit_ip,
+                started,
+                json!({"phase":phase}),
+            )
+            .await;
+        }
+        ProxyProbeOutcome::Failed {
+            result_code,
+            detail,
+            observed_exit_ip,
+        } => {
+            finish_proxy_probe(
+                storage,
+                job,
+                proxy_id,
+                probe_generation,
+                result_code,
+                observed_exit_ip,
+                started,
+                detail,
+            )
+            .await;
+        }
+    }
+}
+
+/// Whether a relay fallback could still fix this probe outcome: only
+/// unreachable-class failures qualify, never authentication or protocol
+/// errors proving the primary endpoint was reachable.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn relay_would_help(outcome: &ProxyProbeOutcome) -> bool {
+    match outcome {
+        ProxyProbeOutcome::Transport { error, .. } => transient_probe_error(error.code),
+        ProxyProbeOutcome::Failed { result_code, .. } => matches!(*result_code, "dns_failed" | "connect_failed"),
+        ProxyProbeOutcome::Healthy { .. } => false,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+enum ProxyProbeOutcome {
+    Healthy {
+        observed_exit_ip: String,
+        http_status: u16,
+    },
+    Transport {
+        error: TransportError,
+        phase: &'static str,
+        observed_exit_ip: Option<String>,
+    },
+    Failed {
+        result_code: &'static str,
+        detail: serde_json::Value,
+        observed_exit_ip: Option<String>,
+    },
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+async fn run_proxy_probe_sequence(
+    target: &ProxyProbeTarget,
+    route: EgressRouteSnapshot,
+    client: &ProviderHttpsClient,
+) -> ProxyProbeOutcome {
     let cancellation = CancellationToken::new();
     let observer = client
         .execute(ProviderHttpsRequest {
@@ -1356,40 +1536,19 @@ async fn process_proxy_probe(storage: &PgStorage, target: &ProxyProbeTarget, job
             .map(str::to_owned),
         Ok(_) => None,
         Err(error) => {
-            if transient_probe_error(error.code) && job.attempt < 3 {
-                let _ = storage
-                    .retry_job(job.job_id, job.generation, 60, "proxy_probe_transient", None)
-                    .await;
-                return;
-            }
-            let result = classify_proxy_probe_error(error.code);
-            finish_proxy_probe(
-                storage,
-                job,
-                proxy_id,
-                probe_generation,
-                result,
-                None,
-                started,
-                json!({"phase":"exit_observer"}),
-            )
-            .await;
-            return;
+            return ProxyProbeOutcome::Transport {
+                error,
+                phase: "exit_observer",
+                observed_exit_ip: None,
+            };
         }
     };
     let Some(observed_exit_ip) = observed_exit_ip else {
-        finish_proxy_probe(
-            storage,
-            job,
-            proxy_id,
-            probe_generation,
-            "tunnel_failed",
-            None,
-            started,
-            json!({"phase":"exit_observer","reason":"invalid_response"}),
-        )
-        .await;
-        return;
+        return ProxyProbeOutcome::Failed {
+            result_code: "tunnel_failed",
+            detail: json!({"phase":"exit_observer","reason":"invalid_response"}),
+            observed_exit_ip: None,
+        };
     };
     let anthropic = client
         .execute(ProviderHttpsRequest {
@@ -1406,42 +1565,19 @@ async fn process_proxy_probe(storage: &PgStorage, target: &ProxyProbeTarget, job
         })
         .await;
     match anthropic {
-        Ok(response) => {
-            finish_proxy_probe(
-                storage,
-                job,
-                proxy_id,
-                probe_generation,
-                "healthy",
-                Some(observed_exit_ip),
-                started,
-                json!({"phase":"anthropic_tls","http_status":response.status}),
-            )
-            .await;
-        }
-        Err(error) if transient_probe_error(error.code) && job.attempt < 3 => {
-            let _ = storage
-                .retry_job(job.job_id, job.generation, 60, "proxy_probe_transient", None)
-                .await;
-        }
-        Err(error) => {
-            let result = classify_proxy_probe_error(error.code);
-            finish_proxy_probe(
-                storage,
-                job,
-                proxy_id,
-                probe_generation,
-                result,
-                Some(observed_exit_ip),
-                started,
-                json!({"phase":"anthropic_tls"}),
-            )
-            .await;
-        }
+        Ok(response) => ProxyProbeOutcome::Healthy {
+            observed_exit_ip,
+            http_status: response.status,
+        },
+        Err(error) => ProxyProbeOutcome::Transport {
+            error,
+            phase: "anthropic_tls",
+            observed_exit_ip: Some(observed_exit_ip),
+        },
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn transient_probe_error(code: TransportErrorCode) -> bool {
     matches!(
         code,
@@ -1449,7 +1585,7 @@ fn transient_probe_error(code: TransportErrorCode) -> bool {
     )
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn classify_proxy_probe_error(code: TransportErrorCode) -> &'static str {
     match code {
         TransportErrorCode::ResolverFailure => "dns_failed",
@@ -1463,7 +1599,7 @@ fn classify_proxy_probe_error(code: TransportErrorCode) -> &'static str {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 async fn finish_proxy_probe(
     storage: &PgStorage,
     job: &JobLease,
@@ -1735,7 +1871,7 @@ async fn process_model_catalog_discovery(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 async fn process_credential_egress_rebind(
     storage: &PgStorage,
     runtime: &ProductionDispatcher,
@@ -1838,7 +1974,7 @@ async fn process_credential_egress_rebind(
     finish_egress_rebind_projection(storage, runtime, job, group_id, credential_id, commit.profile_epoch).await;
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[allow(clippy::type_complexity)]
 fn parse_egress_rebind_job(job: &JobLease) -> Option<(Uuid, Uuid, i64, i64, i64, String, Option<Uuid>, String)> {
     let uuid = |key: &str| {
@@ -1871,7 +2007,7 @@ fn parse_egress_rebind_job(job: &JobLease) -> Option<(Uuid, Uuid, i64, i64, i64,
     ))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 async fn probe_candidate_egress(
     route: EgressRouteSnapshot,
     target: &ProxyProbeTarget,
@@ -1931,7 +2067,7 @@ async fn probe_candidate_egress(
     ))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 async fn finish_egress_rebind_projection(
     storage: &PgStorage,
     runtime: &ProductionDispatcher,
@@ -2859,11 +2995,11 @@ async fn process_business_key_rotation(
 }
 
 #[derive(Debug, Default)]
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub struct EvidenceGatedEnrollmentExecutor;
 
 #[async_trait::async_trait]
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 impl CredentialEnrollmentJobExecutor for EvidenceGatedEnrollmentExecutor {
     async fn execute(&self, _attempt: CredentialEnrollmentJobAttempt) -> JobAttemptDecision {
         JobAttemptDecision::Retry {

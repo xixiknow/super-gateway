@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "postgres_minimum_major": 16,
   "minimum_compatible_version": 20260824000100,
-  "current_version": 20261004000100,
+  "current_version": 20261009000100,
   "migrations": [
     {
       "version": 20260824000100,
@@ -428,6 +428,27 @@
       "version": 20261004000100,
       "name": "20261004000100_account_error_state.sql",
       "sha256": "8786c2342c1d4144ed307289fdf28e5fb6d85431c680fbbd7dc41c74ab8f1a8c",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20261007000100,
+      "name": "20261007000100_proxy_protocol_validity.sql",
+      "sha256": "e965c7a8a86317e720bc1685a8d8f10789a82b06dd03f96eea2b3d9bad7376d4",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20261007000200,
+      "name": "20261007000200_proxy_relay_chain.sql",
+      "sha256": "ec7655a93528ebc8bdc4ee28c0664de33271195fd48e79fa799a75f1f506ef38",
+      "direction": "forward_only",
+      "transactional": true
+    },
+    {
+      "version": 20261009000100,
+      "name": "20261009000100_credential_pacing.sql",
+      "sha256": "9d6e7188ec29346ed6c88a0dd978e119aba2d9cb31a402f5868efe7b6a915c5b",
       "direction": "forward_only",
       "transactional": true
     }

@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useEffect, useId, useMemo, useState } from "react
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, setCsrfToken } from "./api";
+import { formatDateTime } from "./format";
 import { useToast } from "./feedback";
 import { Locale, MessageKey, useI18n } from "./i18n";
 import { RowActionDef, RowActionsCell } from "./row-actions";
@@ -48,8 +49,8 @@ function isPlatformKeyRecord(value: unknown): value is PlatformKeyRecord {
     && typeof record.status === "string" && typeof record.revision === "number";
 }
 
-function formatDate(value: string | null, locale: Locale, never: string): string {
-  return value ? new Date(value).toLocaleString(locale) : never;
+function formatDate(value: string | null, _locale: Locale, never: string): string {
+  return value ? formatDateTime(value) : never;
 }
 
 function formatMoney(value: string | null, locale: Locale, unlimited: string): string {
@@ -333,7 +334,7 @@ function LocalizedData({ value, locale }: { value: unknown; locale: Locale }): R
   if (typeof value === "boolean") return locale === "zh-CN" ? value ? "是" : "否" : value ? "Yes" : "No";
   const text = String(value);
   const translated = dataValue(text, locale);
-  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return new Date(text).toLocaleString(locale);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return formatDateTime(text);
   return <span className={text.length > 36 ? "mono breakable" : ""}>{translated}</span>;
 }
 

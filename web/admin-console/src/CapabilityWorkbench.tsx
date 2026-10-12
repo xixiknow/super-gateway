@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "./api";
 import { Drawer } from "./drawer";
 import { useConfirm, useToast } from "./feedback";
+import { formatDateTime } from "./format";
 import { useI18n } from "./i18n";
 import { SelectField } from "./select-field";
 
@@ -322,7 +323,7 @@ export function CapabilityWorkbench({ modelId, modelRevision, maxOutputTokens, v
           count: currentRules.filter((rule) => ruleGroup(rule) === group).length,
         }));
         return <article className={`capability-version-card state-${lifecycle}`} key={text(version, "id")}>
-          <div className="capability-version-main"><div><b>v{String(version.capability_version ?? "—")}</b><span className={`model-lifecycle state-${lifecycle}`}>{lifecycle === "active" ? (locale === "zh-CN" ? "活跃" : "Active") : lifecycle === "candidate" ? (locale === "zh-CN" ? "候选" : "Candidate") : (locale === "zh-CN" ? "已退役" : "Retired")}</span><span className={`capability-origin origin-${origin}`}>{origin === "system_discovery" ? t("models.workbench.system") : t("models.workbench.manual")}</span></div><time>{text(version, "created_at") ? new Date(text(version, "created_at")).toLocaleString(locale) : "—"}</time></div>
+          <div className="capability-version-main"><div><b>v{String(version.capability_version ?? "—")}</b><span className={`model-lifecycle state-${lifecycle}`}>{lifecycle === "active" ? (locale === "zh-CN" ? "活跃" : "Active") : lifecycle === "candidate" ? (locale === "zh-CN" ? "候选" : "Candidate") : (locale === "zh-CN" ? "已退役" : "Retired")}</span><span className={`capability-origin origin-${origin}`}>{origin === "system_discovery" ? t("models.workbench.system") : t("models.workbench.manual")}</span></div><time>{formatDateTime(text(version, "created_at"))}</time></div>
           <div className="capability-profile-meta"><span className={`profile-completeness is-${completeness || "legacy"}`}>{completeness === "complete" ? t("models.workbench.complete") : completeness === "partial" ? t("models.workbench.partial") : t("models.workbench.legacy")}</span>{profileVersion && <code>{t("models.workbench.matrix")} {profileVersion}</code>}<span>{t("models.workbench.ruleCount", { count: currentRules.length })}</span></div>
           <div className="capability-rule-summary">{versionRuleGroups.filter(({ count }) => count > 0).map(({ group, count }) => <span key={group}><b>{groupLabel(group, t)}</b><i>{count}</i></span>)}</div>
           {sourceUrls.length > 0 && <div className="capability-source-links"><span>{t("models.workbench.sources")}</span>{sourceUrls.map((url, index) => <a key={url} href={url} target="_blank" rel="noreferrer">{index + 1}</a>)}</div>}

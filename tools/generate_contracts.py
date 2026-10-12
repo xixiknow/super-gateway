@@ -60,7 +60,9 @@ ENUMS: dict[str, list[str]] = {
         "planned", "leased", "running", "verifying_account", "committing", "waiting_backoff",
         "waiting_egress", "needs_attention", "succeeded", "failed", "cancelled", "expired",
     ],
-    "proxy_type": ["http_connect", "socks5"],
+    "proxy_type": ["http_connect", "https_connect", "socks5"],
+    "proxy_expiry_policy": ["fallback_direct", "switch_proxy", "none"],
+    "proxy_expiry_state": ["not_started", "active", "expiring_soon", "expired", "never"],
     "proxy_lifecycle": ["active", "draining", "disabled", "archived"],
     "proxy_health": [
         "unknown", "probing", "healthy", "unhealthy_dns", "unhealthy_connect", "unhealthy_auth",
@@ -406,6 +408,8 @@ def generate_session_schema() -> None:
 def generate_egress_profile_schema() -> None:
     defs = {
         "ProxyType": enum_schema("proxy_type"), "ProxyLifecycle": enum_schema("proxy_lifecycle"),
+        "ProxyExpiryPolicy": enum_schema("proxy_expiry_policy"),
+        "ProxyExpiryState": enum_schema("proxy_expiry_state"),
         "ProxyHealth": enum_schema("proxy_health"), "EgressMode": enum_schema("egress_mode"),
         "EgressStability": enum_schema("egress_stability"),
         "EgressBindingStability": enum_schema("egress_binding_stability"),
@@ -418,8 +422,15 @@ def generate_egress_profile_schema() -> None:
         "health": {"$ref": "#/$defs/ProxyHealth"},
         "stability": {"$ref": "#/$defs/EgressStability"},
         "max_active_credentials": {"type": "integer", "minimum": 1, "default": 5},
+        "starts_at": {"type": "string", "format": "date-time"},
+        "validity_days": {"type": ["integer", "null"], "minimum": 1, "maximum": 3650},
+        "expires_at": {"type": ["string", "null"], "format": "date-time"},
+        "expiry_policy": {"$ref": "#/$defs/ProxyExpiryPolicy"},
+        "remind_before_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
+        "expiry_state": {"$ref": "#/$defs/ProxyExpiryState"},
         "revision": {"type": "integer", "minimum": 1},
-    }, ["id", "name", "type", "host", "port", "lifecycle", "health", "stability", "max_active_credentials", "revision"])
+    }, ["id", "name", "type", "host", "port", "lifecycle", "health", "stability", "max_active_credentials",
+        "starts_at", "validity_days", "expires_at", "expiry_policy", "remind_before_hours", "expiry_state", "revision"])
     defs["CredentialEgressBinding"] = object_schema({
         "id": {"type": "string"}, "credential_id": {"type": "string"},
         "mode": {"$ref": "#/$defs/EgressMode"}, "proxy_id": {"type": ["string", "null"]},
@@ -1507,16 +1518,26 @@ def admin_components() -> dict[str, Any]:
                 "port": {"type": "integer", "minimum": 1, "maximum": 65535}, "username": {"type": ["string", "null"]},
                 "password": {"type": ["string", "null"], "writeOnly": True}, "stability": {"type": "string", "const": "static"},
                 "max_active_credentials": {"type": "integer", "minimum": 1, "default": 5},
-            }, ["name", "type", "host", "port", "stability", "max_active_credentials"]),
+                "starts_at": {"type": "string", "format": "date-time"},
+                "validity_days": {"type": ["integer", "null"], "minimum": 1, "maximum": 3650},
+                "expiry_policy": enum_schema("proxy_expiry_policy"),
+                "remind_before_hours": {"type": "integer", "minimum": 0, "maximum": 8760, "default": 72},
+            }, ["name", "type", "host", "port", "stability", "max_active_credentials", "starts_at", "validity_days",
+                "expiry_policy", "remind_before_hours"]),
             "ProxyPatchCommand": object_schema({
                 "name": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
                 "max_active_credentials": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000},
+                "starts_at": {"type": "string", "format": "date-time"},
+                "validity_days": {"type": ["integer", "null"], "minimum": 1, "maximum": 3650},
+                "expiry_policy": enum_schema("proxy_expiry_policy"),
+                "remind_before_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
             }),
             "CredentialSchedulingPatchCommand": object_schema({
                 "priority": {"type": "integer", "minimum": 0, "maximum": 65535},
                 "weight": {"type": "integer", "minimum": 1, "maximum": 4294967},
                 "concurrency": {"type": ["integer", "null"], "minimum": 1, "maximum": 2147483647},
                 "messages_rpm": {"type": ["integer", "null"], "minimum": 1, "maximum": 2147483647},
+                "min_request_interval_ms": {"type": ["integer", "null"], "minimum": 0},
             }),
             "ProfileCohortCommand": object_schema({
                 "target_archetype_version_id": {"type": "string", "format": "uuid"},

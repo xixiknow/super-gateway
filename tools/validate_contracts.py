@@ -374,7 +374,7 @@ class ContractValidator:
         registry = self.documents[(CONTRACTS / "registries" / "enums.json").resolve()]["enums"]
         self.check(registry["credential_lifecycle"][:4] == ["pending_verify", "pending_profile", "pending_egress", "pending_reauth_strategy"], "enum:credential_lifecycle", "pending lifecycle codes drifted")
         self.check("archived" in registry["proxy_lifecycle"], "enum:proxy_lifecycle", "Proxy archived state missing")
-        self.check(registry["proxy_type"] == ["http_connect", "socks5"], "enum:proxy_type", "Proxy type names drifted")
+        self.check(registry["proxy_type"] == ["http_connect", "https_connect", "socks5"], "enum:proxy_type", "Proxy type names drifted")
         self.check(registry["usage_source"] == ["official", "local_estimate", "console_count", "cancel_estimate"], "enum:usage_source", "Usage source drifted")
         self.check(registry["usage_completeness"] == ["complete", "partial", "unknown"], "enum:usage_completeness", "Usage completeness drifted")
         self.check(

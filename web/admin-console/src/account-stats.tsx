@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api";
-import { formatAmount, formatCount, formatDateTime } from "./format";
+import { formatAmount, formatCount, formatDate } from "./format";
 import { useI18n } from "./i18n";
 
 export interface UsageSummary {
@@ -95,7 +95,7 @@ export function AccountStatsModal({ provider, id, name, onClose }: { provider: "
                   <td>{formatCount(row.input_tokens, locale)}</td><td>{formatCount(row.output_tokens, locale)}</td>
                   <td>{formatAmount(row.estimated_amount)}</td>
                 </tr>)}</tbody></table></div>}
-                <p className="muted">{t("accounts.stats.note")} · {t("accounts.stats.lastBucket", { value: formatDateTime(daily[daily.length - 1]?.bucket_day, locale) })}</p>
+                <p className="muted">{t("accounts.stats.note")} · {t("accounts.stats.lastBucket", { value: formatDate(daily[daily.length - 1]?.bucket_day) })}</p>
               </>}
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>{t("common.close")}</button></div>

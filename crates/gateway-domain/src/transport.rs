@@ -86,6 +86,84 @@ impl fmt::Debug for ProxyCredentials {
     }
 }
 
+/// One proxy hop of an egress route: a TCP endpoint plus the tunnel protocol
+/// spoken on it. TLS-protected hops terminate their own TLS before tunneling.
+#[derive(Clone, Debug)]
+pub enum ProxyHop {
+    /// HTTP CONNECT tunnel in cleartext TCP.
+    HttpConnect {
+        /// Proxy host or IP.
+        host: Box<str>,
+        /// Proxy TCP port.
+        port: u16,
+        /// Optional Basic credentials, redacted and zeroized by the domain secret types.
+        credentials: Option<Arc<ProxyCredentials>>,
+    },
+    /// HTTP CONNECT tunnel over TLS to the proxy itself.
+    HttpsConnect {
+        /// Proxy host or IP.
+        host: Box<str>,
+        /// Proxy TCP port.
+        port: u16,
+        /// Optional Basic credentials, redacted and zeroized by the domain secret types.
+        credentials: Option<Arc<ProxyCredentials>>,
+    },
+    /// SOCKS5 tunnel in cleartext TCP.
+    Socks5 {
+        /// Proxy host or IP.
+        host: Box<str>,
+        /// Proxy TCP port.
+        port: u16,
+        /// Local or proxy-side DNS behavior.
+        dns: Socks5DnsMode,
+        /// Optional username/password credentials.
+        credentials: Option<Arc<ProxyCredentials>>,
+    },
+}
+
+impl ProxyHop {
+    /// Map a persisted proxy protocol code to one hop. SOCKS5 resolves names proxy-side.
+    ///
+    /// Returns `None` for unknown protocol codes.
+    #[must_use]
+    pub fn from_row(
+        proxy_type_code: &str,
+        host: Box<str>,
+        port: u16,
+        credentials: Option<Arc<ProxyCredentials>>,
+    ) -> Option<Self> {
+        match proxy_type_code {
+            "http_connect" => Some(Self::HttpConnect {
+                host,
+                port,
+                credentials,
+            }),
+            "https_connect" => Some(Self::HttpsConnect {
+                host,
+                port,
+                credentials,
+            }),
+            "socks5" => Some(Self::Socks5 {
+                host,
+                port,
+                dns: Socks5DnsMode::Remote,
+                credentials,
+            }),
+            _ => None,
+        }
+    }
+
+    /// TCP endpoint this hop dials.
+    #[must_use]
+    pub fn endpoint(&self) -> (&str, u16) {
+        match self {
+            Self::HttpConnect { host, port, .. }
+            | Self::HttpsConnect { host, port, .. }
+            | Self::Socks5 { host, port, .. } => (host.as_ref(), *port),
+        }
+    }
+}
+
 /// Frozen route for one Transport Attempt. Transport never re-queries the database.
 #[derive(Clone, Debug)]
 pub enum EgressRouteSnapshot {
@@ -93,6 +171,15 @@ pub enum EgressRouteSnapshot {
     Direct,
     /// Establish a TLS pass-through HTTP CONNECT tunnel.
     HttpConnect {
+        /// Proxy host or IP.
+        host: Box<str>,
+        /// Proxy TCP port.
+        port: u16,
+        /// Optional Basic credentials, redacted and zeroized by the domain secret types.
+        credentials: Option<Arc<ProxyCredentials>>,
+    },
+    /// Establish a TLS pass-through HTTP CONNECT tunnel over TLS to the proxy itself.
+    HttpsConnect {
         /// Proxy host or IP.
         host: Box<str>,
         /// Proxy TCP port.
@@ -111,6 +198,98 @@ pub enum EgressRouteSnapshot {
         /// Optional username/password credentials.
         credentials: Option<Arc<ProxyCredentials>>,
     },
+    /// Primary proxy reached through a relay (first-hop) proxy. The gateway dials
+    /// the primary directly first; the relay path is used only when the direct
+    /// attempt fails with an unreachable-class error (TCP/DNS/timeout).
+    WithRelay {
+        /// Final proxy hop, tunneling to the fixed provider target.
+        primary: Box<ProxyHop>,
+        /// Relay hop dialed first, tunneling to the primary endpoint.
+        relay: Box<ProxyHop>,
+    },
+}
+
+impl EgressRouteSnapshot {
+    /// Map a persisted proxy protocol code to a frozen route. SOCKS5 resolves names proxy-side.
+    ///
+    /// Returns `None` for unknown protocol codes.
+    #[must_use]
+    pub fn from_proxy_row(
+        proxy_type_code: &str,
+        host: Box<str>,
+        port: u16,
+        credentials: Option<Arc<ProxyCredentials>>,
+    ) -> Option<Self> {
+        match proxy_type_code {
+            "http_connect" => Some(Self::HttpConnect {
+                host,
+                port,
+                credentials,
+            }),
+            "https_connect" => Some(Self::HttpsConnect {
+                host,
+                port,
+                credentials,
+            }),
+            "socks5" => Some(Self::Socks5 {
+                host,
+                port,
+                dns: Socks5DnsMode::Remote,
+                credentials,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Assemble a frozen route from fully resolved hops. A relay present on a
+    /// proxy route turns it into a [`Self::WithRelay`] fallback route; without
+    /// one this restores the single-hop variant.
+    #[must_use]
+    pub fn from_hops(primary: ProxyHop, relay: Option<ProxyHop>) -> Self {
+        match relay {
+            None => match primary {
+                ProxyHop::HttpConnect {
+                    host,
+                    port,
+                    credentials,
+                } => Self::HttpConnect {
+                    host,
+                    port,
+                    credentials,
+                },
+                ProxyHop::HttpsConnect {
+                    host,
+                    port,
+                    credentials,
+                } => Self::HttpsConnect {
+                    host,
+                    port,
+                    credentials,
+                },
+                ProxyHop::Socks5 {
+                    host,
+                    port,
+                    dns,
+                    credentials,
+                } => Self::Socks5 {
+                    host,
+                    port,
+                    dns,
+                    credentials,
+                },
+            },
+            Some(relay) => Self::WithRelay {
+                primary: Box::new(primary),
+                relay: Box::new(relay),
+            },
+        }
+    }
+
+    /// Whether this route traverses a proxy endpoint.
+    #[must_use]
+    pub const fn is_proxied(&self) -> bool {
+        !matches!(self, Self::Direct)
+    }
 }
 
 /// Complete immutable identity used by one upstream connection/message attempt.
@@ -207,5 +386,56 @@ mod tests {
         let rendered = format!("{request:?}");
         assert!(!rendered.contains("transport-canary"));
         assert!(rendered.contains("body_digest"));
+    }
+
+    #[test]
+    fn proxy_protocol_codes_map_to_routes() {
+        use super::{EgressRouteSnapshot, Socks5DnsMode};
+        assert!(matches!(
+            EgressRouteSnapshot::from_proxy_row("http_connect", "proxy".into(), 8080, None),
+            Some(EgressRouteSnapshot::HttpConnect { port: 8080, .. })
+        ));
+        assert!(matches!(
+            EgressRouteSnapshot::from_proxy_row("https_connect", "proxy".into(), 443, None),
+            Some(EgressRouteSnapshot::HttpsConnect { port: 443, .. })
+        ));
+        assert!(matches!(
+            EgressRouteSnapshot::from_proxy_row("socks5", "proxy".into(), 1080, None),
+            Some(EgressRouteSnapshot::Socks5 {
+                dns: Socks5DnsMode::Remote,
+                ..
+            })
+        ));
+        assert!(EgressRouteSnapshot::from_proxy_row("connect", "proxy".into(), 8080, None).is_none());
+        assert!(!EgressRouteSnapshot::Direct.is_proxied());
+    }
+
+    #[test]
+    fn relay_rows_produce_fallback_routes() {
+        use super::{EgressRouteSnapshot, ProxyHop, Socks5DnsMode};
+        let relay = ProxyHop::from_row("socks5", "relay".into(), 7890, None);
+        assert!(matches!(
+            &relay,
+            Some(ProxyHop::Socks5 {
+                dns: Socks5DnsMode::Remote,
+                ..
+            })
+        ));
+        let primary = ProxyHop::from_row("http_connect", "proxy".into(), 8080, None);
+        assert!(matches!(&primary, Some(ProxyHop::HttpConnect { port: 8080, .. })));
+        let Some(relay) = relay else {
+            return;
+        };
+        let Some(primary) = primary else {
+            return;
+        };
+        assert!(matches!(
+            EgressRouteSnapshot::from_hops(primary.clone(), Some(relay)),
+            EgressRouteSnapshot::WithRelay { .. }
+        ));
+        assert!(matches!(
+            EgressRouteSnapshot::from_hops(primary, None),
+            EgressRouteSnapshot::HttpConnect { port: 8080, .. }
+        ));
     }
 }

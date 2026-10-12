@@ -1,7 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiEnvelope, type Principal } from "./api";
-import { formatAmount, formatCount, formatCountdown, formatDateTime, formatRelative } from "./format";
+import { formatAmount, formatCount, formatCountdown, formatDateTime } from "./format";
 import { Meter, useCountdown } from "./meter";
 import { useI18n, type MessageKey, type Locale } from "./i18n";
 import { AccountStatsModal } from "./account-stats";
@@ -173,7 +173,7 @@ export function AccountsPage({ principal }: { principal: Principal }) {
     event.preventDefault();
   }
   const filters = <form className="filter-rail" onSubmit={applyFilters}>
-    <div className="field"><label htmlFor="account-search">{t("accounts.filter.search")}</label><input id="account-search" className="inp" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("accounts.filter.searchPlaceholder")} /></div>
+    <div className="field field-grow"><label htmlFor="account-search">{t("accounts.filter.search")}</label><input id="account-search" className="inp" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("accounts.filter.searchPlaceholder")} /></div>
     <div className="field"><label htmlFor="account-platform">{t("accounts.filter.platform")}</label><SelectField id="account-platform" value={platform} onChange={(value) => setPlatform(value as "all" | "anthropic" | "openai")} options={[{ value: "all", label: t("accounts.filter.all") }, { value: "anthropic", label: "Anthropic" }, { value: "openai", label: "OpenAI" }]} /></div>
     <div className="field"><label htmlFor="account-state">{t("accounts.filter.state")}</label><SelectField id="account-state" value={bucket} onChange={(value) => setBucket(value as "all" | StateBucket)} options={([["all", "accounts.filter.all"], ["normal", "accounts.state.normal"], ["cooldown", "accounts.state.cooldown"], ["blocked", "accounts.state.blocked"], ["auth", "accounts.filter.auth"], ["pending", "accounts.filter.pending"], ["disabled", "accounts.state.disabled"]] as const).map(([value, key]) => ({ value, label: t(key) }))} /></div>
     <div className="field"><label htmlFor="account-group">{t("accounts.filter.group")}</label><SelectField id="account-group" value={groupFilter} onChange={setGroupFilter} options={[{ value: "", label: t("accounts.filter.all") }, ...(groups.data ?? []).map((group) => ({ value: group.id, label: group.name }))]} /></div>
@@ -272,7 +272,7 @@ function AccountCardView({ card, groupName, locale, t, selected, onSelect, rowAc
       <div><dt>{t("accounts.today.amount")}</dt><dd>{formatAmount(card.today?.estimated_amount)}</dd></div>
       <div><dt>{t("accounts.meta.capacity")}</dt><dd className="mono">{card.concurrency ?? "—"} · P{card.priority ?? "—"}</dd></div>
       <div><dt>{t("accounts.meta.egress")}</dt><dd className="mono">{card.egress ?? "—"}</dd></div>
-      <div><dt>{t("accounts.meta.updated")}</dt><dd>{formatRelative(card.updatedAt, locale)}</dd></div>
+      <div><dt>{t("accounts.meta.updated")}</dt><dd>{formatDateTime(card.updatedAt)}</dd></div>
     </dl>
     <footer className="account-card-foot">
       <button type="button" className="btn btn-outline btn-sm" onClick={onStats}>{t("accounts.action.stats")}</button>
@@ -307,7 +307,7 @@ function AccountTable({ cards, groupName, locale, t, onStats }: { cards: Account
       <td>{card.windows.sevenDay ? <Meter label={t("accounts.window.sevenDay")} value={card.windows.sevenDay.utilization} /> : "—"}</td>
       <td>{formatCount(card.today?.request_count, locale)}</td>
       <td className="mono">{card.concurrency ?? "—"} · P{card.priority ?? "—"}</td>
-      <td>{formatRelative(card.updatedAt, locale)}</td>
+      <td>{formatDateTime(card.updatedAt)}</td>
       <td><button type="button" className="btn btn-outline btn-sm" onClick={() => onStats(card)}>{t("accounts.action.stats")}</button></td>
     </tr>)}</tbody>
   </table></div>;

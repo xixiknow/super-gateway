@@ -10,7 +10,7 @@
   "testkit_abi_version": "gateway-testkit-r1-v1",
   "schema_compatibility": {
     "minimum": 20260824000100,
-    "maximum": 20261004000100
+    "maximum": 20261009000100
   },
   "cargo_lock_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "contract_tree_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -75,7 +75,10 @@
     "20260929000200_request_reasoning_effort.sql": "aa4af13ff7bca4ee04ccda8bc080c466fecd0b164e347cc9fb8b251c23eed54c",
     "20260929000300_request_headers.sql": "500b5e7007c9eadc12a43f133a5b01764ce5ebd73d0845233d393eee3568b661",
     "20260929000400_request_metrics.sql": "4e75dbfe2c13b67565f23828c04d863d448778c45ce2dbae0686240769ca4ab1",
-    "20261004000100_account_error_state.sql": "8786c2342c1d4144ed307289fdf28e5fb6d85431c680fbbd7dc41c74ab8f1a8c"
+    "20261004000100_account_error_state.sql": "8786c2342c1d4144ed307289fdf28e5fb6d85431c680fbbd7dc41c74ab8f1a8c",
+    "20261007000100_proxy_protocol_validity.sql": "e965c7a8a86317e720bc1685a8d8f10789a82b06dd03f96eea2b3d9bad7376d4",
+    "20261007000200_proxy_relay_chain.sql": "ec7655a93528ebc8bdc4ee28c0664de33271195fd48e79fa799a75f1f506ef38",
+    "20261009000100_credential_pacing.sql": "9d6e7188ec29346ed6c88a0dd978e119aba2d9cb31a402f5868efe7b6a915c5b"
   },
   "artifacts": [
     {

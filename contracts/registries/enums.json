@@ -135,7 +135,20 @@
     ],
     "proxy_type": [
       "http_connect",
+      "https_connect",
       "socks5"
+    ],
+    "proxy_expiry_policy": [
+      "fallback_direct",
+      "switch_proxy",
+      "none"
+    ],
+    "proxy_expiry_state": [
+      "not_started",
+      "active",
+      "expiring_soon",
+      "expired",
+      "never"
     ],
     "proxy_lifecycle": [
       "active",

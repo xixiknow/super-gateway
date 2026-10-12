@@ -29,7 +29,7 @@ impl PgManagementBackend {
         id: Uuid,
         revision: i64,
     ) -> Result<ManagementBackendResponse, ManagementBackendError> {
-        use gateway_domain::{EgressRouteSnapshot, Socks5DnsMode};
+        use gateway_domain::EgressRouteSnapshot;
         use gateway_transport::{
             ProviderHttpsClient, ProviderHttpsHeader, ProviderHttpsRequest, ProviderHttpsTimeouts,
         };
@@ -72,20 +72,8 @@ impl PgManagementBackend {
             let host = required::<String>(&row, "host")?.into_boxed_str();
             let port =
                 u16::try_from(required::<i32>(&row, "port")?).map_err(|_| ManagementBackendError::Precondition)?;
-            match required::<String>(&row, "proxy_type_code")?.as_str() {
-                "connect" => EgressRouteSnapshot::HttpConnect {
-                    host,
-                    port,
-                    credentials,
-                },
-                "socks5" => EgressRouteSnapshot::Socks5 {
-                    host,
-                    port,
-                    credentials,
-                    dns: Socks5DnsMode::Remote,
-                },
-                _ => return Err(ManagementBackendError::Precondition),
-            }
+            EgressRouteSnapshot::from_proxy_row(&required::<String>(&row, "proxy_type_code")?, host, port, credentials)
+                .ok_or(ManagementBackendError::Precondition)?
         } else {
             EgressRouteSnapshot::Direct
         };

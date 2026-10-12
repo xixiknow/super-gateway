@@ -13046,6 +13046,7 @@
             "type": "string",
             "enum": [
               "http_connect",
+              "https_connect",
               "socks5"
             ],
             "x-enum-registry": "proxy_type"
@@ -13079,6 +13080,33 @@
             "type": "integer",
             "minimum": 1,
             "default": 5
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validity_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 3650
+          },
+          "expiry_policy": {
+            "type": "string",
+            "enum": [
+              "fallback_direct",
+              "switch_proxy",
+              "none"
+            ],
+            "x-enum-registry": "proxy_expiry_policy"
+          },
+          "remind_before_hours": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8760,
+            "default": 72
           }
         },
         "additionalProperties": false,
@@ -13088,7 +13116,11 @@
           "host",
           "port",
           "stability",
-          "max_active_credentials"
+          "max_active_credentials",
+          "starts_at",
+          "validity_days",
+          "expiry_policy",
+          "remind_before_hours"
         ]
       },
       "ProxyPatchCommand": {
@@ -13109,6 +13141,32 @@
             ],
             "minimum": 1,
             "maximum": 1000
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validity_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 3650
+          },
+          "expiry_policy": {
+            "type": "string",
+            "enum": [
+              "fallback_direct",
+              "switch_proxy",
+              "none"
+            ],
+            "x-enum-registry": "proxy_expiry_policy"
+          },
+          "remind_before_hours": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8760
           }
         },
         "additionalProperties": false
@@ -13141,6 +13199,13 @@
             ],
             "minimum": 1,
             "maximum": 2147483647
+          },
+          "min_request_interval_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
           }
         },
         "additionalProperties": false

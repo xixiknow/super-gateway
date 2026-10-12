@@ -46,7 +46,7 @@ pub use response::{
 pub use secret::{SecretBytes, SecretValue};
 pub use transport::{
     AttemptDeadlines, AttemptIdentitySnapshot, EgressRouteSnapshot, FinalUpstreamRequest, HttpProtocol,
-    ProxyCredentials, Socks5DnsMode, TransportAttemptSnapshot, UpstreamHeader,
+    ProxyCredentials, ProxyHop, Socks5DnsMode, TransportAttemptSnapshot, UpstreamHeader,
 };
 
 /// Version of the test/runtime interfaces introduced by R1.

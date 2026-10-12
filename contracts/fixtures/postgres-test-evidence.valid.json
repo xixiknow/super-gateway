@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0.0",
   "postgres_major": 16,
-  "schema_version_value": 20261004000100,
-  "migration_manifest_sha256": "317f3ca81786a5b386998af30edd448c899d8d5e9476ee81c93bc85fd8633e0c",
+  "schema_version_value": 20261009000100,
+  "migration_manifest_sha256": "b0eea2adef67e09a60eaccf2de94ce9c98b1dfe73435cf8c25eced1940d38b19",
   "required_table_count": 118,
   "partition_count": 5,
   "fixture_id": "FIX-R2-POSTGRES-001",

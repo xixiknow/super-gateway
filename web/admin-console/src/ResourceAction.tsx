@@ -7,9 +7,10 @@ import { Locale, MessageKey, useI18n } from "./i18n";
 import { rowActionError } from "./row-actions";
 import { SelectField } from "./select-field";
 import { ModelSyncButton } from "./ModelSyncButton";
+import { ProxyValidityFields, readProxyValidity, validityPayload } from "./proxy-validity";
 
-type FieldType = "text" | "email" | "password" | "number" | "select" | "checkbox-group" | "radio-cards" | "datetime-local" | "json" | "resource" | "textarea" | "model-checkboxes";
-type ResourceSource = "groups";
+type FieldType = "text" | "email" | "password" | "number" | "select" | "checkbox-group" | "radio-cards" | "datetime-local" | "json" | "resource" | "textarea" | "model-checkboxes" | "proxy-validity";
+type ResourceSource = "groups" | "proxies";
 
 interface ActionField {
   name: string;
@@ -49,6 +50,10 @@ export type ResourceActionKey =
   | "approval" | "alert-silence" | "upgrade-check" | "export";
 
 class InvalidJsonFieldError extends Error {
+  constructor(readonly field: string) { super(field); }
+}
+
+class InvalidFieldValueError extends Error {
   constructor(readonly field: string) { super(field); }
 }
 
@@ -140,14 +145,20 @@ const actionConfigs: Record<ResourceActionKey, ResourceActionConfig> = {
     endpoint: "/admin/v1/proxies", invalidate: ["/admin/v1/proxies"],
     fields: [
       { name: "name", labelKey: "action.name", type: "text", required: true },
-      { name: "type", labelKey: "action.proxy.type", type: "select", required: true, defaultValue: "http_connect", options: [{ value: "http_connect", labelKey: "option.proxy.httpConnect" }, { value: "socks5", labelKey: "option.proxy.socks5" }] },
+      { name: "type", labelKey: "action.proxy.type", type: "select", required: true, defaultValue: "socks5", options: [{ value: "socks5", labelKey: "option.proxy.socks5" }, { value: "http_connect", labelKey: "option.proxy.http" }, { value: "https_connect", labelKey: "option.proxy.https" }] },
       { name: "host", labelKey: "action.proxy.host", type: "text", required: true },
       { name: "port", labelKey: "action.proxy.port", type: "number", required: true, min: 1, max: 65535 },
+      { name: "validity", labelKey: "action.proxy.validity", type: "proxy-validity" },
+      { name: "upstream_proxy_id", labelKey: "action.proxy.relay", type: "resource", source: "proxies", hintKey: "action.proxy.relayHint" },
       { name: "username", labelKey: "action.proxy.username", type: "text", advanced: true },
       { name: "password", labelKey: "action.proxy.password", type: "password", advanced: true },
       { name: "max_active_credentials", labelKey: "action.proxy.maxCredentials", type: "number", required: true, min: 1, defaultValue: "5", advanced: true },
     ],
-    buildPayload: (data) => ({ name: text(data, "name"), type: text(data, "type"), host: text(data, "host"), port: integer(data, "port"), username: optionalText(data, "username"), password: optionalText(data, "password"), stability: "static", max_active_credentials: integer(data, "max_active_credentials") }),
+    buildPayload: (data) => {
+      const validity = readProxyValidity(data);
+      if (!validity) throw new InvalidFieldValueError("validity");
+      return { name: text(data, "name"), type: text(data, "type"), host: text(data, "host"), port: integer(data, "port"), username: optionalText(data, "username"), password: optionalText(data, "password"), stability: "static", max_active_credentials: integer(data, "max_active_credentials"), upstream_proxy_id: optionalText(data, "upstream_proxy_id"), ...validityPayload(validity) };
+    },
   },
   "model-refresh": {
     buttonKey: "action.model.button", titleKey: "action.model.title", descriptionKey: "action.model.description",
@@ -198,7 +209,18 @@ const actionConfigs: Record<ResourceActionKey, ResourceActionConfig> = {
   },
 };
 
-interface ResourceRecord { id?: unknown; name?: unknown; status?: unknown; credential_count?: unknown }
+interface ResourceRecord {
+  id?: unknown;
+  name?: unknown;
+  status?: unknown;
+  credential_count?: unknown;
+  type?: unknown;
+  host?: unknown;
+  port?: unknown;
+  lifecycle?: unknown;
+  expiry_state?: unknown;
+  upstream_proxy_id?: unknown;
+}
 
 function resourceOptionLabel(item: ResourceRecord, credentialCount: (count: number) => string): string {
   const name = String(item.name || item.id || "");
@@ -207,9 +229,21 @@ function resourceOptionLabel(item: ResourceRecord, credentialCount: (count: numb
 
 function ResourceSelect({ field, id, autoFocus }: { field: ActionField; id: string; autoFocus: boolean }) {
   const { t } = useI18n();
-  const endpoint = "/admin/v1/groups";
+  const endpoint = field.source === "proxies" ? "/admin/v1/proxies" : "/admin/v1/groups";
   const result = useQuery({ queryKey: [endpoint], queryFn: () => api<ResourceRecord[]>(endpoint), retry: false });
-  const options = (result.data ?? []).filter((item) => item.status === "active");
+  const rows = Array.isArray(result.data) ? result.data : [];
+  const options = rows.filter((item) =>
+    field.source === "proxies"
+      ? item.lifecycle === "active" && item.expiry_state !== "expired" && !item.upstream_proxy_id
+      : item.status === "active");
+  const optionLabel = (item: ResourceRecord) =>
+    field.source === "proxies"
+      ? `${item.name} (${item.type === "http_connect" ? "HTTP" : item.type === "https_connect" ? "HTTPS" : "SOCKS5"} ${item.host}:${item.port})`
+      : resourceOptionLabel(item, (count) => t("action.credentialCount", { count }));
+  const relayOptional = field.source === "proxies";
+  const selectOptions = relayOptional
+    ? [{ value: "", label: t("action.proxy.relayNone") }, ...options.map((item) => ({ value: String(item.id), label: optionLabel(item) }))]
+    : options.map((item) => ({ value: String(item.id), label: optionLabel(item) }));
   return (
     <>
       <SelectField
@@ -218,9 +252,9 @@ function ResourceSelect({ field, id, autoFocus }: { field: ActionField; id: stri
         required={field.required}
         defaultValue=""
         autoFocus={autoFocus}
-        disabled={result.isLoading || result.isError || options.length === 0}
-        placeholder={result.isLoading ? t("common.loading") : options.length === 0 ? t("common.noneAvailable") : t("common.select")}
-        options={options.map((item) => ({ value: String(item.id), label: resourceOptionLabel(item, (count) => t("action.credentialCount", { count })) }))}
+        disabled={result.isLoading || result.isError || (!relayOptional && options.length === 0)}
+        placeholder={result.isLoading ? t("common.loading") : options.length === 0 ? t(field.source === "proxies" ? "action.proxy.relayNone" : "common.noneAvailable") : t("common.select")}
+        options={selectOptions}
       />
       {result.isError && <small className="field-error" role="alert">{t("action.optionLoadFailed")}</small>}
     </>
@@ -239,6 +273,7 @@ function FieldControl({ field, titleId, index }: { field: ActionField; titleId: 
   const { locale, t } = useI18n();
   const id = `${titleId}-${field.name}`;
   const label = t(field.labelKey);
+  if (field.type === "proxy-validity") return <ProxyValidityFields idPrefix={id} />;
   return (
     <div className={`field ${field.type === "json" || field.type === "textarea" || field.type === "model-checkboxes" || field.type === "checkbox-group" || field.type === "radio-cards" ? "field-wide" : ""}`}>
       {field.type !== "checkbox-group" && field.type !== "radio-cards" && <label htmlFor={id}>{label}{field.hintKey && <span className="hint">{t(field.hintKey)}</span>}</label>}
@@ -297,6 +332,10 @@ function describeActionError(config: ResourceActionConfig, error: unknown, t: Tr
   const invalidField = error instanceof InvalidJsonFieldError ? config.fields.find((field) => field.name === error.field) : undefined;
   const apiMessage = error instanceof ApiError && error.message === "request_failed" ? t("common.requestFailed") : error instanceof Error ? error.message : undefined;
   if (invalidField) return t("common.jsonInvalid", { field: t(invalidField.labelKey) });
+  if (error instanceof InvalidFieldValueError) {
+    const field = config.fields.find((item) => item.name === error.field);
+    return t("common.fieldInvalid", { field: field ? t(field.labelKey) : error.field });
+  }
   if (error instanceof ApiError) return error.status ? t("common.http", { status: error.status, message: apiMessage ?? t("common.requestFailed") }) : apiMessage ?? t("common.requestFailed");
   return error instanceof Error ? error.message : t("common.operationFailed");
 }

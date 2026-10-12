@@ -4,6 +4,7 @@ import { api } from "./api";
 import { CapabilityWorkbench } from "./CapabilityWorkbench";
 import { Drawer } from "./drawer";
 import { MessageKey, useI18n } from "./i18n";
+import { formatDate } from "./format";
 import { RowActionDef, RowActionsCell } from "./row-actions";
 import { TablePager, usePagination } from "./pagination";
 
@@ -60,10 +61,8 @@ function tokenCount(value: number | null, locale: string): string {
   return new Intl.NumberFormat(locale).format(value);
 }
 
-function displayDate(value: string, locale: string): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(locale, { year: "numeric", month: "2-digit", day: "2-digit" });
+function displayDate(value: string): string {
+  return formatDate(value);
 }
 
 function stateLabel(value: string, locale: "zh-CN" | "en-US"): string {
@@ -137,7 +136,7 @@ export function ModelsTable({ loading, items, title, rowActions, onRefresh, refr
               <td><span className={`model-lifecycle state-${lifecycle}`}>{stateLabel(lifecycle, locale)}</span></td>
               <td>{activeVersion === null || activeVersion === undefined ? <span className="muted">—</span> : <span className="gateway-version"><b>v{String(activeVersion)}</b><small>{stateLabel(activeState, locale)}</small></span>}</td>
               <td><span className="model-price">{text(row, "price_input_per_million") || "—"} / {text(row, "price_output_per_million") || "—"}</span>{text(row, "price_version") && <small className="muted">v{text(row, "price_version")}</small>}</td>
-              <td><time className="model-seen" dateTime={text(row, "released_at")}>{displayDate(text(row, "released_at"), locale)}</time></td>
+              <td><time className="model-seen" dateTime={text(row, "released_at")}>{displayDate(text(row, "released_at"))}</time></td>
               <td className="capability-toggle-cell"><button type="button" className="capability-toggle" aria-haspopup="dialog" aria-label={`${t("models.capability.open")} · ${text(row, "display_name")}`} onClick={(event) => { drawerTrigger.current = event.currentTarget; setSelectedRow(row); }}>→</button></td>
               {hasActions && <td><RowActionsCell row={row} actions={rowActions ?? []} /></td>}
             </tr>;

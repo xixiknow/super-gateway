@@ -17,6 +17,8 @@ import {
   verifyMfa,
 } from "./api";
 import { ResourceActionButton, ResourceActionKey } from "./ResourceAction";
+import { renderProxyCell } from "./proxy-validity";
+import { formatDateTime } from "./format";
 import { OpenAiSettings } from "./OpenAiAccounts";
 import { AccountsPage } from "./AccountsPage";
 import { PlatformKeysTable } from "./PlatformKeys";
@@ -442,7 +444,7 @@ function NotificationPopover({ result, unreadCount, onClose, onOpenDetail }: { r
             const marking = markRead.isPending && markRead.variables?.id === item.id;
             const read = Boolean(item.read_at);
             const statusClass = marking ? "marking" : read ? "read" : "unread";
-            return <li key={item.id} className={read ? "read" : "unread"}><button type="button" className="notification-row" disabled={markAllRead.isPending} onClick={() => openItem(item)}><span className={`notification-severity ${item.severity}`} aria-hidden="true" /><span className="notification-content"><span className="notification-item-head"><b>{item.title}</b><span className={`notification-status ${statusClass}`}>{marking ? t("notifications.marking") : !read ? t("notifications.unread") : t("notifications.read")}</span></span><span className="notification-preview">{item.summary}</span><time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString(locale)}</time></span><span className="notification-chevron" aria-hidden="true">→</span></button></li>;
+            return <li key={item.id} className={read ? "read" : "unread"}><button type="button" className="notification-row" disabled={markAllRead.isPending} onClick={() => openItem(item)}><span className={`notification-severity ${item.severity}`} aria-hidden="true" /><span className="notification-content"><span className="notification-item-head"><b>{item.title}</b><span className={`notification-status ${statusClass}`}>{marking ? t("notifications.marking") : !read ? t("notifications.unread") : t("notifications.read")}</span></span><span className="notification-preview">{item.summary}</span><time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time></span><span className="notification-chevron" aria-hidden="true">→</span></button></li>;
           })}</ul></>}
   </section>;
 }
@@ -457,7 +459,7 @@ function NotificationDetailDialog({ item, onClose }: { item: NotificationRecord;
           <p className="notification-detail-summary">{item.summary}</p>
           <dl className="notification-detail-grid">
             <div><dt>{t("notifications.severity")}</dt><dd><span className={`notification-severity ${item.severity}`} aria-hidden="true" />{t(`notifications.severity.${item.severity}`)}</dd></div>
-            <div><dt>{t("notifications.occurredAt")}</dt><dd><time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString(locale)}</time></dd></div>
+            <div><dt>{t("notifications.occurredAt")}</dt><dd><time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time></dd></div>
             {item.alert_id && <div><dt>{t("notifications.relatedAlert")}</dt><dd className="mono">{item.alert_id}</dd></div>}
           </dl>
         </div>
@@ -683,7 +685,7 @@ function RequestUsagePage() {
     <header className="page-heading"><div><p className="eyebrow mono">{t("request.eyebrow")}</p><h1>{t("nav.requests")}</h1><p>{t("request.description")}</p></div></header>
     <div className="segmented local"><button type="button" className={view === "requests" ? "active" : ""} onClick={() => setView("requests")}>{t("request.detail")}</button><button type="button" className={view === "analytics" ? "active" : ""} onClick={() => setView("analytics")}>{t("request.analytics")}</button></div>
     {view === "requests" && <>
-      <form className="filter-rail" onSubmit={(event) => { event.preventDefault(); setAppliedFilters({ query: requestQuery.trim(), completeness }); }}><div className="field"><label htmlFor="search-request">{t("request.searchId")}</label><input id="search-request" className="inp" value={requestQuery} onChange={(event) => setRequestQuery(event.target.value)} placeholder={t("request.searchPlaceholder")} /></div><div className="field"><label htmlFor="usage-state">{t("request.completeness")}</label><SelectField id="usage-state" value={completeness} onChange={setCompleteness} options={[{ value: "", label: t("request.all") }, { value: "complete", label: t("request.complete") }, { value: "partial", label: t("request.partial") }, { value: "unknown", label: t("request.unknown") }]} /></div><button type="submit" className="btn btn-ghost">{t("request.apply")}</button></form>
+      <form className="filter-rail" onSubmit={(event) => { event.preventDefault(); setAppliedFilters({ query: requestQuery.trim(), completeness }); }}><div className="field field-grow"><label htmlFor="search-request">{t("request.searchId")}</label><input id="search-request" className="inp" value={requestQuery} onChange={(event) => setRequestQuery(event.target.value)} placeholder={t("request.searchPlaceholder")} /></div><div className="field"><label htmlFor="usage-state">{t("request.completeness")}</label><SelectField id="usage-state" value={completeness} onChange={setCompleteness} options={[{ value: "", label: t("request.all") }, { value: "complete", label: t("request.complete") }, { value: "partial", label: t("request.partial") }, { value: "unknown", label: t("request.unknown") }]} /></div><button type="submit" className="btn btn-ghost">{t("request.apply")}</button></form>
       {requests.error && <ErrorState error={requests.error} />}
       <ResourceTable tableClassName="requests-table" loading={requests.isLoading} items={filteredRequests} title={t("request.detail")} columnKeys={requestColumns} renderCell={(column, record) => column === "token_usage"
         ? <dl className="request-token-grid">{([ ["input_tokens", "read"], ["output_tokens", "write"], ["cache_read_input_tokens", "cacheRead"], ["cache_creation_input_tokens", "cacheWrite"] ] as const).map(([key, label]) => <div key={key}><dt>{t(`request.tokens.${label}`)}</dt><dd>{typeof record[key] === "number" ? record[key].toLocaleString(locale) : "—"}</dd></div>)}</dl>
@@ -716,19 +718,30 @@ const actions: Partial<Record<string, ResourceActionKey>> = {
 // 页面列宽有限时的推荐列:优先人类可读字段,省略内部键与冗余状态列;为 null 的列回退到对象键顺序
 const recommendedColumns: Record<string, string[]> = {
   "/users": ["username", "display_name", "status", "created_at"],
-  "/egress": ["name", "hostname", "base_url", "lifecycle", "updated_at"],
+  "/egress": ["name", "type", "host", "relay", "expires_at", "expiry_state", "lifecycle", "updated_at"],
   "/models": ["upstream_model_id", "display_name", "source", "lifecycle", "capability_version", "capability_state", "last_seen_at"],
   "/security": ["requested_by", "kind", "state", "created_at"],
   "/alerts": ["severity", "type", "state", "summary", "created_at"],
   "/operations": ["kind", "state", "created_at"],
   "/account": ["user_agent_summary", "created_at"],
 };
+/** 代理列表附加 relay 列:把上游代理 id 解析为中继代理名称 */
+function withRelayNames(items: unknown[] | undefined): unknown[] | undefined {
+  if (!items) return items;
+  const names = new Map(items.map((item) => [String((item as Record<string, unknown>).id ?? ""), String((item as Record<string, unknown>).name ?? "")]));
+  return items.map((item) => {
+    const record = item as Record<string, unknown>;
+    if (!record.upstream_proxy_id) return record;
+    const relay = names.get(String(record.upstream_proxy_id)) ?? String(record.upstream_proxy_id);
+    return { ...record, relay };
+  });
+}
 function ResourcePage({ entry, principal }: { entry: NavEntry; principal: Principal }) {
   const { t } = useI18n();
   const endpoint = endpoints[entry.path] ?? null;
   const action = actions[entry.path];
   const result = useQuery({ queryKey: [endpoint], queryFn: () => api<unknown[]>(endpoint ?? ""), enabled: endpoint !== null, retry: false });
-  const items = endpoint === null ? [] : result.data;
+  const items = endpoint === null ? [] : entry.path === "/egress" ? withRelayNames(result.data) : result.data;
   const title = t(entry.labelKey);
   const { rowActions, rowDialogs } = useResourceRowActions(entry.path, principal);
   const toolbar = action
@@ -740,7 +753,7 @@ function ResourcePage({ entry, principal }: { entry: NavEntry; principal: Princi
       ? <UsersTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />
       : entry.path === "/models"
         ? <ModelsTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />
-        : <ResourceTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} columnKeys={recommendedColumns[entry.path]} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />;
+        : <ResourceTable loading={result.isLoading} items={items} title={title} rowActions={rowActions} columnKeys={recommendedColumns[entry.path]} renderCell={entry.path === "/egress" ? renderProxyCell : undefined} columnLabels={entry.path === "/egress" ? { type: "action.proxy.type", host: "action.proxy.host", relay: "action.proxy.relay" } : undefined} onRefresh={() => void result.refetch()} refreshing={result.isFetching} toolbar={toolbar} />;
   return <div className="page-stack"><header className="page-heading"><div><p className="eyebrow mono">{t("resource.eyebrow")}</p><h1>{title}</h1><p>{t("resource.description")}</p></div></header>{result.isError && <ErrorState error={result.error} />}{entry.path === "/operations" && <><OpenAiSettings /><BodyCaptureSettingsPanel /><RuntimeSettingsPanel /></>}{endpoint === null && <div className="alert alert-warn"><Icon name="alert" /><div><div className="at">{t("resource.onDemand")}</div><div className="ad">{t("resource.onDemandBody")}</div></div></div>}{table}{rowDialogs}</div>;
 }
 
@@ -811,8 +824,8 @@ function ExportsPage() {
               <td className="mono">{item.format}</td>
               <td>{item.scope === "all" ? t("action.export.all") : t("action.export.own")}</td>
               <td><span className={`key-status ${item.state === "succeeded" ? "active" : item.state === "failed" || item.state === "expired" ? "revoked" : "disabled"}`}>{t(`export.state.${item.state}`)}</span></td>
-              <td>{new Date(item.created_at).toLocaleString(locale)}</td>
-              <td>{item.completed_at ? new Date(item.completed_at).toLocaleString(locale) : "—"}</td>
+              <td>{formatDateTime(item.created_at)}</td>
+              <td>{item.completed_at ? formatDateTime(item.completed_at) : "—"}</td>
               <td>{item.row_count === null ? "—" : item.row_count.toLocaleString(locale)}</td>
               <td><div className="row-actions">{item.download_available
                 ? <button type="button" className="ibtn outline" data-tip={t("export.download")} aria-label={t("export.download")} onClick={() => download(item)}><Icon name="download" /></button>

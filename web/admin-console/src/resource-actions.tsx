@@ -1,12 +1,13 @@
 import { FormEvent, ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Principal, api, setCsrfToken } from "./api";
 import { useToast } from "./feedback";
 import { MessageKey, useI18n } from "./i18n";
 import { RowActionDef, postLifecycle, rowActionError } from "./row-actions";
 import { CredentialDetailDialog } from "./credential-detail";
 import { SelectField } from "./select-field";
+import { ProxyValidityFields, readProxyValidity, validityPayload } from "./proxy-validity";
 
 /* ============================================================
    P1 资源行操作注册表:users / proxies / models / approvals /
@@ -331,12 +332,14 @@ interface FieldDef {
   options?: { value: string; labelKey: MessageKey }[];
 }
 
-function RowFormDialog({ titleKey, subtitle, submitKey, danger, fields, onSubmit, onClose }: {
+function RowFormDialog({ titleKey, subtitle, submitKey, danger, fields, extra, onSubmit, onClose }: {
   titleKey: MessageKey;
   subtitle: string;
   submitKey?: MessageKey;
   danger?: boolean;
   fields: FieldDef[];
+  /** 追加在通用字段之后的自定义字段组 */
+  extra?: ReactNode;
   onSubmit(form: FormData): Promise<unknown>;
   onClose(): void;
 }) {
@@ -387,6 +390,7 @@ function RowFormDialog({ titleKey, subtitle, submitKey, danger, fields, onSubmit
                     : <input id={`${titleId}-${field.name}`} name={field.name} className="inp" type={field.type ?? "text"} required={field.required} defaultValue={field.defaultValue} min={field.min} max={field.max} step={field.step} maxLength={field.maxLength} autoFocus={field.autoFocus} autoComplete={field.autoComplete} />}
               </div>
             ))}
+            {extra}
           </div>
           <div className="modal-foot">
             <button type="button" className="btn btn-ghost" onClick={onClose} disabled={pending}>{t("common.cancel")}</button>
@@ -438,7 +442,9 @@ function UserEditDialog({ row, onClose }: { row: Row; onClose(): void }) {
 }
 
 function ProxyEditDialog({ row, onClose }: { row: Row; onClose(): void }) {
+  const { t } = useI18n();
   const invalidate = useInvalidate("/admin/v1/proxies");
+  const currentRelay = row.upstream_proxy_id ? String(row.upstream_proxy_id) : "";
   return (
     <RowFormDialog
       titleKey="edit.proxy.title"
@@ -447,19 +453,74 @@ function ProxyEditDialog({ row, onClose }: { row: Row; onClose(): void }) {
         { name: "name", labelKey: "edit.field.name", required: true, maxLength: 128, defaultValue: text(row, "name"), autoFocus: true },
         { name: "max_active_credentials", labelKey: "edit.field.capacity", type: "number", required: true, min: 1, max: 1000, defaultValue: String(row.max_active_credentials ?? "") },
       ]}
+      extra={<>
+        <ProxyRelaySelect row={row} />
+        <ProxyValidityFields initial={{
+          startsAt: text(row, "starts_at") || null,
+          validityDays: typeof row.validity_days === "number" ? row.validity_days : null,
+          expiryPolicy: text(row, "expiry_policy") || undefined,
+          remindBeforeHours: typeof row.remind_before_hours === "number" ? row.remind_before_hours : undefined,
+        }} />
+      </>}
       onSubmit={async (form) => {
         const name = String(form.get("name") ?? "").trim();
         const capacity = Number(form.get("max_active_credentials"));
+        const validity = readProxyValidity(form);
+        if (!validity) throw new Error(t("common.fieldInvalid", { field: t("action.proxy.validity") }));
+        // 仅在有效期窗口实际变化时提交 starts_at/validity_days,避免无谓地重置到期提醒
+        const windowChanged = validity.validityDays !== (typeof row.validity_days === "number" ? row.validity_days : null)
+          || new Date(validity.startsAt).getTime() !== new Date(text(row, "starts_at")).getTime();
+        const relay = String(form.get("upstream_proxy_id") ?? "");
+        const { starts_at, validity_days, ...policy } = validityPayload(validity);
         await api(`/admin/v1/proxies/${encodeURIComponent(String(row.id))}`, {
           method: "PATCH",
           headers: { "If-Match": `"rev-${Number(row.revision)}"` },
-          body: JSON.stringify({ ...(name ? { name } : {}), ...(Number.isInteger(capacity) ? { max_active_credentials: capacity } : {}) }),
+          body: JSON.stringify({
+            ...(name ? { name } : {}),
+            ...(Number.isInteger(capacity) ? { max_active_credentials: capacity } : {}),
+            ...policy,
+            ...(windowChanged ? { starts_at, validity_days } : {}),
+            ...(relay !== currentRelay ? { upstream_proxy_id: relay || null } : {}),
+          }),
         });
         await invalidate();
       }}
       onClose={onClose}
     />
   );
+}
+
+/** 中继(上游)代理选择:仅列出不带自身中继的 active 静态代理,链路深度固定为一跳 */
+function ProxyRelaySelect({ row }: { row: Row }) {
+  const { t } = useI18n();
+  const query = useQuery({ queryKey: ["/admin/v1/proxies"], queryFn: () => api<Row[]>("/admin/v1/proxies"), retry: false });
+  const current = row.upstream_proxy_id ? String(row.upstream_proxy_id) : "";
+  const candidates = (query.data ?? []).filter((item) =>
+    item.id !== row.id
+    && item.lifecycle === "active"
+    && item.expiry_state !== "expired"
+    && !item.upstream_proxy_id);
+  return (
+    <div className="field field-wide">
+      <label htmlFor="edit-proxy-relay">{t("action.proxy.relay")}<span className="hint">{t("action.proxy.relayHint")}</span></label>
+      <SelectField
+        id="edit-proxy-relay"
+        name="upstream_proxy_id"
+        defaultValue={current}
+        disabled={query.isLoading || query.isError}
+        placeholder={query.isLoading ? t("common.loading") : t("action.proxy.relayNone")}
+        options={[
+          { value: "", label: t("action.proxy.relayNone") },
+          ...candidates.map((item) => ({ value: String(item.id), label: `${text(item, "name")} (${proxyProtocolLabel(text(item, "type"))}${text(item, "host")}:${String(item.port ?? "")})` })),
+        ]}
+      />
+      {query.isError && <small className="field-error" role="alert">{t("action.optionLoadFailed")}</small>}
+    </div>
+  );
+}
+
+function proxyProtocolLabel(value: string): string {
+  return value === "http_connect" ? "HTTP " : value === "https_connect" ? "HTTPS " : value === "socks5" ? "SOCKS5 " : "";
 }
 
 function ProxySecretDialog({ row, onClose }: { row: Row; onClose(): void }) {

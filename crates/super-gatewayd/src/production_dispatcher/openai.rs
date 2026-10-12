@@ -43,6 +43,7 @@ pub(super) async fn load_credentials(storage: &PgStorage, group: Uuid) -> anyhow
                     .collect(),
                 attribution_optional: true,
                 session_capacity: SessionCapacityConfig::default(),
+                min_request_interval: None,
                 token_version: u64::try_from(r.try_get::<i64, _>("token_version")?)?,
                 openai_transport: Some(gateway_scheduler::OpenAiTransportConfig {
                     revision,
@@ -258,6 +259,10 @@ impl ProductionDispatcher {
             "authorization",
             http::HeaderValue::from_str(&bearer).map_err(|_| DispatchError::DeterministicUnavailable)?,
         );
+        // Derived upstream identities. Device-equivalent installation is constant per
+        // credential; session-scoped thread/window/turn stay per base session and turn,
+        // so upstream thread/session metering never collapses to account constants.
+        let mut installation = String::new();
         if auth == OpenAiAuthKind::Oauth {
             headers.insert(
                 "chatgpt-account-id",
@@ -265,6 +270,10 @@ impl ProductionDispatcher {
                     .map_err(|_| DispatchError::DeterministicUnavailable)?,
             );
             headers.insert("originator", http::HeaderValue::from_static("codex_cli_rs"));
+            headers.insert(
+                "user-agent",
+                http::HeaderValue::from_static("codex_cli_rs/0.120.0 (Windows)"),
+            );
             let namespace: Uuid = value(&row, "session_namespace")?;
             let seed = SecretBytes::new(Sha256::digest(namespace.as_bytes()).to_vec());
             let session = gateway_services::openai::session::isolate_session(
@@ -278,6 +287,37 @@ impl ProductionDispatcher {
                 "session_id",
                 http::HeaderValue::from_str(&session).map_err(|_| DispatchError::Unavailable)?,
             );
+            installation = gateway_services::openai::session::derive_installation_id(&seed, &account_id.to_string())
+                .map_err(|_| DispatchError::Unavailable)?;
+            let thread = gateway_services::openai::session::derive_thread_id(
+                &seed,
+                &key_id.to_string(),
+                &account_id.to_string(),
+                request.base_session_id.as_str(),
+            )
+            .map_err(|_| DispatchError::Unavailable)?;
+            let turn = gateway_services::openai::session::derive_turn_id();
+            let window = gateway_services::openai::session::derive_window_id(&thread);
+            for (name, header_value) in [
+                ("thread-id", thread.as_str()),
+                ("x-codex-window-id", window.as_str()),
+                ("x-codex-installation-id", installation.as_str()),
+            ] {
+                headers.insert(
+                    name,
+                    http::HeaderValue::from_str(header_value).map_err(|_| DispatchError::DeterministicUnavailable)?,
+                );
+            }
+            let turn_metadata = json!({
+                "turn_id": turn,
+                "window_id": window,
+                "prompt_cache_key": session,
+            });
+            headers.insert(
+                "x-codex-turn-metadata",
+                http::HeaderValue::from_str(&turn_metadata.to_string())
+                    .map_err(|_| DispatchError::DeterministicUnavailable)?,
+            );
             if let Some(cache) = adjusted.get("prompt_cache_key").and_then(Value::as_str) {
                 let isolated = gateway_services::openai::session::isolate_session(
                     &seed,
@@ -287,6 +327,11 @@ impl ProductionDispatcher {
                 )
                 .map_err(|_| DispatchError::InvalidRequest)?;
                 adjusted["prompt_cache_key"] = json!(isolated);
+            }
+            if let Some(metadata) = adjusted.get_mut("client_metadata").and_then(Value::as_object_mut) {
+                metadata.insert("x-codex-installation-id".into(), json!(installation));
+                metadata.insert("x-codex-window-id".into(), json!(window));
+                metadata.insert("x-codex-turn-id".into(), json!(turn));
             }
         }
         let egress = account_egress(&self.storage, &row).await?;
@@ -348,6 +393,8 @@ impl ProductionDispatcher {
         let result = if let Some(connection) = request.openai_connection.clone() {
             // Quota probes update the account revision but do not change connection identity.
             // Only token, egress and transport changes invalidate a retained upstream socket.
+            // Derived installation identity is credential-stable, so a regenerated
+            // session_namespace must invalidate the socket without changing token_version.
             let identity = json!([
                 lease.token_version,
                 value::<Option<Uuid>>(&row, "proxy_id")?,
@@ -355,7 +402,8 @@ impl ProductionDispatcher {
                 value::<Option<i32>>(&row, "port")?,
                 value::<Option<Uuid>>(&row, "auth_secret_id")?,
                 value::<Option<String>>(&row, "proxy_type_code")?,
-                value::<i64>(&settings, "revision")?
+                value::<i64>(&settings, "revision")?,
+                installation
             ]);
             let digest = Sha256::digest(identity.to_string().as_bytes());
             let mut version = [0_u8; 8];
@@ -723,20 +771,8 @@ async fn account_egress(
     };
     let host = value::<String>(row, "host")?.into();
     let port = u16::try_from(value::<i32>(row, "port")?).map_err(|_| DispatchError::Unavailable)?;
-    match value::<String>(row, "proxy_type_code")?.as_str() {
-        "connect" => Ok(EgressRouteSnapshot::HttpConnect {
-            host,
-            port,
-            credentials,
-        }),
-        "socks5" => Ok(EgressRouteSnapshot::Socks5 {
-            host,
-            port,
-            credentials,
-            dns: Socks5DnsMode::Remote,
-        }),
-        _ => Err(DispatchError::DeterministicUnavailable),
-    }
+    EgressRouteSnapshot::from_proxy_row(&value::<String>(row, "proxy_type_code")?, host, port, credentials)
+        .ok_or(DispatchError::DeterministicUnavailable)
 }
 
 async fn arm_attempt(

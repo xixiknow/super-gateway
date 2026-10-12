@@ -24,7 +24,7 @@ use gateway_domain::{
     ArchetypeVersionId, AttemptDeadlines, AttemptIdentitySnapshot, AttemptPlanId, ClientOs, Clock, ConnectionAttemptId,
     CredentialId, CredentialProfileId, DeviceIdentityId, Digest, EgressBindingId, EgressRouteSnapshot,
     FinalUpstreamRequest, GroupId, MaintenanceTrigger, PinReason, Portability, ProxyCredentials, ProxyEndpointId,
-    SecretBytes, SecretValue, Socks5DnsMode, TransportAttemptSnapshot, TransportBundleId, UpstreamHeader,
+    ProxyHop, SecretBytes, SecretValue, TransportAttemptSnapshot, TransportBundleId, UpstreamHeader,
 };
 use gateway_policy::{
     canonicalize_system_order, cch_policy_for_version, ensure_billing_block, first_user_text, is_empty_replacement,
@@ -42,7 +42,8 @@ use gateway_services::{
     credential::{CredentialMaintainer, CredentialServiceError},
     quota::{SUBSCRIPTION_QUOTA_PARSER_VERSION, parse_subscription_quota_headers},
     response::{
-        DeliveryCompletion, DeliveryCompletionError, DeliveryReport, ResponseConfig, ResponseError, ResponsePipeline,
+        DeliveryCompletion, DeliveryCompletionError, DeliveryReport, PreparedBodyItem, PreparedClientResponse,
+        PreparedDeliveryState, ResponseConfig, ResponseError, ResponsePipeline, ResponseReservation,
         ResponseSideWriter,
     },
     scheduler::SchedulerSupervisor,
@@ -455,15 +456,14 @@ impl ProductionDispatcher {
         Ok(true)
     }
 
-    async fn project_transport_health(
-        &self,
+    /// Health projection shared by the direct dispatch path and the queued-stream
+    /// bridge; `deps` supplies the storage and runtime-group registry views.
+    async fn project_transport_health_for_bridge(
+        deps: &BridgeDeps,
         lease: &CredentialLease,
         proxy_endpoint_id: Option<&ProxyEndpointId>,
         error: &TransportError,
     ) -> Result<(), DispatchError> {
-        if matches!(error.health_effect, HealthEffect::None | HealthEffect::SuccessfulProbe) {
-            return Ok(());
-        }
         let lease_profile = lease
             .anthropic_profile()
             .ok_or(DispatchError::DeterministicUnavailable)?;
@@ -472,7 +472,7 @@ impl ProductionDispatcher {
         let archetype_version_id = parse_uuid(lease_profile.archetype_version_id.as_str())?;
         let proxy_id = proxy_endpoint_id.map(|id| parse_uuid(id.as_str())).transpose()?;
         let diagnostic_code = transport_error_code(error.code);
-        let mut transaction = self
+        let mut transaction = deps
             .storage
             .pool()
             .begin()
@@ -648,7 +648,7 @@ impl ProductionDispatcher {
         }
         transaction.commit().await.map_err(|_| DispatchError::Unavailable)?;
         for (affected_credential_id, affected_group_id) in targets {
-            let _ = self
+            let _ = deps
                 .fence_credential_for_admin(affected_group_id, affected_credential_id)
                 .await?;
         }
@@ -1044,7 +1044,7 @@ impl MessageDispatcher for ProductionDispatcher {
             })
             .await
             .map_err(|_| DispatchError::Unavailable)?;
-        let mut request_guard = RequestTerminalGuard::new(self.storage.clone(), request_uuid, request.started_at);
+        let request_guard = RequestTerminalGuard::new(self.storage.clone(), request_uuid, request.started_at);
         let request_type = if request.openai_connection.is_some() {
             "websocket"
         } else if request.generic.stream {
@@ -1149,13 +1149,33 @@ impl MessageDispatcher for ProductionDispatcher {
             bypass_queue: matches!(request.endpoint, DispatchEndpoint::CountTokens),
         };
         let decision = group.admit(entry.clone()).await?;
-        let (mut lease, current_phase) = match decision {
+        let (lease, current_phase) = match decision {
             RuntimeAdmission::Granted(lease) => (lease, "accepted"),
             RuntimeAdmission::Queued { receiver, mut guard } => {
                 self.storage
                     .advance_request_phase(request_uuid, "accepted", "queued")
                     .await
                     .map_err(|_| DispatchError::Unavailable)?;
+                // Streaming requests cannot keep a client alive through a silent queue,
+                // so the response commit happens now with keep-alive comment frames and
+                // the upstream turn continues in a bridged background task.
+                if request.generic.stream && matches!(request.endpoint, DispatchEndpoint::Messages) {
+                    return self
+                        .bridge_queued_stream(
+                            request,
+                            group,
+                            request_uuid,
+                            request_limits,
+                            pre_upstream_deadline,
+                            entry,
+                            receiver,
+                            guard,
+                            body_capture,
+                            cancellation,
+                            request_guard,
+                        )
+                        .await;
+                }
                 (
                     group
                         .wait_for_resolution(
@@ -1173,8 +1193,61 @@ impl MessageDispatcher for ProductionDispatcher {
                 return Err(map_rejection(&rejection, request_limits));
             }
         };
+        let deps = BridgeDeps {
+            storage: self.storage.clone(),
+            groups: self.groups.clone(),
+            engines: self.engines.clone(),
+            transport: self.transport.clone(),
+            response: self.response.clone(),
+            clock: self.clock.clone(),
+            credential_maintainer: self.credential_maintainer.clone(),
+        };
+        Self::dispatch_after_lease(
+            &deps,
+            request,
+            group,
+            request_uuid,
+            request_limits,
+            entry,
+            body_capture,
+            cancellation,
+            request_guard,
+            lease,
+            current_phase,
+            response_reservation,
+            None,
+        )
+        .await
+    }
+}
+
+impl ProductionDispatcher {
+    /// Continue a Messages dispatch once a Credential Lease is held. Shared by the
+    /// direct-admission path and the queued-stream bridge.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_after_lease(
+        deps: &BridgeDeps,
+        request: DispatchRequest,
+        group: Arc<RuntimeGroup>,
+        request_uuid: Uuid,
+        request_limits: RuntimeRequestLimits,
+        entry: ScheduleEntry,
+        body_capture: gateway_storage::BodyCaptureConfig,
+        cancellation: CancellationToken,
+        mut request_guard: RequestTerminalGuard,
+        mut lease: CredentialLease,
+        current_phase: &str,
+        response_reservation: Option<ResponseReservation>,
+        early_sink: Option<mpsc::Sender<PreparedBodyItem>>,
+    ) -> Result<UpstreamResponse, DispatchError> {
+        let model_id = deps
+            .storage
+            .resolve_model_id(&request.generic.model_id)
+            .await
+            .map_err(|_| DispatchError::Unavailable)?
+            .ok_or(DispatchError::DeterministicUnavailable)?;
         let mut lease_guard = LeaseGuard::new(group.clone(), lease.clone());
-        self.storage
+        deps.storage
             .advance_request_phase(request_uuid, current_phase, "submitting")
             .await
             .map_err(|_| DispatchError::Unavailable)?;
@@ -1204,8 +1277,8 @@ impl MessageDispatcher for ProductionDispatcher {
             let lease_profile = lease
                 .anthropic_profile()
                 .ok_or(DispatchError::DeterministicUnavailable)?;
-            let selected = load_selected_credential(&self.storage, &lease).await?;
-            let catalog = self.engines.snapshot();
+            let selected = load_selected_credential(&deps.storage, &lease).await?;
+            let catalog = deps.engines.snapshot();
             let engine = catalog
                 .find_exact(
                     lease_profile.archetype_version_id.as_str(),
@@ -1222,7 +1295,7 @@ impl MessageDispatcher for ProductionDispatcher {
                 &derived_session,
                 u32::from(connection_ordinal),
             )?);
-            if self
+            if deps
                 .storage
                 .record_request_reasoning(request_uuid, final_request.body.as_ref())
                 .await
@@ -1239,12 +1312,12 @@ impl MessageDispatcher for ProductionDispatcher {
                         .map(|h| (h.name.as_ref(), h.value.as_ref())),
                 );
                 headers.attempt_ordinal = Some(u32::from(connection_ordinal));
-                if self
+                if deps
                     .storage
                     .begin_header_attempt(request_uuid, u32::from(connection_ordinal))
                     .await
                     .is_err()
-                    || self
+                    || deps
                         .storage
                         .capture_upstream_headers(request_uuid, false, &headers)
                         .await
@@ -1253,7 +1326,7 @@ impl MessageDispatcher for ProductionDispatcher {
                     tracing::warn!(request_id = %request_uuid, "upstream request header capture failed");
                 }
                 let final_body = body_capture.request_json(final_request.body.as_ref());
-                match self
+                match deps
                     .storage
                     .capture_final_request_body(request_uuid, final_body.clone())
                     .await
@@ -1261,7 +1334,7 @@ impl MessageDispatcher for ProductionDispatcher {
                     Ok(()) => {
                         let encoded = final_body.as_ref().and_then(|value| serde_json::to_vec(value).ok());
                         if final_body.is_some() && encoded.as_deref() != Some(final_request.body.as_ref()) {
-                            let _ = self.storage.mark_body_digest_mismatch(request_uuid).await;
+                            let _ = deps.storage.mark_body_digest_mismatch(request_uuid).await;
                         }
                     }
                     Err(_) => {
@@ -1270,14 +1343,14 @@ impl MessageDispatcher for ProductionDispatcher {
                 }
             }
             let upstream_body_digest: [u8; 32] = Sha256::digest(final_request.body.as_ref()).into();
-            self.storage
+            deps.storage
                 .record_upstream_body_digest(request_uuid, &upstream_body_digest)
                 .await
                 .map_err(|_| DispatchError::Unavailable)?;
             let health_proxy_endpoint_id = selected.proxy_endpoint_id.clone();
             let reason = next_attempt_reason;
             let attempt_telemetry = create_attempt_telemetry(
-                &self.storage,
+                &deps.storage,
                 request_uuid,
                 &request,
                 &lease,
@@ -1332,14 +1405,14 @@ impl MessageDispatcher for ProductionDispatcher {
             };
             let first_byte = Arc::new(FirstByteEventSink::default());
             let sink = Arc::new(MonotonicEventSink::new(first_byte.clone()));
-            let mut execution = Box::pin(self.transport.execute(attempt, sink));
+            let mut execution = Box::pin(deps.transport.execute(attempt, sink));
             let mut attempt_promoted = false;
             let execution = loop {
                 tokio::select! {
                     biased;
                     request_bytes = first_byte.wait_for_first_byte(), if !attempt_promoted => {
                         promote_attempt_telemetry(
-                            &self.storage,
+                            &deps.storage,
                             &attempt_telemetry,
                             request_bytes,
                             None,
@@ -1371,7 +1444,7 @@ impl MessageDispatcher for ProductionDispatcher {
                             raw.headers.iter().map(|(name, value)| (name.as_ref(), value.as_ref())),
                         );
                         headers.attempt_ordinal = Some(u32::from(connection_ordinal));
-                        if self
+                        if deps
                             .storage
                             .capture_upstream_headers(request_uuid, true, &headers)
                             .await
@@ -1383,25 +1456,25 @@ impl MessageDispatcher for ProductionDispatcher {
                     let (raw, body_third_party_rejection, body_preview) = classify_and_replay_response(raw).await;
                     let request_bytes = first_byte.request_bytes();
                     if request_bytes == 0 {
-                        fail_attempt_telemetry(&self.storage, &attempt_telemetry, 0, false).await?;
+                        fail_attempt_telemetry(&deps.storage, &attempt_telemetry, 0, false).await?;
                         return Err(DispatchError::Unavailable);
                     }
                     if attempt_promoted {
-                        update_attempt_http_status(&self.storage, &attempt_telemetry, raw.status).await?;
+                        update_attempt_http_status(&deps.storage, &attempt_telemetry, raw.status).await?;
                     } else {
-                        promote_attempt_telemetry(&self.storage, &attempt_telemetry, request_bytes, Some(raw.status))
+                        promote_attempt_telemetry(&deps.storage, &attempt_telemetry, request_bytes, Some(raw.status))
                             .await?;
                         messages_attempts = messages_attempts.saturating_add(1);
                     }
                     if body_third_party_rejection {
-                        record_third_party_rejection(&self.storage, &attempt_telemetry, request.client_os).await;
+                        record_third_party_rejection(&deps.storage, &attempt_telemetry, request.client_os).await;
                     }
                     observe_subscription_quota_headers(
-                        &self.storage,
+                        &deps.storage,
                         &group,
                         &lease.credential_id,
                         &raw.headers,
-                        self.clock.now().monotonic,
+                        deps.clock.now().monotonic,
                     )
                     .await;
                     let account_rejection = if (raw.status == 403 || raw.status == 400) && !body_third_party_rejection {
@@ -1412,12 +1485,12 @@ impl MessageDispatcher for ProductionDispatcher {
                     let account_rejected = account_rejection.is_some();
                     let retry_after = if raw.status == 429 {
                         let cooldown =
-                            persist_rate_limit_cooldown(&self.storage, &attempt_telemetry, trusted_retry_after(&raw))
+                            persist_rate_limit_cooldown(&deps.storage, &attempt_telemetry, trusted_retry_after(&raw))
                                 .await?;
                         group
                             .observe_credential_cooldown(CredentialCooldownUpdate {
                                 credential_id: lease.credential_id.clone(),
-                                cooldown_until: Some(self.clock.now().monotonic.saturating_add(cooldown)),
+                                cooldown_until: Some(deps.clock.now().monotonic.saturating_add(cooldown)),
                             })
                             .await?;
                         cooldown
@@ -1426,27 +1499,27 @@ impl MessageDispatcher for ProductionDispatcher {
                     };
                     if raw.status == 529 {
                         let cooldown =
-                            persist_overload_cooldown(&self.storage, &attempt_telemetry, trusted_retry_after(&raw))
+                            persist_overload_cooldown(&deps.storage, &attempt_telemetry, trusted_retry_after(&raw))
                                 .await?;
                         group
                             .observe_credential_cooldown(CredentialCooldownUpdate {
                                 credential_id: lease.credential_id.clone(),
-                                cooldown_until: Some(self.clock.now().monotonic.saturating_add(cooldown)),
+                                cooldown_until: Some(deps.clock.now().monotonic.saturating_add(cooldown)),
                             })
                             .await?;
                     } else if let Some((error_code, error_message)) = account_rejection
                         && let Some(group_uuid) =
-                            persist_account_rejection(&self.storage, &attempt_telemetry, error_code, &error_message)
+                            persist_account_rejection(&deps.storage, &attempt_telemetry, error_code, &error_message)
                                 .await?
                     {
-                        let _ = self
+                        let _ = deps
                             .fence_credential_for_admin(group_uuid, attempt_telemetry.credential_id)
                             .await;
                     }
                     if raw.status != 429
                         && raw.status != 529
                         && !account_rejected
-                        && clear_rate_limit_cooldown(&self.storage, attempt_telemetry.credential_id)
+                        && clear_rate_limit_cooldown(&deps.storage, attempt_telemetry.credential_id)
                             .await
                             .unwrap_or(false)
                     {
@@ -1458,7 +1531,7 @@ impl MessageDispatcher for ProductionDispatcher {
                             .await?;
                     }
                     if raw.status == 401 && !refresh_attempted && messages_attempts < 3 {
-                        let Some(maintainer) = self.credential_maintainer.as_ref() else {
+                        let Some(maintainer) = deps.credential_maintainer.as_ref() else {
                             break (raw, attempt_telemetry, first_byte.transport_terminal());
                         };
                         refresh_attempted = true;
@@ -1470,7 +1543,7 @@ impl MessageDispatcher for ProductionDispatcher {
                                 outcome
                             } else {
                                 let _ = discard_raw_response(raw, &attempt_cancellation).await;
-                                mark_attempt_final(&self.storage, &attempt_telemetry).await?;
+                                mark_attempt_final(&deps.storage, &attempt_telemetry).await?;
                                 return Err(DispatchError::DeadlineExceeded);
                             }
                         } else {
@@ -1486,7 +1559,7 @@ impl MessageDispatcher for ProductionDispatcher {
                                     })
                                     .await?;
                                 if !discard_raw_response(raw, &attempt_cancellation).await {
-                                    mark_attempt_final(&self.storage, &attempt_telemetry).await?;
+                                    mark_attempt_final(&deps.storage, &attempt_telemetry).await?;
                                     return Err(DispatchError::Unavailable);
                                 }
                                 let replacement = group
@@ -1499,7 +1572,7 @@ impl MessageDispatcher for ProductionDispatcher {
                                 if let Some(replacement) = replacement {
                                     lease_guard.replace(replacement.clone());
                                     complete_attempt_for_retry(
-                                        &self.storage,
+                                        &deps.storage,
                                         &attempt_telemetry,
                                         Duration::ZERO,
                                         "refresh_same_credential",
@@ -1509,7 +1582,7 @@ impl MessageDispatcher for ProductionDispatcher {
                                     next_attempt_reason = "oauth_refresh_replay";
                                     continue;
                                 }
-                                mark_attempt_final(&self.storage, &attempt_telemetry).await?;
+                                mark_attempt_final(&deps.storage, &attempt_telemetry).await?;
                                 return Err(DispatchError::Unavailable);
                             }
                             Err(error) => {
@@ -1554,7 +1627,7 @@ impl MessageDispatcher for ProductionDispatcher {
                             break (raw, attempt_telemetry, first_byte.transport_terminal());
                         }
                         if !discard_raw_response(raw, &attempt_cancellation).await {
-                            mark_attempt_final(&self.storage, &attempt_telemetry).await?;
+                            mark_attempt_final(&deps.storage, &attempt_telemetry).await?;
                             return Err(DispatchError::Unavailable);
                         }
                         let mut replacement = match decision.strategy {
@@ -1598,7 +1671,7 @@ impl MessageDispatcher for ProductionDispatcher {
                                 None => "none",
                             };
                             complete_attempt_for_retry(
-                                &self.storage,
+                                &deps.storage,
                                 &attempt_telemetry,
                                 decision.backoff,
                                 retry_decision,
@@ -1616,18 +1689,18 @@ impl MessageDispatcher for ProductionDispatcher {
                             lease = replacement;
                             continue;
                         }
-                        mark_attempt_final(&self.storage, &attempt_telemetry).await?;
+                        mark_attempt_final(&deps.storage, &attempt_telemetry).await?;
                         return Err(map_retry_status(status, retry_after));
                     }
                     break (raw, attempt_telemetry, first_byte.transport_terminal());
                 }
                 Err(error) => {
-                    self.project_transport_health(&lease, health_proxy_endpoint_id.as_ref(), &error)
+                    Self::project_transport_health_for_bridge(deps, &lease, health_proxy_endpoint_id.as_ref(), &error)
                         .await?;
                     let request_bytes = first_byte.request_bytes().max(error.upstream_request_bytes_written);
                     if request_bytes > 0 {
                         if !attempt_promoted {
-                            promote_attempt_telemetry(&self.storage, &attempt_telemetry, request_bytes, None).await?;
+                            promote_attempt_telemetry(&deps.storage, &attempt_telemetry, request_bytes, None).await?;
                             messages_attempts = messages_attempts.saturating_add(1);
                         }
                         if error.retry_safety == RetrySafety::CommitUnknown {
@@ -1671,7 +1744,7 @@ impl MessageDispatcher for ProductionDispatcher {
                                     tokio::select! {
                                         () = cancellation.cancelled() => {
                                             fail_attempt_telemetry(
-                                                &self.storage,
+                                                &deps.storage,
                                                 &attempt_telemetry,
                                                 request_bytes,
                                                 true,
@@ -1691,7 +1764,7 @@ impl MessageDispatcher for ProductionDispatcher {
                             }
                             if let Some(replacement) = replacement {
                                 lease_guard.replace(replacement.clone());
-                                fail_attempt_telemetry(&self.storage, &attempt_telemetry, request_bytes, false).await?;
+                                fail_attempt_telemetry(&deps.storage, &attempt_telemetry, request_bytes, false).await?;
                                 next_attempt_reason = if replacement.credential_id == lease.credential_id {
                                     "network_retry"
                                 } else {
@@ -1701,10 +1774,10 @@ impl MessageDispatcher for ProductionDispatcher {
                                 continue;
                             }
                         }
-                        fail_attempt_telemetry(&self.storage, &attempt_telemetry, request_bytes, true).await?;
+                        fail_attempt_telemetry(&deps.storage, &attempt_telemetry, request_bytes, true).await?;
                         return Err(map_transport_error(&error));
                     }
-                    fail_attempt_telemetry(&self.storage, &attempt_telemetry, 0, false).await?;
+                    fail_attempt_telemetry(&deps.storage, &attempt_telemetry, 0, false).await?;
                     if error.retry_safety != RetrySafety::SafeBeforeSubmission || connection_ordinal >= 3 {
                         return Err(map_transport_error(&error));
                     }
@@ -1749,7 +1822,7 @@ impl MessageDispatcher for ProductionDispatcher {
             if body_capture.enabled {
                 let (tap, receiver, gap, truncated) = plain_response_capture_channel(body_capture.max_bytes);
                 tokio::spawn(persist_plain_response_body(
-                    self.storage.clone(),
+                    deps.storage.clone(),
                     request_uuid,
                     receiver,
                     gap,
@@ -1764,7 +1837,7 @@ impl MessageDispatcher for ProductionDispatcher {
                 _ => Some(Box::new(CompositeResponseSideWriter { writers: side_writers })),
             }
         };
-        let mut response = self
+        let mut response = deps
             .response
             .prepare_with_side_writer_and_reservation(
                 raw,
@@ -1778,7 +1851,7 @@ impl MessageDispatcher for ProductionDispatcher {
                 map_response_error(&error)
             })?;
         let delivery_id = Uuid::now_v7();
-        if self
+        if deps
             .storage
             .start_response_delivery(&DeliveryStart {
                 delivery_id,
@@ -1809,7 +1882,7 @@ impl MessageDispatcher for ProductionDispatcher {
         let completion = Arc::new(RequestCompletion {
             started_at: request.started_at,
             endpoint: request.endpoint,
-            storage: self.storage.clone(),
+            storage: deps.storage.clone(),
             group: group.clone(),
             lease: completion_lease,
             request_id: request.request_id,
@@ -1817,7 +1890,7 @@ impl MessageDispatcher for ProductionDispatcher {
             delivery_id,
             attempt_id: attempt_telemetry.attempt_id,
             model_id,
-            clock: self.clock.clone(),
+            clock: deps.clock.clone(),
             committed: AtomicBool::new(false),
             finished: AtomicBool::new(false),
             transport_terminal,
@@ -1835,10 +1908,293 @@ impl MessageDispatcher for ProductionDispatcher {
             }
         });
         response.completion = Some(completion);
+        if let Some(sink) = early_sink {
+            let (_drain_tx, drain_rx) = mpsc::channel(1);
+            let mut body = std::mem::replace(&mut response.body, drain_rx);
+            let relay_cancellation = cancellation.clone();
+            tokio::spawn(async move {
+                while let Some(item) = body.recv().await {
+                    if relay_cancellation.is_cancelled() {
+                        break;
+                    }
+                    if sink.send(item).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
         lease_guard.disarm();
         request_guard.disarm();
         Ok(response)
     }
+
+    /// Commit an early 200 SSE response for a queued streaming request and drive the
+    /// remaining upstream turn in a bridged task. The client receives keep-alive
+    /// comment frames while it waits; upstream failures surface as a terminal
+    /// `event: error` because headers are already committed.
+    #[allow(clippy::too_many_arguments)]
+    async fn bridge_queued_stream(
+        &self,
+        request: DispatchRequest,
+        group: Arc<RuntimeGroup>,
+        request_uuid: Uuid,
+        request_limits: RuntimeRequestLimits,
+        pre_upstream_deadline: Duration,
+        entry: ScheduleEntry,
+        receiver: oneshot::Receiver<AdmissionDecision>,
+        mut guard: QueueGuard,
+        body_capture: gateway_storage::BodyCaptureConfig,
+        cancellation: CancellationToken,
+        request_guard: RequestTerminalGuard,
+    ) -> Result<UpstreamResponse, DispatchError> {
+        let delivery_id = Uuid::now_v7();
+        if self
+            .storage
+            .start_response_delivery(&DeliveryStart {
+                delivery_id,
+                request_id: request_uuid,
+                attempt_id: None,
+                streaming: true,
+                buffer_tier_code: None,
+                client_write_idle_ms: 120_000,
+            })
+            .await
+            .is_err()
+        {
+            return Err(DispatchError::Unavailable);
+        }
+        let (body_tx, body_rx) = mpsc::channel::<PreparedBodyItem>(8);
+        let (_usage_tx, usage_rx) = oneshot::channel::<ObservedResponseUsage>();
+        let delivery_state = PreparedDeliveryState::default();
+        let early_completion = Arc::new(EarlyStreamCompletion {
+            storage: self.storage.clone(),
+            request_id: request.request_id.clone(),
+            request_uuid,
+            delivery_id,
+            delivery_state: delivery_state.clone(),
+            transport_terminal: cancellation.clone(),
+            cancel_grace: request_limits.cancel_grace,
+        });
+        let completion_for_bridge = early_completion.clone();
+        let bridge_request = request.clone();
+        let keepalive_cancellation = cancellation.clone();
+        let bridge_cancellation = cancellation.clone();
+        let keepalive_writer = body_tx.clone();
+        let body_writer = body_tx.clone();
+        let bridge_delivery_state = delivery_state.clone();
+        drop(body_tx);
+        // Keep-alive ticker: SSE comment frames are ignored by every event parser.
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(15));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            ticker.tick().await;
+            while !keepalive_cancellation.is_cancelled() {
+                tokio::select! {
+                    () = keepalive_cancellation.cancelled() => break,
+                    _ = ticker.tick() => {
+                        if keepalive_writer.send(Ok(Bytes::from_static(b": keep-alive\n\n"))).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        // Bridge: resolve the lease, run the exact post-lease dispatch, relay the
+        // upstream SSE body into the early response channel. The dispatcher
+        // dependencies are captured explicitly because `&self` cannot outlive
+        // this call and `Arc<Self>` is unavailable here.
+        let bridge_deps = BridgeDeps {
+            storage: self.storage.clone(),
+            groups: self.groups.clone(),
+            engines: self.engines.clone(),
+            transport: self.transport.clone(),
+            response: self.response.clone(),
+            clock: self.clock.clone(),
+            credential_maintainer: self.credential_maintainer.clone(),
+        };
+        let bridge_group = group.clone();
+        tokio::spawn(async move {
+            let lease = match bridge_group
+                .wait_for_resolution(
+                    &bridge_request.request_id,
+                    pre_upstream_deadline,
+                    receiver,
+                    &mut guard,
+                    request_limits,
+                )
+                .await
+            {
+                Ok(lease) => lease,
+                Err(error) => {
+                    if !matches!(error, DispatchError::Cancelled) && !bridge_cancellation.is_cancelled() {
+                        let _ = body_writer
+                            .send(Ok(Bytes::from_static(
+                                b"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Request could not be scheduled before the pre-upstream deadline.\"}}\n\n",
+                            )))
+                            .await;
+                    }
+                    drop(body_writer);
+                    bridge_delivery_state.finish_external(false);
+                    drop(completion_for_bridge);
+                    return;
+                }
+            };
+            let outcome = run_bridged_after_lease(
+                &bridge_deps,
+                bridge_request,
+                bridge_group,
+                request_uuid,
+                request_limits,
+                entry,
+                body_capture,
+                bridge_cancellation.clone(),
+                request_guard,
+                lease,
+                body_writer.clone(),
+            )
+            .await;
+            if outcome.is_err() && !bridge_cancellation.is_cancelled() {
+                // Headers are already committed; surface the failure inside the stream.
+                let _ = body_writer
+                    .send(Ok(Bytes::from_static(
+                        b"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"Upstream request failed after scheduling.\"}}\n\n",
+                    )))
+                    .await;
+                bridge_delivery_state.finish_external(false);
+            }
+            // Dropping the last body_writer sentinel lets the client EOF after the
+            // upstream relay finishes; the keep-alive ticker exits via cancellation.
+        });
+        Ok(PreparedClientResponse {
+            status: 200,
+            headers: vec![("content-type".into(), Bytes::from_static(b"text/event-stream"))],
+            mode: gateway_domain::ResponseMode::Streaming,
+            buffer_tier: None,
+            body: body_rx,
+            usage: usage_rx,
+            delivery_state,
+            completion: Some(early_completion),
+            cancellation,
+            admission: None,
+        })
+    }
+}
+
+/// Dispatcher dependencies captured for the queued-stream bridge task, which
+/// cannot borrow `&self` across the await point that holds the early response.
+#[derive(Clone)]
+struct BridgeDeps {
+    storage: Arc<PgStorage>,
+    groups: Arc<ArcSwap<BTreeMap<GroupId, Arc<RuntimeGroup>>>>,
+    engines: Arc<EngineCatalogHandle>,
+    transport: Arc<dyn TransportCore>,
+    response: ResponsePipeline,
+    clock: Arc<dyn Clock>,
+    credential_maintainer: Option<Arc<dyn CredentialMaintainer>>,
+}
+
+impl BridgeDeps {
+    fn runtime_group(&self, group_id: &GroupId) -> Option<Arc<RuntimeGroup>> {
+        self.groups.load().get(group_id).cloned()
+    }
+
+    async fn fence_credential_for_admin(
+        &self,
+        group_uuid: Uuid,
+        credential_uuid: Uuid,
+    ) -> Result<Option<u32>, DispatchError> {
+        let group_id = GroupId::new(group_uuid.to_string()).map_err(|_| DispatchError::DeterministicUnavailable)?;
+        let Some(group) = self.runtime_group(&group_id) else {
+            return Ok(None);
+        };
+        let credential_id =
+            CredentialId::new(credential_uuid.to_string()).map_err(|_| DispatchError::DeterministicUnavailable)?;
+        group.set_credential_fence(credential_id, true).await.map(Some)
+    }
+}
+
+/// Delivery completion for a queued-stream response whose headers commit before
+/// the upstream attempt exists. `committed` always succeeds; the terminal path
+/// closes the early delivery record and releases scheduler resources when the
+/// bridged turn never produced a real attempt.
+struct EarlyStreamCompletion {
+    storage: Arc<PgStorage>,
+    request_id: gateway_domain::RequestId,
+    request_uuid: Uuid,
+    delivery_id: Uuid,
+    delivery_state: PreparedDeliveryState,
+    transport_terminal: CancellationToken,
+    cancel_grace: Duration,
+}
+
+#[async_trait]
+impl DeliveryCompletion for EarlyStreamCompletion {
+    async fn committed(&self) -> Result<(), DeliveryCompletionError> {
+        self.storage
+            .commit_client_response(self.request_uuid, self.delivery_id)
+            .await
+            .map_err(|_| DeliveryCompletionError)
+    }
+
+    async fn completed(&self, report: DeliveryReport) {
+        let _ = self
+            .storage
+            .complete_early_delivery(
+                self.delivery_id,
+                report.outcome,
+                i64::try_from(report.bytes_delivered).unwrap_or(i64::MAX),
+            )
+            .await;
+        if !self.delivery_state.is_terminal() {
+            // Client left before the bridge attached a terminal fact.
+            self.delivery_state
+                .finish_external(matches!(report.outcome, gateway_domain::DeliveryOutcome::Complete));
+        }
+        if matches!(
+            report.outcome,
+            gateway_domain::DeliveryOutcome::ClientDisconnected | gateway_domain::DeliveryOutcome::ClientWriteTimeout
+        ) {
+            self.transport_terminal.cancel();
+        }
+        let _ = self.cancel_grace;
+        let _ = &self.request_id;
+    }
+}
+
+/// Queued-stream bridge continuation: run the shared post-lease dispatch against
+/// captured dependencies and relay the upstream body into the early response
+/// channel. The early completion stays referenced by the client response, so the
+/// `committed` fence the bridge already persisted is untouched here.
+#[allow(clippy::too_many_arguments)]
+async fn run_bridged_after_lease(
+    deps: &BridgeDeps,
+    request: DispatchRequest,
+    group: Arc<RuntimeGroup>,
+    request_uuid: Uuid,
+    request_limits: RuntimeRequestLimits,
+    entry: ScheduleEntry,
+    body_capture: gateway_storage::BodyCaptureConfig,
+    cancellation: CancellationToken,
+    request_guard: RequestTerminalGuard,
+    lease: CredentialLease,
+    sink: mpsc::Sender<PreparedBodyItem>,
+) -> Result<UpstreamResponse, DispatchError> {
+    ProductionDispatcher::dispatch_after_lease(
+        deps,
+        request,
+        group,
+        request_uuid,
+        request_limits,
+        entry,
+        body_capture,
+        cancellation,
+        request_guard,
+        lease,
+        "queued",
+        None,
+        Some(sink),
+    )
+    .await
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3302,6 +3658,7 @@ async fn load_scheduler_credentials(
                 active_sc.revision AS scheduling_projection_revision,sc.max_concurrency,sc.rpm_limit,sc.rpm_burst,sc.priority_layer, \
                 GREATEST(1,ROUND(sc.weight*1000))::bigint AS weight_scaled, \
                 sc.session_capacity_enabled,sc.max_active_sessions,sc.session_idle_ttl_ms,sc.new_session_wait_ms, \
+                sc.min_request_interval_ms, \
                 p.id AS profile_id,p.profile_epoch,p.archetype_version_id,d.id AS device_identity_id,d.device_epoch, \
                 e.id AS egress_binding_id,e.egress_epoch,t.artifact_version, \
                 root.os_family_code, \
@@ -3415,6 +3772,11 @@ async fn load_scheduler_credentials(
                 idle_ttl: millis(&row, "session_idle_ttl_ms")?,
                 new_session_wait: millis(&row, "new_session_wait_ms")?,
             },
+            min_request_interval: row
+                .try_get::<Option<i64>, _>("min_request_interval_ms")?
+                .map(u64::try_from)
+                .transpose()?
+                .map(Duration::from_millis),
             token_version: u64::try_from(row.try_get::<i64, _>("token_version")?)?,
             openai_transport: None,
             profiles: BTreeMap::new(),
@@ -3454,6 +3816,8 @@ async fn load_selected_credential(
         "SELECT c.auth_kind_code,c.account_uuid,c.token_version,av.access_secret_id,av.setup_secret_id,av.console_secret_id, \
                 d.session_hmac_secret_id,d.profile_seed_secret_id,d.device_epoch,e.mode_code,e.id AS binding_id,e.egress_epoch, \
                 pxy.id AS proxy_id,pxy.proxy_type_code,pxy.host,pxy.port,pxy.auth_secret_id, \
+                rly.id AS relay_id,rly.proxy_type_code AS relay_type_code,rly.host AS relay_host,rly.port AS relay_port, \
+                rly.auth_secret_id AS relay_auth_secret_id, \
                 bundle.id AS transport_bundle_id,archetype_version.client_version AS client_version, \
                 archetype.os_family_code AS os_family,archetype_version.os_build,archetype_version.shell, \
                 archetype_version.system_template \
@@ -3477,6 +3841,8 @@ async fn load_selected_credential(
               AND bundle.runtime_state_code='loadable' \
          LEFT JOIN gateway.proxy_endpoint pxy ON pxy.id=e.proxy_id AND pxy.lifecycle_code='active' \
               AND pxy.health_code='healthy' AND pxy.stability_code='static' \
+         LEFT JOIN gateway.proxy_endpoint rly ON rly.id=pxy.upstream_proxy_id AND rly.lifecycle_code='active' \
+              AND rly.stability_code='static' \
          WHERE c.id=$1 AND c.token_version=$2 AND profile.id=$3 AND profile.profile_epoch=$4 \
            AND d.id=$5 AND d.device_epoch=$6 AND e.id=$7 AND e.egress_epoch=$8 \
            AND profile.archetype_version_id=$9 \
@@ -3560,26 +3926,17 @@ async fn load_selected_credential(
         let host: String = row.try_get("host").map_err(|_| DispatchError::Unavailable)?;
         let port = u16::try_from(row.try_get::<i32, _>("port").map_err(|_| DispatchError::Unavailable)?)
             .map_err(|_| DispatchError::DeterministicUnavailable)?;
-        let route = match row
-            .try_get::<String, _>("proxy_type_code")
-            .map_err(|_| DispatchError::Unavailable)?
-            .as_str()
-        {
-            "http_connect" | "connect" => EgressRouteSnapshot::HttpConnect {
-                host: host.into_boxed_str(),
-                port,
-                credentials,
-            },
-            "socks5" => EgressRouteSnapshot::Socks5 {
-                host: host.into_boxed_str(),
-                port,
-                dns: Socks5DnsMode::Remote,
-                credentials,
-            },
-            _ => return Err(DispatchError::DeterministicUnavailable),
-        };
+        let primary = ProxyHop::from_row(
+            &row.try_get::<String, _>("proxy_type_code")
+                .map_err(|_| DispatchError::Unavailable)?,
+            host.into_boxed_str(),
+            port,
+            credentials,
+        )
+        .ok_or(DispatchError::DeterministicUnavailable)?;
+        let relay = relay_hop_from_row(storage, &row).await?;
         (
-            route,
+            EgressRouteSnapshot::from_hops(primary, relay),
             Some(ProxyEndpointId::new(proxy_id.to_string()).map_err(|_| DispatchError::Unavailable)?),
         )
     };
@@ -3621,6 +3978,41 @@ async fn load_selected_credential(
             .try_get::<Option<serde_json::Value>, _>("system_template")
             .map_err(|_| DispatchError::Unavailable)?,
     })
+}
+
+/// Load the optional relay (upstream) hop columns joined onto the proxy row of
+/// the selected credential's egress binding.
+async fn relay_hop_from_row(
+    storage: &PgStorage,
+    row: &sqlx::postgres::PgRow,
+) -> Result<Option<ProxyHop>, DispatchError> {
+    if row
+        .try_get::<Option<Uuid>, _>("relay_id")
+        .map_err(|_| DispatchError::Unavailable)?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let relay_host: String = row.try_get("relay_host").map_err(|_| DispatchError::Unavailable)?;
+    let relay_port = u16::try_from(
+        row.try_get::<i32, _>("relay_port")
+            .map_err(|_| DispatchError::Unavailable)?,
+    )
+    .map_err(|_| DispatchError::DeterministicUnavailable)?;
+    let credentials = match row
+        .try_get::<Option<Uuid>, _>("relay_auth_secret_id")
+        .map_err(|_| DispatchError::Unavailable)?
+    {
+        Some(secret_id) => {
+            let secret = decrypt_secret(storage, secret_id).await?;
+            Some(Arc::new(parse_proxy_credentials(&secret)?))
+        }
+        None => None,
+    };
+    let relay_type_code: String = row.try_get("relay_type_code").map_err(|_| DispatchError::Unavailable)?;
+    ProxyHop::from_row(&relay_type_code, relay_host.into_boxed_str(), relay_port, credentials)
+        .map(Some)
+        .ok_or(DispatchError::DeterministicUnavailable)
 }
 
 pub(crate) async fn decrypt_secret(storage: &PgStorage, secret_id: Uuid) -> Result<SecretBytes, DispatchError> {

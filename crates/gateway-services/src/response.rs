@@ -88,6 +88,12 @@ impl PreparedDeliveryState {
             .compare_exchange(0, state as u8, Ordering::AcqRel, Ordering::Acquire);
     }
 
+    /// True once an external producer fact has been recorded.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        self.0.load(Ordering::Acquire) != 0
+    }
+
     /// Resolve the terminal observed when the prepared body channel reaches EOF.
     #[must_use]
     pub fn eof_outcome(&self) -> gateway_domain::DeliveryOutcome {

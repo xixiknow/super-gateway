@@ -1012,6 +1012,31 @@ impl PgStorage {
         transaction.commit().await.map_err(transaction_error)
     }
 
+    /// Close an early committed delivery record (queued-stream bridge) without an
+    /// attempt. The request phase is left to the bridged lifecycle or guards.
+    pub async fn complete_early_delivery(
+        &self,
+        delivery_id: Uuid,
+        outcome: DeliveryOutcome,
+        bytes_delivered: i64,
+    ) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            "UPDATE telemetry.response_delivery_record SET outcome_code=$2,completed_at=clock_timestamp(), \
+               response_committed=true,bytes_delivered=GREATEST(bytes_delivered,$3) \
+             WHERE id=$1 AND completed_at IS NULL",
+        )
+        .bind(delivery_id)
+        .bind(delivery_outcome_code(outcome))
+        .bind(bytes_delivered)
+        .execute(&self.pool())
+        .await
+        .map_err(transaction_error)?;
+        if result.rows_affected() > 1 {
+            return Err(StorageError::RevisionConflict);
+        }
+        Ok(())
+    }
+
     /// Monotonically record how many encoded upstream body bytes reached the
     /// response observer. This may arrive before or after client delivery ends.
     pub async fn observe_delivery_upstream_bytes(

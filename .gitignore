@@ -1,5 +1,6 @@
 **/target/
 /dist/
+/web/admin-console/dist/
 /.tmp/
 /.super-gateway-local/
 /.env
@@ -20,7 +21,9 @@
 /deploy/container/bundles/
 /.cargo/config.toml
 /.cursor/
+/.codebuddy/
 /cargo-check-result.txt
+/IMPLEMENTATION_SUMMARY.txt
 /web/admin-console/*.png
 /web/admin-console/galaxy_*.py
 /web/admin-console/repro-*.html

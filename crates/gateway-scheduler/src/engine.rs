@@ -27,6 +27,8 @@ struct CredentialRuntime {
     half_open_consumed: bool,
     quota_observation_version: Option<u128>,
     admin_fenced: bool,
+    /// Earliest grant instant for opt-in request pacing.
+    next_allowed_at: Option<Duration>,
 }
 
 #[derive(Clone, Debug)]
@@ -130,6 +132,7 @@ impl SchedulerEngine {
                         inflight: 0,
                         half_open_consumed: false,
                         admin_fenced: false,
+                        next_allowed_at: None,
                     },
                 )
                 .is_some()
@@ -373,6 +376,7 @@ impl SchedulerEngine {
                 runtime.config.model_scope = config.model_scope;
                 runtime.config.attribution_optional = config.attribution_optional;
                 runtime.config.session_capacity = config.session_capacity;
+                runtime.config.min_request_interval = config.min_request_interval;
             }
             return Ok(true);
         }
@@ -387,6 +391,7 @@ impl SchedulerEngine {
                 inflight: 0,
                 half_open_consumed: false,
                 admin_fenced: false,
+                next_allowed_at: None,
             },
         );
         Ok(true)
@@ -968,6 +973,10 @@ impl SchedulerEngine {
         if !runtime.bucket.try_consume(now) || runtime.inflight >= runtime.config.concurrency_limit {
             return Err(SchedulerError::InvalidConfiguration);
         }
+        runtime.next_allowed_at = runtime
+            .config
+            .min_request_interval
+            .map(|interval| now.saturating_add(interval));
         let half_open = quota_requires_half_open(runtime, self.config.quota_guard_basis_points, now);
         if half_open {
             if runtime.config.state.half_open_inflight
@@ -1411,6 +1420,11 @@ fn eligibility(
             Some(now.saturating_add(runtime.bucket.retry_after(now))),
         );
     }
+    if let Some(next_allowed_at) = runtime.next_allowed_at
+        && next_allowed_at > now
+    {
+        return (EligibilityClass::TemporarilyBlocked, Some(next_allowed_at));
+    }
     (EligibilityClass::Eligible, None)
 }
 
@@ -1555,6 +1569,7 @@ mod tests {
             model_scope: BTreeSet::new(),
             attribution_optional: true,
             session_capacity: SessionCapacityConfig::default(),
+            min_request_interval: None,
             token_version: 1,
             openai_transport: None,
             profiles: BTreeMap::from([(
@@ -1659,6 +1674,71 @@ mod tests {
                 .is_ok()
         );
         assert_eq!(engine.snapshot().active_leases, 0);
+    }
+
+    #[test]
+    fn pacing_gates_second_grant_until_interval_elapses() {
+        let mut paced = credential(1, 5);
+        paced.min_request_interval = Some(Duration::from_secs(10));
+        let mut engine = engine(vec![paced]);
+        let generation = generation();
+        let first = engine.admit(generation, entry(1, 1, 1, 1, Portability::Portable), Duration::ZERO);
+        assert!(matches!(first, Ok(AdmissionDecision::Granted(_))));
+        // Second grant inside the interval must not be admitted immediately.
+        let second = engine.admit(
+            generation,
+            entry(2, 2, 2, 1, Portability::Portable),
+            Duration::from_secs(5),
+        );
+        assert!(matches!(second, Ok(AdmissionDecision::Queued { .. })));
+        // Pumping at 9s still holds the gate; at 10s the queued request grants.
+        let held = engine.pump(generation, Duration::from_secs(9));
+        assert!(held.is_empty());
+        let resolved = engine.pump(generation, Duration::from_secs(10));
+        assert!(matches!(
+            resolved.first().map(|resolution| &resolution.decision),
+            Some(AdmissionDecision::Granted(_))
+        ));
+    }
+
+    #[test]
+    fn pacing_disabled_keeps_back_to_back_grants() {
+        let mut engine = engine(vec![credential(1, 5)]);
+        let generation = generation();
+        assert!(matches!(
+            engine.admit(generation, entry(1, 1, 1, 1, Portability::Portable), Duration::ZERO),
+            Ok(AdmissionDecision::Granted(_))
+        ));
+        assert!(matches!(
+            engine.admit(generation, entry(2, 2, 2, 1, Portability::Portable), Duration::ZERO),
+            Ok(AdmissionDecision::Granted(_))
+        ));
+    }
+
+    #[test]
+    fn pacing_reconfigure_takes_effect_on_next_projection() {
+        let mut paced = credential(1, 5);
+        paced.min_request_interval = Some(Duration::from_secs(10));
+        paced.scheduling_projection_revision = 2;
+        let mut engine = engine(vec![credential(1, 5)]);
+        let generation = generation();
+        assert!(
+            engine
+                .reconfigure_credential(generation, paced, Duration::ZERO)
+                .unwrap_or(false)
+        );
+        assert!(matches!(
+            engine.admit(generation, entry(1, 1, 1, 1, Portability::Portable), Duration::ZERO),
+            Ok(AdmissionDecision::Granted(_))
+        ));
+        assert!(matches!(
+            engine.admit(
+                generation,
+                entry(2, 2, 2, 1, Portability::Portable),
+                Duration::from_secs(1)
+            ),
+            Ok(AdmissionDecision::Queued { .. })
+        ));
     }
 
     #[test]

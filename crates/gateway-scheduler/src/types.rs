@@ -208,6 +208,9 @@ pub struct CredentialConfig {
     pub model_scope: BTreeSet<Box<str>>,
     pub attribution_optional: bool,
     pub session_capacity: SessionCapacityConfig,
+    /// Optional minimum spacing between consecutive grants on this Credential
+    /// (request pacing). `None` disables pacing.
+    pub min_request_interval: Option<Duration>,
     pub token_version: u64,
     /// Standard OpenAI transport projection; mutually exclusive with Claude profiles.
     pub openai_transport: Option<OpenAiTransportConfig>,

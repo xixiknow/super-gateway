@@ -221,7 +221,7 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
     let price_http_runtime = Some(provider_http.clone());
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let price_http_runtime: Option<crate::operations::PriceHttp> = None;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let credential_maintainer: Option<Arc<dyn gateway_services::credential::CredentialMaintainer>> = {
         use gateway_services::{
             credential::MaintenanceCoordinator,
@@ -235,15 +235,15 @@ async fn run_with_options(config: GatewayConfig, profile: RuntimeProfile) -> any
         let coordinator = MaintenanceCoordinator::new(repository, adapter, Duration::from_secs(30));
         Some(coordinator)
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let credential_maintainer: Option<Arc<dyn gateway_services::credential::CredentialMaintainer>> = None;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let enrollment_executor: Arc<dyn gateway_services::operations::CredentialEnrollmentJobExecutor> =
         gateway_services::credential_enrollment_postgres::PgCredentialEnrollmentExecutor::new(
             storage.clone(),
             provider_http.clone(),
         );
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let enrollment_executor: Arc<dyn gateway_services::operations::CredentialEnrollmentJobExecutor> =
         Arc::new(crate::operations::EvidenceGatedEnrollmentExecutor);
     #[cfg(target_os = "linux")]

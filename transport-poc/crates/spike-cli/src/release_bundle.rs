@@ -218,6 +218,8 @@ fn formal_tls_profile(candidate: &CandidateArchetypeBundle) -> Result<TlsProfile
         grease_enabled: candidate.tls.cipher_suites.iter().any(|value| value & 0x0f0f == 0x0a0a),
         permute_extensions: false,
         session_resumption: false,
+        min_tls_version: None,
+        max_tls_version: None,
     })
 }
 

@@ -80,7 +80,9 @@ jobs:
           done
           ls -la "$staging"
           cd "$staging"
-          tar -czf "${RUNNER_TEMP}/transport-poc-${{ matrix.target }}.tar.gz" .
+          # GNU tar treats "D:\..." output paths as remote host specs; a
+          # relative path lands in RUNNER_TEMP, which is the staging parent.
+          tar -czf "../transport-poc-${{ matrix.target }}.tar.gz" .
       - uses: actions/upload-artifact@v4
         with:
           name: transport-poc-binaries-${{ matrix.target }}

@@ -79,7 +79,8 @@ jobs:
             fi
           done
           ls -la "$staging"
-          tar -czf "${RUNNER_TEMP}/transport-poc-${{ matrix.target }}.tar.gz" -C "$staging" .
+          cd "$staging"
+          tar -czf "${RUNNER_TEMP}/transport-poc-${{ matrix.target }}.tar.gz" .
       - uses: actions/upload-artifact@v4
         with:
           name: transport-poc-binaries-${{ matrix.target }}

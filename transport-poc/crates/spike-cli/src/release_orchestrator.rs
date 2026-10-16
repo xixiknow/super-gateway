@@ -282,9 +282,8 @@ pub(crate) async fn release(request: ReleaseRequest) -> Result<()> {
         } else {
             vec![]
         };
-        run_cargo_tool(
+        run_capture_tool(
             &poc_root,
-            "claude-capture-runner",
             &[
                 mode_args.clone(),
                 vec![
@@ -302,9 +301,8 @@ pub(crate) async fn release(request: ReleaseRequest) -> Result<()> {
         )
         .await
         .with_context(|| format!("capture privacy-safe official TLS reference {iteration}"))?;
-        run_cargo_tool(
+        run_capture_tool(
             &poc_root,
-            "claude-capture-runner",
             &[
                 mode_args,
                 vec![
@@ -651,23 +649,46 @@ fn verify_template(path: &Path, controlled_path: &Path, previous: &mut Option<se
     Ok(())
 }
 
-async fn run_cargo_tool(root: &Path, package: &str, args: &[OsString]) -> Result<()> {
+async fn run_capture_tool(poc_root: &Path, args: &[OsString]) -> Result<()> {
+    // Standalone release artifacts ship the runner next to spike-cli; cargo is
+    // only needed when spike-cli itself runs from a development workspace.
+    let sibling = std::env::current_exe()?
+        .parent()
+        .context("locate spike-cli executable directory")?
+        .join(format!("claude-capture-runner{}", std::env::consts::EXE_SUFFIX));
+    if sibling.is_file() {
+        let status = Command::new(&sibling)
+            .args(args)
+            .stdin(Stdio::null())
+            .status()
+            .await
+            .with_context(|| format!("run {}", sibling.display()))?;
+        if !status.success() {
+            bail!("claude-capture-runner exited with {status}");
+        }
+        return Ok(());
+    }
     let status = Command::new("cargo")
-        .current_dir(root)
+        .current_dir(poc_root)
         .arg("run")
         .arg("--quiet")
         .arg("--locked")
         .arg("-p")
-        .arg(package)
+        .arg("claude-capture-runner")
         .arg("--all-features")
         .arg("--")
         .args(args)
         .stdin(Stdio::null())
         .status()
         .await
-        .with_context(|| format!("run Cargo package {package}"))?;
+        .with_context(|| {
+            format!(
+                "run claude-capture-runner (no sibling binary at {} and cargo unavailable)",
+                sibling.display()
+            )
+        })?;
     if !status.success() {
-        bail!("Cargo package {package} exited with {status}");
+        bail!("Cargo package claude-capture-runner exited with {status}");
     }
     Ok(())
 }
